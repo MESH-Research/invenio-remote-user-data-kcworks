@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "invenio-groups"
+version = "0.0.1"
+description = "An extension to draw user data from remote sources into InvenioRDM"
+readme = "README.md"
+authors = [{ name = "Mesh Research", email = "scottia4@msu.edu" }]
+license = { file = "LICENSE" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+    "Topic :: Software Development :: Libraries :: Python Modules"
+]
+keywords = ["invenio", "inveniordm", "users", "research"]
+dependencies = [
+]
+requires-python = ">=3.9"
+
+[project.optional-dependencies]
+dev = [
+    "check-manifest",
+    "pip-tools",
+    "pytest>=7.3.2",
+    "pytest-runner",
+]
+
+
+[project.urls]
+Homepage = "https://github.com/MESH-Research/invenio-remote-user-data"
+
+
+[tool.pytest.ini_options]
+addopts = "--doctest-glob='*.rst' --doctest-modules"
+testpaths = [ "tests", "invenio_remote_user_data" ]
+
+[project.scripts]
+invenio-remote-user-data = "invenio_remote_user_data.cli:cli"

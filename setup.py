@@ -27,7 +27,9 @@ extras_require["all"] = []
 for reqs in extras_require.values():
     extras_require["all"].extend(reqs)
 
-packages = find_packages(include=["invenio_groups", "invenio_groups.*"])
+packages = find_packages(
+    include=["invenio_remote_user_data", "invenio_remote_user_data.*"]
+)
 
 setup(
     name="invenio-remote-user-data",

@@ -3,7 +3,7 @@ requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "invenio-groups"
+name = "invenio-remote-user-data"
 version = "0.0.1"
 description = "An extension to draw user data from remote sources into InvenioRDM"
 readme = "README.md"

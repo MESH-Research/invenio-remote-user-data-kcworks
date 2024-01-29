@@ -11,15 +11,34 @@
 from setuptools import find_packages, setup
 
 readme = open("README.md").read()
-history = open("CHANGES.md").read()
+history = ""
+# history = open("CHANGES.md").read()
 
 install_requires = [
     "click>=7.0",
+    "invenio-app-rdm",
+    "invenio-search",
+    "opensearch",
+    "opensearch-dsl",
+    "invenio-utilities-tuw",
 ]
 
-tests_require = ["pytest>=7.3.2", "pytest-runner"]
+tests_require = [
+    "pytest>=7.3.2",
+    "pytest-invenio",
+    "pytest-runner",
+    "requests-mock",
+]
 
-dev_requires = []
+dev_requires = [
+    "check-manifest",
+    "pipenv",
+    "pip-tools",
+    "pytest>=7.3.2",
+    "pytest-invenio",
+    "pytest-runner",
+    "requests-mock",
+]
 
 extras_require = {"tests": tests_require, "dev": dev_requires}
 

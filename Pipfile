@@ -5,6 +5,15 @@ name = "pypi"
 
 [packages]
 invenio-app-rdm = "*"
+pytest = "*"
+pytest-invenio = "*"
+invenio-search = "*"
+opensearch = "*"
+opensearch-dsl = "*"
+invenio-utilities-tuw = "*"
+invenio-queues = "*"
+invenio-remote-user-data = {editable = true, path = "."}
+requests-mock = "*"
 
 [dev-packages]
 

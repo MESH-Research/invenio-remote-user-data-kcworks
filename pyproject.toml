@@ -22,15 +22,24 @@ classifiers = [
 ]
 keywords = ["invenio", "inveniordm", "users", "research"]
 dependencies = [
+    "click>=7.0",
+    "invenio-app-rdm",
+    "invenio-search",
+    "opensearch",
+    "opensearch-dsl",
+    "invenio-utilities-tuw",
 ]
 requires-python = ">=3.9"
 
 [project.optional-dependencies]
 dev = [
     "check-manifest",
+    "pipenv",
     "pip-tools",
     "pytest>=7.3.2",
+    "pytest-invenio",
     "pytest-runner",
+    "requests-mock",
 ]
 
 

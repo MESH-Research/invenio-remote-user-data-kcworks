@@ -51,4 +51,3 @@ class InvenioRemoteUserData(object):
             app (_type_): _description_
         """
         self.service = RemoteUserDataService(app, config=app.config)
-        # self.service = RemoteUserDataService(config=RemoteUserDataServiceConfig)

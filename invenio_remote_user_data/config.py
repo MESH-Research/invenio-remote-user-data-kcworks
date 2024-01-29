@@ -9,11 +9,6 @@
 
 from kombu import Exchange
 
-REMOTE_USER_DATA_ENTITY_TYPES = {
-    "users": {"events": ["created", "updated", "deleted"]},
-    "groups": {"events": ["created", "updated", "deleted"]},
-}
-
 REMOTE_USER_DATA_API_ENDPOINTS = {
     "knowledgeCommons": {
         "groups": {
@@ -21,7 +16,11 @@ REMOTE_USER_DATA_API_ENDPOINTS = {
             "remote_identifier": "id",
             "remote_method": "GET",
             "token_env_variable_label": "COMMONS_API_TOKEN",
-        }
+        },
+        "entity_types": {
+            "users": {"events": ["created", "updated", "deleted"]},
+            "groups": {"events": ["created", "updated", "deleted"]},
+        },
     }
 }
 

@@ -11,9 +11,12 @@
 
 from flask import current_app
 
+
 def declare_queues():
     """Update user data."""
     return [
-        {"name": "user-data-updates",
-         "exchange": current_app.config["REMOTE_USER_DATA_MQ_EXCHANGE"]}
+        {
+            "name": "user-data-updates",
+            "exchange": current_app.config["REMOTE_USER_DATA_MQ_EXCHANGE"],
+        }
     ]

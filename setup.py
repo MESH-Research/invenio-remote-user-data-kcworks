@@ -18,7 +18,6 @@ install_requires = [
     "click>=7.0",
     "invenio-app-rdm",
     "invenio-search",
-    "opensearch",
     "opensearch-dsl",
     "invenio-utilities-tuw",
 ]

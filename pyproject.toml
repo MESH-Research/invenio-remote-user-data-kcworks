@@ -25,7 +25,6 @@ dependencies = [
     "click>=7.0",
     "invenio-app-rdm",
     "invenio-search",
-    "opensearch",
     "opensearch-dsl",
     "invenio-utilities-tuw",
 ]
@@ -51,5 +50,21 @@ Homepage = "https://github.com/MESH-Research/invenio-remote-user-data"
 addopts = "--doctest-glob='*.rst' --doctest-modules"
 testpaths = [ "tests", "invenio_remote_user_data" ]
 
+
 [project.scripts]
 invenio-remote-user-data = "invenio_remote_user_data.cli:cli"
+
+[project.entry-points."invenio_base.apps"]
+invenio_remote_user_data = "invenio_remote_user_data.ext:InvenioRemoteUserData"
+
+[project.entry-points."invenio_base.api_apps"]
+invenio_remote_user_data = "invenio_remote_user_data.ext:InvenioRemoteUserData"
+
+[project.entry-points."invenio_base.api_blueprints"]
+invenio_remote_user_data = "invenio_remote_user_data.views:create_api_blueprint"
+
+[project.entry-points."invenio_queues.queues"]
+invenio_remote_user_data = "invenio_remote_user_data.queues:declare_queues"
+
+[project.entry-points."invenio_celery.tasks"]
+invenio_remote_user_data = "invenio_remote_user_data.tasks"

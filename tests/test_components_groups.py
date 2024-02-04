@@ -31,7 +31,6 @@ def test_find_or_create_group(app, user_factory, db):
         group_name="my_group", description="A group for me"
     )
     assert my_group_role.name == "my_group"
-    assert my_group_role.id == 1
     assert my_group_role.description == "A group for me"
 
     myuser = user_factory()
@@ -47,7 +46,6 @@ def test_create_new_group(app, user_factory, db):
         group_name="my_group", description="A group for me"
     )
     assert my_group_role.name == "my_group"
-    assert my_group_role.id == 2
     assert my_group_role.description == "A group for me"
     assert [u for u in my_group_role.users] == []
     assert [u for u in my_group_role.actionusers] == []

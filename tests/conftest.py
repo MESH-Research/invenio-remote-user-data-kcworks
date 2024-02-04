@@ -23,6 +23,7 @@ from invenio_oauthclient.models import UserIdentity
 from invenio_vocabularies.proxies import current_service as vocabulary_service
 from invenio_vocabularies.records.api import Vocabulary
 
+from marshmallow import Schema, fields
 import os
 
 # from pprint import pformat
@@ -83,6 +84,7 @@ def extra_entry_points():
 
 
 test_config = {
+    # "THEME_FRONTPAGE_TEMPLATE": "invenio_remote_user_data/base.html",
     "SQLALCHEMY_DATABASE_URI": (
         "postgresql+psycopg2://"
         "knowledge-commons-repository:"
@@ -117,6 +119,62 @@ test_config = {
     "SECURITY_PASSWORD_SALT": "test-secret-key",
     "TESTING": True,
 }
+
+
+class CustomAffiliationSchema(Schema):
+    """The default affiliations schema."""
+
+    name = fields.String()
+    id = fields.String()
+
+
+class CustomNamePartsSchema(Schema):
+    """The default name parts schema."""
+
+    first = fields.String()
+    middle = fields.String()
+    last = fields.String()
+    last_prefix_for_alphabetizing = fields.String()
+    last_prefix = fields.String()
+    patronymic = fields.String()
+    undivided = fields.String()
+
+
+class CustomUserIdentifierSchema(Schema):
+    """The default user identifier schema."""
+
+    identifier = fields.String()
+    scheme = fields.String()
+
+
+class CustomUserProfileSchema(Schema):
+    """The default user profile schema."""
+
+    full_name = fields.String()
+    affiliations = fields.List(fields.Nested(CustomAffiliationSchema))
+    name_parts = fields.Nested(CustomNamePartsSchema)
+    identifiers = fields.List(fields.Nested(CustomUserIdentifierSchema))
+
+
+test_config["ACCOUNTS_USER_PROFILE_SCHEMA"] = CustomUserProfileSchema
+
+test_config["REMOTE_USER_DATA_API_ENDPOINTS"] = {
+    "knowledgeCommons": {
+        "users": {
+            "remote_endpoint": (
+                "https://hcommons-dev.org/wp-json/commons/v1/users/"
+            ),
+            "remote_identifier": "id",
+            "remote_method": "GET",
+            "token_env_variable_label": "COMMONS_API_TOKEN",
+        },
+        "entity_types": {
+            "users": {"events": ["created", "updated", "deleted"]},
+            "groups": {"events": ["created", "updated", "deleted"]},
+        },
+    }
+}
+
 
 SITE_UI_URL = os.environ.get("INVENIO_SITE_UI_URL", "http://localhost:5000")
 
@@ -238,6 +296,7 @@ def user_factory(app, db):
                 email=email,
                 password=hash_password(password),
                 active=True,
+                **kwargs,
             )
         db.session.commit()
         return user1

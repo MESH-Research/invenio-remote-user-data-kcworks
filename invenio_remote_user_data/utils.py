@@ -25,3 +25,34 @@ file_handler.setFormatter(formatter)
 if logger.hasHandlers():
     logger.handlers.clear()
 logger.addHandler(file_handler)
+
+
+def update_nested_dict(original, update):
+    for key, value in update.items():
+        if isinstance(value, dict):
+            original[key] = update_nested_dict(original.get(key, {}), value)
+        elif isinstance(value, list):
+            original.setdefault(key, []).extend(value)
+        else:
+            original[key] = value
+    return original
+
+
+def diff_between_nested_dicts(original, update):
+    """Return the difference between two nested dictionaries."""  # noqa
+    diff = {}
+    if not original:
+        return update
+    else:
+        for key, value in update.items():
+            if isinstance(value, dict):
+                diff[key] = diff_between_nested_dicts(
+                    original.get(key, {}), value
+                )
+            elif isinstance(value, list):
+                diff[key] = list(set(value) - set(original.get(key, [])))
+            else:
+                if original.get(key) != value:
+                    diff[key] = value
+        diff = {k: v for k, v in diff.items() if v}
+        return diff

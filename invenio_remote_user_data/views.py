@@ -137,16 +137,19 @@ class IDPUpdateWebhook(MethodView):
         These are requests from a remote IDP indicating that user or group
         data has been updated on the remote server.
         """
-        entity_types = app.config["REMOTE_USER_DATA_ENTITY_TYPES"]
         headers = request.headers
         bearer = headers.get("Authorization")
         token = bearer.split()[1]
         if token != self.webhook_token:
+            print("Unauthorized")
             raise Unauthorized
 
         try:
+            print("Received signal")
             idp = request.json["idp"]
             events = []
+            config = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]
+            entity_types = config["entity_types"]
             bad_entity_types = []
             bad_events = []
 
@@ -198,7 +201,8 @@ class IDPUpdateWebhook(MethodView):
             # return error message after handling signals that are
             # properly formed
             if len(bad_entity_types) > 0 or len(bad_events) > 0:
-                # FIXME: raise better error, since request isn't completely rejected
+                # FIXME: raise better error, since request isn't
+                # completely rejected
                 raise BadRequest
         except KeyError:  # request is missing 'idp' or 'updates' keys
             logger.error(f"Received malformed signal: {request.json}")

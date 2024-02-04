@@ -13,6 +13,7 @@ invenio-utilities-tuw = "*"
 invenio-queues = "*"
 invenio-remote-user-data = {editable = true, path = "."}
 requests-mock = "*"
+deepdiff = "*"
 
 [dev-packages]
 

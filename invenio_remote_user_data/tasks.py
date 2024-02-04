@@ -13,8 +13,7 @@
 # from celery import current_app as current_celery_app
 from celery import shared_task
 from celery.utils.log import get_task_logger
-import datetime
-from flask import current_app as app, session
+from flask import current_app as app  # , session
 from .proxies import current_remote_user_data_service
 
 task_logger = get_task_logger(__name__)

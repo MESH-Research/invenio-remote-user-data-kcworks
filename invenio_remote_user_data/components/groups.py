@@ -7,7 +7,6 @@
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
-from turtle import update
 from flask import current_app
 from invenio_accounts.models import Role, User
 from invenio_accounts.proxies import current_accounts
@@ -93,7 +92,7 @@ class GroupsComponent(ServiceComponent):
             if deleted_group is False:
                 raise RuntimeError(f'Role "{group_name}" not deleted.')
             else:
-                self.logger.debug(f'Role "{group_name}" deleted successfully.')
+                self.logger.info(f'Role "{group_name}" deleted successfully.')
         return deleted_group
 
     def add_user_to_group(self, group_name: str, user: User, **kwargs) -> bool:
@@ -133,7 +132,6 @@ class GroupsComponent(ServiceComponent):
             user: The user object to remove from the group, or the user's email
                 address.
         """
-        debug = True or current_app.config.get("DEBUG")
         removed_user = current_accounts.datastore.remove_role_from_user(
             user, group_name
         )
@@ -142,9 +140,8 @@ class GroupsComponent(ServiceComponent):
         if removed_user is False:
             raise RuntimeError("Cannot remove group role from user.")
         else:
-            if debug:
-                print(
-                    f'Role "{group_name}" removed from user '
-                    f'"{user}" successfully.'
-                )
+            self.logger.info(
+                f'Role "{group_name}" removed from user "{user.email}"'
+                "successfully."
+            )
         return removed_user

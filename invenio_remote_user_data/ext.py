@@ -7,8 +7,40 @@
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
+from datetime import datetime
+from flask import session  # after_this_request, request,
+from flask_principal import identity_changed, Identity  # identity_loaded,
+from invenio_accounts.models import UserIdentity  # Role,
 from . import config
 from .service import RemoteUserDataService
+from .tasks import do_user_data_update
+from .utils import logger
+
+
+def on_identity_changed(_, identity: Identity) -> None:
+    """Update user data from remote server when current user is
+    changed.
+    """
+    # FIXME: Do we need this check now that we're using webhooks?
+    print("%%%%% identity_changed signal received")
+    logger.info("%%%%% identity_changed signal received")
+    logger.info(identity.id)
+    # if self._data_is_stale(identity.id) and not self.update_in_progress:
+    my_user_identity = UserIdentity.query.filter_by(
+        id_user=identity.id
+    ).one_or_none()
+    # will have a UserIdentity if the user has logged in via an IDP
+    if my_user_identity is not None:
+        my_idp = my_user_identity.method
+        my_remote_id = my_user_identity.id
+
+        timestamp = datetime.utcnow().isoformat()
+        session.setdefault("user-data-updated", {})[identity.id] = timestamp
+        celery_result = do_user_data_update.delay(  # noqa
+            identity.id, my_idp, my_remote_id
+        )
+        # self.logger.debug('celery_result_id: '
+        #                   f'{celery_result.id}')
 
 
 class InvenioRemoteUserData(object):
@@ -51,3 +83,5 @@ class InvenioRemoteUserData(object):
             app (_type_): _description_
         """
         self.service = RemoteUserDataService(app, config=app.config)
+
+        identity_changed.connect(on_identity_changed, app)

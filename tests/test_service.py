@@ -1,6 +1,10 @@
+import email
 import arrow
 import pytest
 from flask import g
+
+# from flask_login import login_user, logout_user
+
 from flask_security import login_user, logout_user
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import UserIdentity
@@ -51,13 +55,11 @@ import time
                         "first": "My",
                         "last": "User",
                     },
-                    "affiliations": [{"name": "Michigan State University"}],
-                    "identifiers": [
-                        {
-                            "identifier": "0000-0002-1825-0097",
-                            "scheme": "orcid",
-                        }
-                    ],
+                    "affiliations": "Michigan State University",
+                    "identifiers": [{
+                        "identifier": "0000-0002-1825-0097",
+                        "scheme": "orcid",
+                    }],
                 },
                 "preferences": {
                     "email_visibility": "restricted",
@@ -68,15 +70,13 @@ import time
             },
             {
                 "user_profile": {
-                    "affiliations": [{"name": "Michigan State University"}],
                     "full_name": "My User",
-                    "identifiers": [
-                        {
-                            "identifier": "0000-0002-1825-0097",
-                            "scheme": "orcid",
-                        }
-                    ],
                     "name_parts": {"first": "My", "last": "User"},
+                    "identifiers": [{
+                        "identifier": "0000-0002-1825-0097",
+                        "scheme": "orcid",
+                    }],
+                    "affiliations": "Michigan State University",
                 },
                 "username": "knowledgeCommons-myuser",
             },
@@ -171,7 +171,7 @@ def test_update_data_from_remote_mock(
                         "first": "Mike",
                         "last": "Thicke",
                     },
-                    "affiliations": [{"name": "Michigan State University"}],
+                    "affiliations": "Michigan State University",
                 },
                 "preferences": {
                     "email_visibility": "restricted",
@@ -182,7 +182,7 @@ def test_update_data_from_remote_mock(
             },
             {
                 "user_profile": {
-                    "affiliations": [{"name": "Michigan State University"}],
+                    "affiliations": "Michigan State University",
                     "full_name": "Mike Thicke",
                     "name_parts": {
                         "first": "Mike",
@@ -324,206 +324,230 @@ def test_update_data_from_remote_live(
     } == new_data
 
 
-def test_on_identity_changed(client, app, user_factory, requests_mock):
+def test_on_identity_changed(client, app, user_factory, requests_mock, myuser):
     """Test service initialization and signal triggers."""
     assert "invenio-remote-user-data" in app.extensions
     assert app.extensions["invenio-remote-user-data"].service
 
     # mock the remote api endpoint
-    base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][
-        "knowledgeCommons"
-    ]["users"]["remote_endpoint"]
+    # base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][
+    #     "knowledgeCommons"
+    # ]["users"]["remote_endpoint"]
     requests_mock.get(
-        f"{base_url}/testuser",
-        json={"groups": [{"name": "awesome-mock"}, {"name": "admin"}]},
+        # f"{base_url}/testuser",
+        "https://hcommons-dev.org/wp-json/commons/v1/users/testuser",
+        json={
+            "username": "myuser",
+            "email": "info@inveniosoftware.org",
+            "name": "Jane User",
+            "first_name": "Jane",
+            "last_name": "User",
+            "institutional_affiliation": "Michigan State University",
+            "orcid": "123-456-7891",
+            "preferred_language": "en",
+            "time_zone": "UTC",
+            "groups": [
+                {"id": 12345, "name": "awesome-mock", "role": "admin"},
+                {"id": 67891, "name": "admin", "role": "member"},
+            ],
+        },
     )
 
     # mock SAML login info for the test user and add them to new groups
-    myuser = user_factory(confirmed_at=arrow.utcnow().datetime)
-    UserIdentity.create(myuser, "knowledgeCommons", "testuser")
+    myuser1 = user_factory(confirmed_at=arrow.utcnow().datetime)
+    UserIdentity.create(myuser1, "knowledgeCommons", "testuser")
     grouper = GroupsComponent(user_service)
-    grouper.create_new_group(group_name="cool-group")
+    grouper.create_new_group(group_name="knowledgeCommons|cool-group|admin")
     grouper.create_new_group(group_name="admin")
-    grouper.add_user_to_group(group_name="cool-group", user=myuser)
-    grouper.add_user_to_group(group_name="admin", user=myuser)
+    grouper.add_user_to_group(
+        group_name="knowledgeCommons|cool-group|admin", user=myuser1
+    )
+    grouper.add_user_to_group(group_name="admin", user=myuser1)
 
     # log user in and check whether group memberships were updated
-    login_user_via_session(client, email=myuser.email)
-    # login_user(myuser)
+    # need both login functions to log in and update client session
+    assert login_user(myuser1)
+    login_user_via_session(client, email=myuser1.email)
     client.get("/api")
     my_identity = g.identity
-    print(g.identity)
-    print(myuser.roles)
+    # note that the user is dropped from knowledgeCommons|cool-group|admin
+    # because that's a remotely managed group (idp prefix). But they are
+    # not dropped from the admin group because that's a locally managed
+    # group (no idp prefix).
+    print("^^^new user id", myuser1.id)
     assert (
-        len(
-            [
-                n.value
-                for n in my_identity.provides
-                if n.value
-                in [
-                    "admin",
-                    "awesome-mock",
-                    "any_user",
-                    3,
-                    "authenticated_user",
-                ]
+        len([
+            n.value
+            for n in my_identity.provides
+            if n.value
+            in [
+                "knowledgeCommons|admin|member",
+                "knowledgeCommons|awesome-mock|admin",
+                "any_user",
+                myuser1.id,
+                "authenticated_user",
+                "admin",
             ]
-        )
-        == 5
+        ])
+        == 6
     )
     assert (
-        len(
-            [
-                n.value
-                for n in my_identity.provides
-                if n.value
-                not in [
-                    "admin",
-                    "awesome-mock",
-                    "any_user",
-                    3,
-                    "authenticated_user",
-                ]
+        len([
+            n.value
+            for n in my_identity.provides
+            if n.value
+            not in [
+                "knowledgeCommons|admin|member",
+                "knowledgeCommons|awesome-mock|admin",
+                "any_user",
+                myuser1.id,
+                "authenticated_user",
+                "admin",
             ]
-        )
+        ])
         == 0
     )
 
+    assert myuser1.username == "knowledgeCommons-myuser"
+    assert myuser1.email == "info@inveniosoftware.org"
+    assert myuser1.user_profile["full_name"] == "Jane User"
+    assert myuser1.user_profile["affiliations"] == "Michigan State University"
+    assert myuser1.user_profile["identifiers"] == [{
+        "identifier": "123-456-7891",
+        "scheme": "orcid",
+    }]
+    assert myuser1.user_profile["name_parts"] == {
+        "first": "Jane",
+        "last": "User",
+    }
+    assert myuser1.preferences["email_visibility"] == "restricted"
+    assert myuser1.preferences["visibility"] == "restricted"
+    assert myuser1.preferences["locale"] == "en"
+    # FIXME: Change the default timezone to UTC
+    assert myuser1.preferences["timezone"] == "Europe/Zurich"
+
     # log user out and check whether group memberships were updated
     logout_user()
+    with client.session_transaction() as session:
+        if "user_id" in session:
+            del session["user_id"]
+            del session["_user_id"]
     time.sleep(10)
-    client.get("/")
-    print(dir(client))
+    client.get("/api")
     my_identity = g.identity
-    # print(my_identity)
     assert (
         len([n.value for n in my_identity.provides if n.value in ["any_user"]])
         == 1
     )
     assert (
-        len(
-            [
-                n.value
-                for n in my_identity.provides
-                if n.value not in ["any_user"]
-            ]
-        )
+        len([
+            n.value
+            for n in my_identity.provides
+            if n.value not in ["any_user"]
+        ])
         == 0
     )
 
     # log a different user in without mocking SAML login (so like local)
-    myuser2 = user_factory(email="another@mydomain.com")
+    # no request should be made for any user updates
+    myuser2 = user_factory(email="anotheruser@msu.edu")
     login_user(myuser2)
     login_user_via_session(client, email=myuser2.email)
-    time.sleep(10)
-    client.get("/")
+    client.get("/api")
     my_identity = g.identity
-    print("$$$$$")
-    print(g.identity)
-    print(myuser2)
-    print(get_identity_for_user(myuser2.email))
     assert (
-        len(
-            [
-                n.value
-                for n in my_identity.provides
-                if n.value in ["any_user", 2, "authenticated_user"]
-            ]
-        )
+        len([
+            n.value
+            for n in my_identity.provides
+            if n.value in ["any_user", myuser2.id, "authenticated_user"]
+        ])
         == 3
     )
     assert (
-        len(
-            [
-                n.value
-                for n in my_identity.provides
-                if n.value not in ["any_user", 2, "authenticated_user"]
-            ]
-        )
+        len([
+            n.value
+            for n in my_identity.provides
+            if n.value not in ["any_user", myuser2.id, "authenticated_user"]
+        ])
         == 0
     )
+    assert myuser2.username is None
 
 
 @pytest.mark.parametrize(
     "remote_data,starting_data,new_data,user_changes,group_changes",
-    [
-        (
-            {
-                "users": {
-                    "username": "myuser",
-                    "email": "myaddress@hcommons.org",
-                    "name": "My User",
-                    "first_name": "My",
-                    "last_name": "User",
-                    "institutional_affiliation": "Michigan State University",
-                    "orcid": "0000-0002-1825-0097",
-                    "groups": [
-                        {
-                            "id": 1000576,
-                            "name": "awesome-mock",
-                            "role": "admin",
-                        },
-                        {
-                            "id": 1000577,
-                            "name": "cool-group2",
-                            "role": "member",
-                        },
-                    ],
-                },
-            },
-            {
-                "user": {"email": "myaddress@hcommons.org"},
-                "groups": [
-                    {"name": "cool-group", "role": "admin"},
-                    {"name": "cool-group2", "role": "member"},
-                ],
-            },
-            {
-                "active": True,
-                "username": "knowledgeCommons-myuser",
+    [(
+        {
+            "users": {
+                "username": "myuser",
                 "email": "myaddress@hcommons.org",
-                "user_profile": {
-                    "affiliations": [{"name": "Michigan State University"}],
-                    "full_name": "My User",
-                    "identifiers": [
-                        {
-                            "identifier": "0000-0002-1825-0097",
-                            "scheme": "orcid",
-                        }
-                    ],
-                    "name_parts": {"first": "My", "last": "User"},
-                },
-                "preferences": {
-                    "email_visibility": "restricted",
-                    "visibility": "restricted",
-                    "locale": "en",
-                    "timezone": "Europe/Zurich",
-                },
-            },
-            {
-                "username": "knowledgeCommons-myuser",
-                "user_profile": {
-                    "affiliations": [{"name": "Michigan State University"}],
-                    "full_name": "My User",
-                    "identifiers": [
-                        {
-                            "identifier": "0000-0002-1825-0097",
-                            "scheme": "orcid",
-                        }
-                    ],
-                    "name_parts": {"first": "My", "last": "User"},
-                },
-            },
-            {
-                "dropped_groups": ["knowledgeCommons|cool-group|admin"],
-                "added_groups": ["knowledgeCommons|awesome-mock|admin"],
-                "unchanged_groups": [
-                    "knowledgeCommons|cool-group2|member",
-                    "admin",
+                "name": "My User",
+                "first_name": "My",
+                "last_name": "User",
+                "institutional_affiliation": "Michigan State University",
+                "orcid": "0000-0002-1825-0097",
+                "groups": [
+                    {
+                        "id": 1000576,
+                        "name": "awesome-mock",
+                        "role": "admin",
+                    },
+                    {
+                        "id": 1000577,
+                        "name": "cool-group2",
+                        "role": "member",
+                    },
                 ],
             },
-        )
-    ],
+        },
+        {
+            "user": {"email": "myaddress@hcommons.org"},
+            "groups": [
+                {"name": "cool-group", "role": "admin"},
+                {"name": "cool-group2", "role": "member"},
+            ],
+        },
+        {
+            "active": True,
+            "username": "knowledgeCommons-myuser",
+            "email": "myaddress@hcommons.org",
+            "user_profile": {
+                "affiliations": "Michigan State University",
+                "full_name": "My User",
+                "identifiers": [{
+                    "identifier": "0000-0002-1825-0097",
+                    "scheme": "orcid",
+                }],
+                "name_parts": {"first": "My", "last": "User"},
+            },
+            "preferences": {
+                "email_visibility": "restricted",
+                "visibility": "restricted",
+                "locale": "en",
+                "timezone": "Europe/Zurich",
+            },
+        },
+        {
+            "username": "knowledgeCommons-myuser",
+            "user_profile": {
+                "affiliations": "Michigan State University",
+                "full_name": "My User",
+                "identifiers": [{
+                    "identifier": "0000-0002-1825-0097",
+                    "scheme": "orcid",
+                }],
+                "name_parts": {"first": "My", "last": "User"},
+            },
+        },
+        {
+            "dropped_groups": ["knowledgeCommons|cool-group|admin"],
+            "added_groups": ["knowledgeCommons|awesome-mock|admin"],
+            "unchanged_groups": [
+                "admin",
+                "knowledgeCommons|cool-group2|member",
+            ],
+        },
+    )],
 )
 def test_compare_remote_with_local(
     app,

@@ -19,7 +19,6 @@ from invenio_records_resources.services import Service
 
 # from invenio_users_resources.proxies import current_users_service
 from flask import session  # after_this_request, request,
-from flask_principal import identity_changed, Identity  # identity_loaded,
 from .tasks import do_user_data_update
 import os
 
@@ -51,6 +50,7 @@ class RemoteUserDataService(Service):
             minutes=app.config["REMOTE_USER_DATA_UPDATE_INTERVAL"]
         )
         self.user_data_stale = True
+        # TODO: Is there a risk of colliding operations?
         self.update_in_progress = False
 
         @remote_data_updated.connect_via(app)
@@ -94,52 +94,24 @@ class RemoteUserDataService(Service):
                     # TODO: implement group updates and group/user creation
                     pass
 
-        @identity_changed.connect_via(app)
-        def on_identity_changed(_, identity: Identity) -> None:
-            """Update user data from remote server when current user is
-            changed.
-            """
-            # FIXME: Do we need this check now that we're using webhooks?
-            if (
-                self._data_is_stale(identity.id)
-                and not self.update_in_progress
-            ):
-                my_user_identity = UserIdentity.query.filter_by(
-                    id_user=identity.id
-                ).one_or_none()
-                # will have a UserIdentity if the user has logged in via an IDP
-                if my_user_identity is not None:
-                    my_idp = my_user_identity.method
-                    my_remote_id = my_user_identity.id
-
-                    timestamp = datetime.datetime.utcnow().isoformat()
-                    session.setdefault("user-data-updated", {})[
-                        identity.id
-                    ] = timestamp
-                    celery_result = do_user_data_update.delay(  # noqa
-                        identity.id, my_idp, my_remote_id
-                    )
-                    # self.logger.debug('celery_result_id: '
-                    #                   f'{celery_result.id}')
-
     # TODO: decide whether to reimplement now that we're using webhooks
-    def _data_is_stale(self, user_id) -> bool:
-        """Check whether user data is stale."""
-        user_data_stale = True
-        if (
-            user_id
-            and "user-data-updated" in session.keys()
-            and type(session["user-data-updated"]) is not str
-            and user_id in session["user-data-updated"].keys()
-        ):
-            if session["user-data-updated"][user_id]:
-                last_update_dt = datetime.datetime.fromisoformat(
-                    session["user-data-updated"][user_id]
-                )
-                interval = datetime.datetime.utcnow() - last_update_dt
-                if interval <= self.update_interval:
-                    user_data_stale = False
-        return user_data_stale
+    # def _data_is_stale(self, user_id) -> bool:
+    #     """Check whether user data is stale."""
+    #     user_data_stale = True
+    #     if (
+    #         user_id
+    #         and "user-data-updated" in session.keys()
+    #         and type(session["user-data-updated"]) is not str
+    #         and user_id in session["user-data-updated"].keys()
+    #     ):
+    #         if session["user-data-updated"][user_id]:
+    #             last_update_dt = datetime.datetime.fromisoformat(
+    #                 session["user-data-updated"][user_id]
+    #             )
+    #             interval = datetime.datetime.utcnow() - last_update_dt
+    #             if interval <= self.update_interval:
+    #                 user_data_stale = False
+    #     return user_data_stale
 
     def update_data_from_remote(
         self, user_id: int, idp: str, remote_id: str, **kwargs
@@ -169,13 +141,12 @@ class RemoteUserDataService(Service):
         # TODO: Can we refresh the user's identity if they're currently
         # logged in?
         update_logger.debug(
-            f"Updating data from remote server -- user: {user_id}; idp: {idp};"
+            f"Updating data from remote server -- user: {user_id}; "
+            f"idp: {idp};"
             f" remote_id: {remote_id}."
         )
         updated_data = {}
         user = current_accounts.datastore.get_user_by_id(user_id)
-        # user = current_users_service.read(system_identity, user_id).data
-        # self.logger.info(pformat(user_rec))
         remote_data = self.fetch_from_remote_api(
             user, idp, remote_id, **kwargs
         )
@@ -189,13 +160,10 @@ class RemoteUserDataService(Service):
             updated_data = self.update_local_user_data(
                 user, new_data, user_changes, groups_changes, **kwargs
             )
-            assert sorted(updated_data["groups"]) == sorted(
-                [
-                    *groups_changes["added_groups"],
-                    *groups_changes["unchanged_groups"],
-                ]
-            )
-
+            assert sorted(updated_data["groups"]) == sorted([
+                *groups_changes["added_groups"],
+                *groups_changes["unchanged_groups"],
+            ])
         return (
             user,
             updated_data["user"],
@@ -213,7 +181,8 @@ class RemoteUserDataService(Service):
             idp (str): The SAML identity provider name.
             remote_id (str): The identifier for the user on the remote idp
                 service.
-            tokens (dict): A dictionary of API tokens for the remote API. Optional.
+            tokens (dict): A dictionary of API tokens for the remote
+                API. Optional.
 
         Returns:
             dict: A dictionary of the user data returned by the remote api
@@ -299,8 +268,6 @@ class RemoteUserDataService(Service):
                     f'{idp}|{g["name"]}|{g["role"]}' for g in groups
                 ]
                 local_groups = [r.name for r in user.roles]
-                update_logger.info(f"REMOTE GROUPS: {remote_groups}")
-                update_logger.info(f"LOCAL GROUPS: {local_groups}")
                 if remote_groups != local_groups:
                     group_changes = {
                         "dropped_groups": [
@@ -326,19 +293,17 @@ class RemoteUserDataService(Service):
                         "unchanged_groups": local_groups,
                     }
             new_data["user_profile"] = user.user_profile
-            new_data["user_profile"].update(
-                {
-                    "full_name": users["name"],
-                    "name_parts": {
-                        "first": users["first_name"],
-                        "last": users["last_name"],
-                    },
-                }
-            )
+            new_data["user_profile"].update({
+                "full_name": users["name"],
+                "name_parts": {
+                    "first": users["first_name"],
+                    "last": users["last_name"],
+                },
+            })
             if users.get("institutional_affiliation"):
-                new_data["user_profile"].setdefault("affiliations", []).append(
-                    {"name": users["institutional_affiliation"]}
-                )
+                new_data["user_profile"]["affiliations"] = users[
+                    "institutional_affiliation"
+                ]
             if users.get("orcid"):
                 new_data["user_profile"].setdefault("identifiers", []).append(
                     {"identifier": users["orcid"], "scheme": "orcid"}
@@ -346,12 +311,10 @@ class RemoteUserDataService(Service):
             new_data["username"] = f'{idp}-{users["username"]}'
             new_data["email"] = users["email"]
             new_data["preferences"] = user.preferences
-            new_data["preferences"].update(
-                {
-                    "visibility": "restricted",
-                    "email_visibility": "restricted",
-                }
-            )
+            new_data["preferences"].update({
+                "visibility": "restricted",
+                "email_visibility": "restricted",
+            })
             if users.get("preferred_language"):
                 new_data["preferences"]["locale"] = users["preferred_language"]
         user_changes = diff_between_nested_dicts(initial_user_data, new_data)
@@ -410,7 +373,6 @@ class RemoteUserDataService(Service):
         grouper = GroupsComponent(self)
         updated_local_groups = [r.name for r in user.roles]
         for group_name in changed_memberships["added_groups"]:
-            self.logger.debug(f"ADDING GROUP for user {user}: {group_name}")
             group_role = grouper.find_or_create_group(group_name)
             if (
                 group_role
@@ -418,7 +380,6 @@ class RemoteUserDataService(Service):
             ):
                 updated_local_groups.append(group_role.name)
         for group_name in changed_memberships["dropped_groups"]:
-            self.logger.debug(f"DROPPING GROUP for user {user}: {group_name}")
             group_role = grouper.find_group(group_name)
             if (
                 group_role

@@ -151,7 +151,8 @@ class CustomUserProfileSchema(Schema):
     """The default user profile schema."""
 
     full_name = fields.String()
-    affiliations = fields.List(fields.Nested(CustomAffiliationSchema))
+    # affiliations = fields.List(fields.Nested(CustomAffiliationSchema))
+    affiliations = fields.String()
     name_parts = fields.Nested(CustomNamePartsSchema)
     identifiers = fields.List(fields.Nested(CustomUserIdentifierSchema))
 
@@ -285,7 +286,7 @@ def testapp(app):
     yield app
 
 
-@pytest.fixture()
+@pytest.fixture(scope="function")
 def user_factory(app, db):
     def make_user(
         email="info@inveniosoftware.org", password="password", **kwargs
@@ -304,7 +305,7 @@ def user_factory(app, db):
     return make_user
 
 
-@pytest.fixture()
+@pytest.fixture(scope="function")
 def user_factory_logged_in(app, db, user_factory):
     def client_with_login(
         client, email="info@inveniosoftware.org", password="password", **kwargs
@@ -318,10 +319,10 @@ def user_factory_logged_in(app, db, user_factory):
     return client_with_login
 
 
-@pytest.fixture()
+@pytest.fixture(scope="function")
 def myuser(UserFixture, testapp, db):
     u = UserFixture(
-        email="myuser@inveniosoftware.org",
+        email="auser@inveniosoftware.org",
         password="auser",
     )
     u.create(testapp, db)
@@ -329,7 +330,7 @@ def myuser(UserFixture, testapp, db):
     return u
 
 
-@pytest.fixture()
+@pytest.fixture(scope="function")
 def myuser2(UserFixture, testapp, db):
     u = UserFixture(
         email="myuser2@inveniosoftware.org",

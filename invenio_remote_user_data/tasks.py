@@ -7,8 +7,7 @@
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
-"""Celery task to update user data from remote API.
-"""
+"""Celery task to update user data from remote API."""
 
 # from celery import current_app as current_celery_app
 from celery import shared_task
@@ -24,7 +23,8 @@ def do_user_data_update(user_id, idp, remote_id, **kwargs):
     """Perform a user data update."""
 
     with app.app_context():
-        task_logger.debug("doing task&&&&&&&")
+        # task_logger.debug("doing task&&&&&&&")
+        # print("doing task&&&&&&&")
         task_logger.info(dir(task_logger))
         task_logger.info(task_logger.handlers)
         service = current_remote_user_data_service

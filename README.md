@@ -35,17 +35,23 @@ If "time_zone" is provided it should be ???
 
 ## Updating group memberships (InvenioRDM roles)
 
-In addition to recording and updating the user's profile information, it also updates the user's group memberships on the SAML ipd service. If the user is a member of any groups on the remote ID provider, it adds the user to the corresponding groups (InvenioRDM roles) on the Invenio server. If a group role does not exist on the Invenio server, the service creates the role. If a user is the last member of a group role and is removed, the service deletes the invenio-accounts role.
+In addition to recording and updating the user's profile information, it also updates the user's group memberships on the SAML ipd service. If the user is a member of any groups on the remote ID provider, it adds the user to the corresponding groups (InvenioRDM roles) on the Invenio server. If a group role does not exist on the Invenio server, the service creates the role. If a user has been dropped from a group on the remote IDP, they are removed from the corresponding InvenioRDM role.If a user is the last member of a group role and is removed, the service deletes the invenio-accounts role.
 
-Note that the group membership updates are one-directional. If a user is added to or removed from a group (role) on the Invenio server, the service does not add the user to the corresponding group on the remote ID provider. There may also be groups (roles) in Invenio that are strictly internal and do not correspond with any groups on the remote ID provider (e.g., 'admin').
+The created group names are formed following the pattern "{IDP name}|{remote group name}|{user's role}". So if they are a "member" of the "developers" group on the remote IDP service called "myIDP", they will be assigned to
+the InvenioRDM role "myIDP|developers|member".
+
+Note that only InvenioRDM roles that begin with the user's IDP name (like "myIDP|") are included in this synchronization of memberships. Roles without
+a bar-delineated IDP prefix are considered locally managed. Users will not
+be removed from these roles, even if they do not appear in their memberships
+on the remote IDP.
+
+Group membership updates are also one-directional. If a user is added to or removed from a group (role) on the Invenio server, the service does not add the user to the corresponding group on the remote ID provider.
 
 Once a user has been assigned the Invenio role, the user's Invenio Identity object will be updated (on the next request) to provide role Needs corresponding with the user's updated roles.
 
-Note that if a remote group is associated with an Invenio community, the service will NOT add the user to the corresponding community. Instead, the community administrators should add the remote group as a group member of the community. ???
-
 ## Keeping remote data updated
 
-The service is always called when a user logs in (triggered by the identity_changed signal emitted by flask-principal). In order to stay up-to-date during long user sessions, the service will also be called periodically during a logged-in session. This is done by a background celery task scheduled when the user logs in. By default the update period is 1 hour, but this can be changed by setting the REMOTE_USER_DATA_UPDATE_PERIOD configuration variable.
+The service is always called when a user logs in (triggered by the identity_changed signal emitted by flask-principal).
 
 ## Update webhook
 
@@ -107,10 +113,6 @@ REMOTE_USER_DATA_API_ENDPOINTS
                                the request. The token should be stored in the
                                .env file in the root directory of the Invenio
                                instance or set in the server system environment.
-
-REMOTE_USER_DATA_UPDATE_INTERVAL
-
-    The period (in minutes) between background calls to the remote API to update user data during a logged-in session. Default is 60 minutes.
 
 REMOTE_USER_DATA_MQ_EXCHANGE
 

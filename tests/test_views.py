@@ -1,6 +1,8 @@
 import pytest
+import requests
 import json
 import os
+from invenio_remote_user_data.utils import logger
 
 # import requests
 
@@ -53,13 +55,25 @@ def test_webhook_get(client, app):
         ),
     ],
 )
-def test_webhook_post(client, app, token, payload, resp_code, resp_data):
+def test_webhook_post(
+    client, app, payload, admin, token, resp_code, resp_data, db
+):
     """Test webhook."""
 
-    headers = {"Authorization": f"Bearer {token}"}
+    from invenio_oauth2server.models import Token
+
+    token_actual = Token.create_personal(
+        "webhook", admin.id, scopes=[], is_internal=False
+    )
+    db.session.commit()
+    # logger.info(f"token_actual: {token_actual.client_id}")
+
+    headers = {"Authorization": f"Bearer {token_actual.client_id}"}
 
     response = client.post(
-        "/api/webhooks/idp_data_update", json=payload, headers=headers
+        "/api/webhooks/idp_data_update",
+        json=payload,
+        headers=headers,
     )
 
     print(json.loads(response.data))

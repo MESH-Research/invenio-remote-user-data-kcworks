@@ -1,10 +1,6 @@
-import email
 import arrow
 import pytest
-from flask import g
-
-# from flask_login import login_user, logout_user
-
+from flask import g, session
 from flask_security import login_user, logout_user
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import UserIdentity
@@ -18,7 +14,8 @@ from invenio_remote_user_data.components.groups import (
 from invenio_remote_user_data.proxies import (
     current_remote_user_data_service as user_service,
 )
-from pprint import pprint
+from invenio_remote_user_data.utils import logger
+from pprint import pprint, pformat
 import time
 
 
@@ -374,7 +371,6 @@ def test_on_identity_changed(client, app, user_factory, requests_mock, myuser):
     # because that's a remotely managed group (idp prefix). But they are
     # not dropped from the admin group because that's a locally managed
     # group (no idp prefix).
-    print("^^^new user id", myuser1.id)
     assert (
         len([
             n.value

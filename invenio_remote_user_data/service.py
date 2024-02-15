@@ -201,7 +201,6 @@ class RemoteUserDataService(Service):
                 remote_api_token = os.environ[
                     users_config["token_env_variable_label"]
                 ]
-
             if users_config["remote_identifier"] != "id":
                 remote_id = getattr(user, users_config["remote_identifier"])
             api_url = f'{users_config["remote_endpoint"]}{remote_id}'
@@ -212,8 +211,17 @@ class RemoteUserDataService(Service):
             headers = {}
             if remote_api_token:
                 headers = {"Authorization": f"Bearer {remote_api_token}"}
-            update_logger.info(f"API URL: {api_url}")
-            response = callfunc(api_url, headers=headers, verify=False)
+            update_logger.debug(f"API URL: {api_url}")
+            response = callfunc(
+                api_url, headers=headers, verify=False, timeout=10
+            )
+            if response.status_code != 200:
+                update_logger.error(
+                    f"Error fetching user data from remote API: {api_url}"
+                )
+                update_logger.error(
+                    "Response status code: " + str(response.status_code)
+                )
             try:
                 # remote_data['groups'] = {'status_code': response.status_code,
                 #                          'headers': response.headers,
@@ -226,6 +234,7 @@ class RemoteUserDataService(Service):
                     " JSON:"
                 )
                 # self.logger.debug(f'{response.text}')
+        self.logger.debug(remote_data)
 
         return remote_data
 

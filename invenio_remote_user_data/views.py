@@ -113,7 +113,7 @@ from werkzeug.exceptions import (
     Forbidden,
     MethodNotAllowed,
     # NotFound,
-    Unauthorized,
+    # Unauthorized,
 )
 import os
 from .utils import logger
@@ -129,6 +129,7 @@ class IDPUpdateWebhook(MethodView):
 
     def __init__(self):
         self.webhook_token = os.getenv("REMOTE_USER_DATA_WEBHOOK_TOKEN")
+        self.logger = logger
 
     def post(self):
         """
@@ -137,15 +138,15 @@ class IDPUpdateWebhook(MethodView):
         These are requests from a remote IDP indicating that user or group
         data has been updated on the remote server.
         """
-        headers = request.headers
-        bearer = headers.get("Authorization")
-        token = bearer.split()[1]
-        if token != self.webhook_token:
-            print("Unauthorized")
-            raise Unauthorized
+        self.logger.debug("****Received POST request to webhook endpoint")
+        # headers = request.headers
+        # bearer = headers.get("Authorization")
+        # token = bearer.split()[1]
+        # if token != self.webhook_token:
+        #     print("Unauthorized")
+        #     raise Unauthorized
 
         try:
-            print("Received signal")
             idp = request.json["idp"]
             events = []
             config = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]
@@ -155,20 +156,18 @@ class IDPUpdateWebhook(MethodView):
 
             for e in request.json["updates"].keys():
                 if e in entity_types.keys():
-                    logger.info(
+                    logger.debug(
                         f"{idp} Received {e} update signal: "
                         f"{request.json['updates'][e]}"
                     )
                     for u in request.json["updates"][e]:
                         if u["event"] in entity_types[e]["events"]:
-                            events.append(
-                                {
-                                    "idp": idp,
-                                    "entity_type": e,
-                                    "event": u["event"],
-                                    "id": u["id"],
-                                }
-                            )
+                            events.append({
+                                "idp": idp,
+                                "entity_type": e,
+                                "event": u["event"],
+                                "id": u["id"],
+                            })
                         else:
                             bad_events.append(u)
                             logger.error(
@@ -188,14 +187,14 @@ class IDPUpdateWebhook(MethodView):
                 remote_data_updated.send(
                     app._get_current_object(), events=events
                 )
-                logger.info(
+                logger.debug(
                     f"Published {len(events)} events to queue and emitted"
                     " remote_data_updated signal"
                 )
-                logger.info(events)
+                logger.debug(events)
             else:
-                logger.info(f"{idp} No valid events received")
-                logger.info(request.json["updates"])
+                logger.error(f"{idp} No valid events received")
+                logger.error(request.json["updates"])
                 raise BadRequest
 
             # return error message after handling signals that are

@@ -7,14 +7,13 @@
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
-"""Utility functions for invenio-remote-user-data.
-"""
+"""Utility functions for invenio-remote-user-data."""
 
 import logging
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter("%(asctime)s:%(levelname)s : %(message)s")
 file_handler = logging.handlers.RotatingFileHandler(
     Path(__file__).parent / "logs" / "remote_data_updates.log",

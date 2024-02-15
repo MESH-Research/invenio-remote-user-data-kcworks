@@ -22,9 +22,9 @@ def on_identity_changed(_, identity: Identity) -> None:
     changed.
     """
     # FIXME: Do we need this check now that we're using webhooks?
-    print("%%%%% identity_changed signal received")
-    logger.info("%%%%% identity_changed signal received")
-    logger.info(identity.id)
+    logger.info(
+        "%%%%% identity_changed signal received for " f"user {identity.id}"
+    )
     # if self._data_is_stale(identity.id) and not self.update_in_progress:
     my_user_identity = UserIdentity.query.filter_by(
         id_user=identity.id

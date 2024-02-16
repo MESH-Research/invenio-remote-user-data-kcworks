@@ -107,15 +107,17 @@ from flask import (
     current_app as app,
 )
 from flask.views import MethodView
+from invenio_accounts.models import UserIdentity
 from invenio_queues.proxies import current_queues
 from werkzeug.exceptions import (
     BadRequest,
     Forbidden,
     MethodNotAllowed,
-    # NotFound,
+    NotFound,
     # Unauthorized,
 )
 import os
+
 from .utils import logger
 from .signals import remote_data_updated
 
@@ -153,6 +155,10 @@ class IDPUpdateWebhook(MethodView):
             entity_types = config["entity_types"]
             bad_entity_types = []
             bad_events = []
+            users = []
+            bad_users = []
+            groups = []
+            bad_groups = []
 
             for e in request.json["updates"].keys():
                 if e in entity_types.keys():
@@ -162,12 +168,32 @@ class IDPUpdateWebhook(MethodView):
                     )
                     for u in request.json["updates"][e]:
                         if u["event"] in entity_types[e]["events"]:
-                            events.append({
-                                "idp": idp,
-                                "entity_type": e,
-                                "event": u["event"],
-                                "id": u["id"],
-                            })
+                            if e == "users":
+                                user_identity = UserIdentity.query.filter_by(
+                                    id=u["id"], method=idp
+                                ).one_or_none()
+                                if user_identity is None:
+                                    bad_users.append(u["id"])
+                                    logger.error(
+                                        f"Received update signal from {idp} "
+                                        f"for unknown user: {u['id']}"
+                                    )
+                                else:
+                                    users.append(u["id"])
+                                    events.append({
+                                        "idp": idp,
+                                        "entity_type": e,
+                                        "event": u["event"],
+                                        "id": u["id"],
+                                    })
+                            elif e == "groups":
+                                groups.append(u["id"])
+                                events.append({
+                                    "idp": idp,
+                                    "entity_type": e,
+                                    "event": u["event"],
+                                    "id": u["id"],
+                                })
                         else:
                             bad_events.append(u)
                             logger.error(
@@ -193,9 +219,30 @@ class IDPUpdateWebhook(MethodView):
                 )
                 logger.debug(events)
             else:
-                logger.error(f"{idp} No valid events received")
-                logger.error(request.json["updates"])
-                raise BadRequest
+                if not users and bad_users or not groups and bad_groups:
+                    entity_string = ""
+                    if not users and bad_users:
+                        entity_string += "users"
+                    if not groups and bad_groups:
+                        if entity_string:
+                            entity_string += " and "
+                        entity_string += "groups"
+                    logger.error(
+                        f"{idp} requested updates for {entity_string} that"
+                        " do not exist"
+                    )
+                    logger.error(request.json["updates"])
+                    raise NotFound
+                elif not groups and bad_groups:
+                    logger.error(
+                        f"{idp} requested updates for groups that do not exist"
+                    )
+                    logger.error(request.json["updates"])
+                    raise NotFound
+                else:
+                    logger.error(f"{idp} No valid events received")
+                    logger.error(request.json["updates"])
+                    raise BadRequest
 
             # return error message after handling signals that are
             # properly formed

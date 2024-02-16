@@ -18,12 +18,14 @@ from invenio_queues.proxies import current_queues
 from invenio_records_resources.services import Service
 
 # from invenio_users_resources.proxies import current_users_service
-from flask import session  # after_this_request, request,
+from flask import session
+from py import log  # after_this_request, request,
 from .tasks import do_user_data_update
 import os
 
 # from pprint import pprint
 import requests
+import traceback
 
 # from typing import Optional
 from werkzeug.local import LocalProxy
@@ -140,36 +142,47 @@ class RemoteUserDataService(Service):
         """
         # TODO: Can we refresh the user's identity if they're currently
         # logged in?
-        update_logger.debug(
+        update_logger.info(
             f"Updating data from remote server -- user: {user_id}; "
             f"idp: {idp};"
             f" remote_id: {remote_id}."
         )
         updated_data = {}
-        user = current_accounts.datastore.get_user_by_id(user_id)
-        remote_data = self.fetch_from_remote_api(
-            user, idp, remote_id, **kwargs
-        )
-        if remote_data:
-            new_data, user_changes, groups_changes = (
-                self.compare_remote_with_local(
-                    user, remote_data, idp, **kwargs
+        try:
+            user = current_accounts.datastore.get_user_by_id(user_id)
+            remote_data = self.fetch_from_remote_api(
+                user, idp, remote_id, **kwargs
+            )
+            if remote_data:
+                new_data, user_changes, groups_changes = (
+                    self.compare_remote_with_local(
+                        user, remote_data, idp, **kwargs
+                    )
                 )
+            if new_data:
+                updated_data = self.update_local_user_data(
+                    user, new_data, user_changes, groups_changes, **kwargs
+                )
+                assert sorted(updated_data["groups"]) == sorted([
+                    *groups_changes["added_groups"],
+                    *groups_changes["unchanged_groups"],
+                ])
+            update_logger.info(
+                "User data successfully updated from remote "
+                f"server: {updated_data}"
             )
-        if new_data:
-            updated_data = self.update_local_user_data(
-                user, new_data, user_changes, groups_changes, **kwargs
+            return (
+                user,
+                updated_data["user"],
+                updated_data["groups"],
+                groups_changes,
             )
-            assert sorted(updated_data["groups"]) == sorted([
-                *groups_changes["added_groups"],
-                *groups_changes["unchanged_groups"],
-            ])
-        return (
-            user,
-            updated_data["user"],
-            updated_data["groups"],
-            groups_changes,
-        )
+        except Exception as e:
+            update_logger.error(
+                f"Error updating user data from remote server: {repr(e)}"
+            )
+            update_logger.error(traceback.format_exc())
+            return None, None, None, None
 
     def fetch_from_remote_api(
         self, user: User, idp: str, remote_id: str, tokens=None, **kwargs
@@ -268,7 +281,14 @@ class RemoteUserDataService(Service):
             "active": user.active,
         }
         new_data = {"active": True}
-        group_changes = {}
+
+        local_groups = [r.name for r in user.roles]
+        group_changes = {
+            "dropped_groups": [],
+            "added_groups": [],
+            "unchanged_groups": local_groups,
+        }
+
         users = remote_data.get("users")
         if users:
             groups = users.get("groups")
@@ -276,7 +296,6 @@ class RemoteUserDataService(Service):
                 remote_groups = [
                     f'{idp}|{g["name"]}|{g["role"]}' for g in groups
                 ]
-                local_groups = [r.name for r in user.roles]
                 if remote_groups != local_groups:
                     group_changes = {
                         "dropped_groups": [
@@ -295,12 +314,6 @@ class RemoteUserDataService(Service):
                         for r in local_groups
                         if r not in group_changes["dropped_groups"]
                     ]
-                else:
-                    group_changes = {
-                        "dropped_groups": [],
-                        "added_groups": [],
-                        "unchanged_groups": local_groups,
-                    }
             new_data["user_profile"] = user.user_profile
             new_data["user_profile"].update({
                 "full_name": users["name"],
@@ -360,10 +373,16 @@ class RemoteUserDataService(Service):
             #     system_identity, user.id, new_data
             # ).data
             updated_data["user"] = user_changes
-        if group_changes["added_groups"] or group_changes["dropped_groups"]:
+        else:
+            updated_data["user"] = []
+        if group_changes.get("added_groups") or group_changes.get(
+            "dropped_groups"
+        ):
             updated_data["groups"] = self.update_invenio_group_memberships(
                 user, group_changes, **kwargs
             )
+        else:
+            updated_data["groups"] = group_changes["unchanged_groups"] or []
         return updated_data
 
     def update_invenio_group_memberships(

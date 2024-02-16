@@ -1,10 +1,8 @@
 import pytest
-import requests
 import json
 import os
-from invenio_remote_user_data.utils import logger
 
-# import requests
+# from invenio_remote_user_data.utils import logger
 
 
 def test_webhook_get(client, app):

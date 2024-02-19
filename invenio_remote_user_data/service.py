@@ -19,7 +19,6 @@ from invenio_records_resources.services import Service
 
 # from invenio_users_resources.proxies import current_users_service
 from flask import session
-from py import log  # after_this_request, request,
 from .tasks import do_user_data_update
 import os
 

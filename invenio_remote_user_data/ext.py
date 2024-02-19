@@ -64,6 +64,7 @@ class InvenioRemoteUserData(object):
         """
         self.init_config(app)
         self.init_services(app)
+        self.init_listeners(app)
         app.extensions["invenio-remote-user-data"] = self
 
     def init_config(self, app) -> None:
@@ -84,4 +85,10 @@ class InvenioRemoteUserData(object):
         """
         self.service = RemoteUserDataService(app, config=app.config)
 
+    def init_listeners(self, app):
+        """Initialize listeners for the extension.
+
+        Args:
+            app (_type_): _description_
+        """
         identity_changed.connect(on_identity_changed, app)

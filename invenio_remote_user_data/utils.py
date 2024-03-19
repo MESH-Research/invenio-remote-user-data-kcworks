@@ -10,13 +10,17 @@
 """Utility functions for invenio-remote-user-data."""
 
 import logging
+import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter("%(asctime)s:%(levelname)s : %(message)s")
+log_folder = Path(__file__).parent / "logs"
+os.makedirs(log_folder, exist_ok=True)
 file_handler = logging.handlers.RotatingFileHandler(
-    Path(__file__).parent / "logs" / "remote_data_updates.log",
+    log_folder / "remote_data_updates.log",
+    mode="a",
     maxBytes=1000000,
     backupCount=5,
 )

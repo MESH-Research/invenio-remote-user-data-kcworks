@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Mac files
+.DS_Store
+
 # C extensions
 *.so
 
@@ -55,11 +58,9 @@ cover/
 *.mo
 *.pot
 
-# Django stuff:
+# log files:
 *.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
+*.log.*
 
 # Flask stuff:
 instance/

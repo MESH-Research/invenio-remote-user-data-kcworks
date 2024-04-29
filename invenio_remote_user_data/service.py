@@ -162,10 +162,12 @@ class RemoteUserDataService(Service):
                 updated_data = self.update_local_user_data(
                     user, new_data, user_changes, groups_changes, **kwargs
                 )
-                assert sorted(updated_data["groups"]) == sorted([
-                    *groups_changes["added_groups"],
-                    *groups_changes["unchanged_groups"],
-                ])
+                assert sorted(updated_data["groups"]) == sorted(
+                    [
+                        *groups_changes["added_groups"],
+                        *groups_changes["unchanged_groups"],
+                    ]
+                )
             update_logger.info(
                 "User data successfully updated from remote "
                 f"server: {updated_data}"
@@ -293,7 +295,7 @@ class RemoteUserDataService(Service):
             groups = users.get("groups")
             if groups:
                 remote_groups = [
-                    f'{idp}|{g["name"]}|{g["role"]}' for g in groups
+                    f'{idp}|{g["id"]}|{g["role"]}' for g in groups
                 ]
                 if remote_groups != local_groups:
                     group_changes = {
@@ -314,13 +316,15 @@ class RemoteUserDataService(Service):
                         if r not in group_changes["dropped_groups"]
                     ]
             new_data["user_profile"] = user.user_profile
-            new_data["user_profile"].update({
-                "full_name": users["name"],
-                "name_parts": {
-                    "first": users["first_name"],
-                    "last": users["last_name"],
-                },
-            })
+            new_data["user_profile"].update(
+                {
+                    "full_name": users["name"],
+                    "name_parts": {
+                        "first": users["first_name"],
+                        "last": users["last_name"],
+                    },
+                }
+            )
             if users.get("institutional_affiliation"):
                 new_data["user_profile"]["affiliations"] = users[
                     "institutional_affiliation"
@@ -332,10 +336,12 @@ class RemoteUserDataService(Service):
             new_data["username"] = f'{idp}-{users["username"]}'
             new_data["email"] = users["email"]
             new_data["preferences"] = user.preferences
-            new_data["preferences"].update({
-                "visibility": "restricted",
-                "email_visibility": "restricted",
-            })
+            new_data["preferences"].update(
+                {
+                    "visibility": "restricted",
+                    "email_visibility": "restricted",
+                }
+            )
             if users.get("preferred_language"):
                 new_data["preferences"]["locale"] = users["preferred_language"]
         user_changes = diff_between_nested_dicts(initial_user_data, new_data)

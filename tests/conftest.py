@@ -86,10 +86,7 @@ def extra_entry_points():
 test_config = {
     # "THEME_FRONTPAGE_TEMPLATE": "invenio_remote_user_data/base.html",
     "SQLALCHEMY_DATABASE_URI": (
-        "postgresql+psycopg2://"
-        "knowledge-commons-repository:"
-        "knowledge-commons-repository@localhost/"
-        "knowledge-commons-repository-test"
+        "postgresql+psycopg2://kcworks:kcworks@localhost/kcworks-test"
     ),
     "SQLALCHEMY_TRACK_MODIFICATIONS": True,
     "SQLALCHEMY_POOL_SIZE": None,
@@ -102,14 +99,6 @@ test_config = {
         "force_https": False,
     },
     "BROKER_URL": "amqp://guest:guest@localhost:5672//",
-    "CELERY_CACHE_BACKEND": "memory",
-    "CELERY_RESULT_BACKEND": "cache",
-    "CELERY_TASK_ALWAYS_EAGER": True,
-    "CELERY_TASK_EAGER_PROPAGATES_EXCEPTIONS": True,
-    "RATELIMIT_ENABLED": False,
-    "SECRET_KEY": "test-secret-key",
-    "SECURITY_PASSWORD_SALT": "test-secret-key",
-    "TESTING": True,
     "CELERY_CACHE_BACKEND": "memory",
     "CELERY_RESULT_BACKEND": "cache",
     "CELERY_TASK_ALWAYS_EAGER": True,

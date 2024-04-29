@@ -9,8 +9,6 @@ def test_webhook_get(client, app):
     """Test webhook."""
     response = client.get("/api/webhooks/idp_data_update")
 
-    print(response.data)
-
     assert response.status_code == 200
     assert json.loads(response.data) == {
         "message": "Webhook receiver is active",

@@ -4,7 +4,7 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-invenio-app-rdm = "~=12.0.0b1"
+invenio-app-rdm = "~=12.0.0b3.dev3"
 pytest = "*"
 pytest-invenio = "*"
 invenio-search = "*"
@@ -15,6 +15,7 @@ invenio-remote-user-data = {editable = true, path = "."}
 requests-mock = "*"
 deepdiff = "*"
 celery = "*"
+invenio-groups = {file = "../invenio-groups", editable = true}
 
 [dev-packages]
 

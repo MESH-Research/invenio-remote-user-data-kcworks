@@ -14,6 +14,7 @@ from invenio_accounts.models import User, UserIdentity  # Role,
 from invenio_accounts.proxies import current_accounts
 
 # from invenio_accounts.utils import jwt_create_token
+from invenio_groups.utils import make_group_slug
 from invenio_queues.proxies import current_queues
 from invenio_records_resources.services import Service
 
@@ -152,6 +153,7 @@ class RemoteUserDataService(Service):
             remote_data = self.fetch_from_remote_api(
                 user, idp, remote_id, **kwargs
             )
+            new_data = {}
             if remote_data:
                 new_data, user_changes, groups_changes = (
                     self.compare_remote_with_local(
@@ -294,9 +296,15 @@ class RemoteUserDataService(Service):
         if users:
             groups = users.get("groups")
             if groups:
-                remote_groups = [
-                    f'{idp}|{g["id"]}|{g["role"]}' for g in groups
-                ]
+                remote_groups = []
+                for g in groups:
+                    # If more than one slug is returned we need to assign
+                    # membership roles for all of them
+                    slugs = make_group_slug(g["id"], g["name"], idp)
+                    if isinstance(slugs, str):
+                        slugs = [slugs]
+                    for slug in slugs:
+                        remote_groups.append(f'{slug}|{g["role"]}')
                 if remote_groups != local_groups:
                     group_changes = {
                         "dropped_groups": [

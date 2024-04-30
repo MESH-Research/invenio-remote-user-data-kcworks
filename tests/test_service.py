@@ -1,6 +1,6 @@
 import arrow
 import pytest
-from flask import g, session
+from flask import g
 from flask_security import login_user, logout_user
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import UserIdentity
@@ -53,10 +53,12 @@ import time
                         "last": "User",
                     },
                     "affiliations": "Michigan State University",
-                    "identifiers": [{
-                        "identifier": "0000-0002-1825-0097",
-                        "scheme": "orcid",
-                    }],
+                    "identifiers": [
+                        {
+                            "identifier": "0000-0002-1825-0097",
+                            "scheme": "orcid",
+                        }
+                    ],
                 },
                 "preferences": {
                     "email_visibility": "restricted",
@@ -69,22 +71,24 @@ import time
                 "user_profile": {
                     "full_name": "My User",
                     "name_parts": {"first": "My", "last": "User"},
-                    "identifiers": [{
-                        "identifier": "0000-0002-1825-0097",
-                        "scheme": "orcid",
-                    }],
+                    "identifiers": [
+                        {
+                            "identifier": "0000-0002-1825-0097",
+                            "scheme": "orcid",
+                        }
+                    ],
                     "affiliations": "Michigan State University",
                 },
                 "username": "knowledgeCommons-myuser",
             },
             [
-                "knowledgeCommons|Digital Humanists|member",
-                "knowledgeCommons|test bpges|admin",
+                "knowledgeCommons|digital-humanists|member",
+                "knowledgeCommons|test-bpges|admin",
             ],
             {
                 "added_groups": [
-                    "knowledgeCommons|Digital Humanists|member",
-                    "knowledgeCommons|test bpges|admin",
+                    "knowledgeCommons|digital-humanists|member",
+                    "knowledgeCommons|test-bpges|admin",
                 ],
                 "dropped_groups": [],
                 "unchanged_groups": [],
@@ -104,6 +108,7 @@ def test_update_data_from_remote_mock(
     user_factory,
     db,
     requests_mock,
+    search_clear,
 ):
     """Test updating user data from mocked remote API."""
     base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][
@@ -189,83 +194,83 @@ def test_update_data_from_remote_mock(
                 "username": "knowledgeCommons-mikethicke",
             },
             [
-                "knowledgeCommons|Digital Humanists|member",
-                "knowledgeCommons|test bpges|member",
-                "knowledgeCommons|Public Philosophy Journal|member",
-                "knowledgeCommons|MDPx|member",
-                "knowledgeCommons|Science and Technology Studies (STS)|member",
+                "knowledgeCommons|digital-humanists|member",
+                "knowledgeCommons|test-bpges|member",
+                "knowledgeCommons|public-philosophy-hournal|member",
+                "knowledgeCommons|mdpx|member",
+                "knowledgeCommons|science-and-technology-studies-(sts)|member",
                 (
-                    "knowledgeCommons|HC Participating Organization"
-                    " Council|member"
+                    "knowledgeCommons|hc-participating-organization"
+                    "-council|member"
                 ),
-                "knowledgeCommons|MESH|member",
+                "knowledgeCommons|mesh|member",
                 "knowledgeCommons|mla-group-test|admin",
                 (
-                    "knowledgeCommons|Humanities Commons User Advisory"
-                    " Group|member"
+                    "knowledgeCommons|humanities-commons-user-advisory"
+                    "-group|member"
                 ),
                 (
-                    "knowledgeCommons|Humanities Commons Technical Advisory"
-                    " Group|admin"
+                    "knowledgeCommons|humanities-commons-technical-advisory"
+                    "-group|admin"
                 ),
-                "knowledgeCommons|ARLISNA Test Group|admin",
-                "knowledgeCommons|STEMEd+ Commons Working Group|member",
-                "knowledgeCommons|Test Group|member",
-                "knowledgeCommons|Teaching and Learning|admin",
-                "knowledgeCommons|Humanities, Arts, and Media|admin",
-                "knowledgeCommons|Technology, Networks, and Sciences|admin",
-                "knowledgeCommons|Social and Political Issues|admin",
-                "knowledgeCommons|Educational and Cultural Institutions|admin",
-                "knowledgeCommons|Publishing and Archives|admin",
-                "knowledgeCommons|a new group for testing new groups|admin",
-                "knowledgeCommons|Private Testing Group|admin",
-                "knowledgeCommons|MSU Commons test group|admin",
+                "knowledgeCommons|arlisna-test-group|admin",
+                "knowledgeCommons|stemed+-commons-working-group|member",
+                "knowledgeCommons|test-group|member",
+                "knowledgeCommons|teaching-and-learning|admin",
+                "knowledgeCommons|humanities-arts-and-media|admin",
+                "knowledgeCommons|technology-networks-and-sciences|admin",
+                "knowledgeCommons|social-and-political-issues|admin",
+                "knowledgeCommons|educational-and-cultural-institutions|admin",
+                "knowledgeCommons|publishing-and-archives|admin",
+                "knowledgeCommons|a-new-group-for testing new groups|admin",
+                "knowledgeCommons|private-testing-group|admin",
+                "knowledgeCommons|msu-commons-test-group|admin",
             ],
             {
                 "added_groups": [
-                    "knowledgeCommons|Digital Humanists|member",
-                    "knowledgeCommons|test bpges|member",
-                    "knowledgeCommons|Public Philosophy Journal|member",
-                    "knowledgeCommons|MDPx|member",
+                    "knowledgeCommons|digital-humanists|member",
+                    "knowledgeCommons|test-bpges|member",
+                    "knowledgeCommons|public-philosophy journal|member",
+                    "knowledgeCommons|mdpx|member",
                     (
-                        "knowledgeCommons|Science and Technology Studies"
-                        " (STS)|member"
+                        "knowledgeCommons|science-and-technology-studies"
+                        "-(sts)|member"
                     ),
                     (
-                        "knowledgeCommons|HC Participating Organization"
-                        " Council|member"
+                        "knowledgeCommons|hc-participating-organization"
+                        "-council|member"
                     ),
-                    "knowledgeCommons|MESH|member",
+                    "knowledgeCommons|mesh|member",
                     "knowledgeCommons|mla-group-test|admin",
                     (
-                        "knowledgeCommons|Humanities Commons User Advisory"
-                        " Group|member"
+                        "knowledgeCommons|humanities-commons-user-advisory"
+                        "-group|member"
                     ),
                     (
-                        "knowledgeCommons|Humanities Commons Technical"
-                        " Advisory Group|admin"
+                        "knowledgeCommons|humanities-commons-technical"
+                        "-advisory-group|admin"
                     ),
-                    "knowledgeCommons|ARLISNA Test Group|admin",
-                    "knowledgeCommons|STEMEd+ Commons Working Group|member",
-                    "knowledgeCommons|Test Group|member",
-                    "knowledgeCommons|Teaching and Learning|admin",
-                    "knowledgeCommons|Humanities, Arts, and Media|admin",
+                    "knowledgeCommons|arlisna-test-group|admin",
+                    "knowledgeCommons|stemed+-commons-working-group|member",
+                    "knowledgeCommons|test-group|member",
+                    "knowledgeCommons|teaching-and-learning|admin",
+                    "knowledgeCommons|humanities,-arts,-and-media|admin",
                     (
-                        "knowledgeCommons|Technology, Networks, and"
-                        " Sciences|admin"
+                        "knowledgeCommons|technology-networks-and"
+                        "-sciences|admin"
                     ),
-                    "knowledgeCommons|Social and Political Issues|admin",
+                    "knowledgeCommons|social-and-political-issues|admin",
                     (
-                        "knowledgeCommons|Educational and Cultural"
-                        " Institutions|admin"
+                        "knowledgeCommons|educational-and-cultural"
+                        "-institutions|admin"
                     ),
-                    "knowledgeCommons|Publishing and Archives|admin",
+                    "knowledgeCommons|publishing-and-archives|admin",
                     (
-                        "knowledgeCommons|a new group for testing new"
-                        " groups|admin"
+                        "knowledgeCommons|a-new-group-for-testing-new"
+                        "-groups|admin"
                     ),
-                    "knowledgeCommons|Private Testing Group|admin",
-                    "knowledgeCommons|MSU Commons test group|admin",
+                    "knowledgeCommons|private-testing-group|admin",
+                    "knowledgeCommons|msu-commons-test-group|admin",
                 ],
                 "dropped_groups": [],
                 "unchanged_groups": [],
@@ -283,6 +288,7 @@ def test_update_data_from_remote_live(
     group_changes,
     user_factory,
     db,
+    search_clear,
 ):
     """Test updating user data from live remote API."""
 
@@ -372,35 +378,39 @@ def test_on_identity_changed(client, app, user_factory, requests_mock, myuser):
     # not dropped from the admin group because that's a locally managed
     # group (no idp prefix).
     assert (
-        len([
-            n.value
-            for n in my_identity.provides
-            if n.value
-            in [
-                "knowledgeCommons|admin|member",
-                "knowledgeCommons|awesome-mock|admin",
-                "any_user",
-                myuser1.id,
-                "authenticated_user",
-                "admin",
+        len(
+            [
+                n.value
+                for n in my_identity.provides
+                if n.value
+                in [
+                    "knowledgeCommons|admin|member",
+                    "knowledgeCommons|awesome-mock|admin",
+                    "any_user",
+                    myuser1.id,
+                    "authenticated_user",
+                    "admin",
+                ]
             ]
-        ])
+        )
         == 6
     )
     assert (
-        len([
-            n.value
-            for n in my_identity.provides
-            if n.value
-            not in [
-                "knowledgeCommons|admin|member",
-                "knowledgeCommons|awesome-mock|admin",
-                "any_user",
-                myuser1.id,
-                "authenticated_user",
-                "admin",
+        len(
+            [
+                n.value
+                for n in my_identity.provides
+                if n.value
+                not in [
+                    "knowledgeCommons|admin|member",
+                    "knowledgeCommons|awesome-mock|admin",
+                    "any_user",
+                    myuser1.id,
+                    "authenticated_user",
+                    "admin",
+                ]
             ]
-        ])
+        )
         == 0
     )
 
@@ -408,10 +418,12 @@ def test_on_identity_changed(client, app, user_factory, requests_mock, myuser):
     assert myuser1.email == "info@inveniosoftware.org"
     assert myuser1.user_profile["full_name"] == "Jane User"
     assert myuser1.user_profile["affiliations"] == "Michigan State University"
-    assert myuser1.user_profile["identifiers"] == [{
-        "identifier": "123-456-7891",
-        "scheme": "orcid",
-    }]
+    assert myuser1.user_profile["identifiers"] == [
+        {
+            "identifier": "123-456-7891",
+            "scheme": "orcid",
+        }
+    ]
     assert myuser1.user_profile["name_parts"] == {
         "first": "Jane",
         "last": "User",
@@ -436,11 +448,13 @@ def test_on_identity_changed(client, app, user_factory, requests_mock, myuser):
         == 1
     )
     assert (
-        len([
-            n.value
-            for n in my_identity.provides
-            if n.value not in ["any_user"]
-        ])
+        len(
+            [
+                n.value
+                for n in my_identity.provides
+                if n.value not in ["any_user"]
+            ]
+        )
         == 0
     )
 
@@ -452,19 +466,24 @@ def test_on_identity_changed(client, app, user_factory, requests_mock, myuser):
     client.get("/api")
     my_identity = g.identity
     assert (
-        len([
-            n.value
-            for n in my_identity.provides
-            if n.value in ["any_user", myuser2.id, "authenticated_user"]
-        ])
+        len(
+            [
+                n.value
+                for n in my_identity.provides
+                if n.value in ["any_user", myuser2.id, "authenticated_user"]
+            ]
+        )
         == 3
     )
     assert (
-        len([
-            n.value
-            for n in my_identity.provides
-            if n.value not in ["any_user", myuser2.id, "authenticated_user"]
-        ])
+        len(
+            [
+                n.value
+                for n in my_identity.provides
+                if n.value
+                not in ["any_user", myuser2.id, "authenticated_user"]
+            ]
+        )
         == 0
     )
     assert myuser2.username is None
@@ -472,78 +491,84 @@ def test_on_identity_changed(client, app, user_factory, requests_mock, myuser):
 
 @pytest.mark.parametrize(
     "remote_data,starting_data,new_data,user_changes,group_changes",
-    [(
-        {
-            "users": {
-                "username": "myuser",
-                "email": "myaddress@hcommons.org",
-                "name": "My User",
-                "first_name": "My",
-                "last_name": "User",
-                "institutional_affiliation": "Michigan State University",
-                "orcid": "0000-0002-1825-0097",
+    [
+        (
+            {
+                "users": {
+                    "username": "myuser",
+                    "email": "myaddress@hcommons.org",
+                    "name": "My User",
+                    "first_name": "My",
+                    "last_name": "User",
+                    "institutional_affiliation": "Michigan State University",
+                    "orcid": "0000-0002-1825-0097",
+                    "groups": [
+                        {
+                            "id": 1000576,
+                            "name": "awesome-mock",
+                            "role": "admin",
+                        },
+                        {
+                            "id": 1000577,
+                            "name": "cool-group2",
+                            "role": "member",
+                        },
+                    ],
+                },
+            },
+            {
+                "user": {"email": "myaddress@hcommons.org"},
                 "groups": [
-                    {
-                        "id": 1000576,
-                        "name": "awesome-mock",
-                        "role": "admin",
-                    },
-                    {
-                        "id": 1000577,
-                        "name": "cool-group2",
-                        "role": "member",
-                    },
+                    {"name": "cool-group", "role": "admin"},
+                    {"name": "cool-group2", "role": "member"},
                 ],
             },
-        },
-        {
-            "user": {"email": "myaddress@hcommons.org"},
-            "groups": [
-                {"name": "cool-group", "role": "admin"},
-                {"name": "cool-group2", "role": "member"},
-            ],
-        },
-        {
-            "active": True,
-            "username": "knowledgeCommons-myuser",
-            "email": "myaddress@hcommons.org",
-            "user_profile": {
-                "affiliations": "Michigan State University",
-                "full_name": "My User",
-                "identifiers": [{
-                    "identifier": "0000-0002-1825-0097",
-                    "scheme": "orcid",
-                }],
-                "name_parts": {"first": "My", "last": "User"},
+            {
+                "active": True,
+                "username": "knowledgeCommons-myuser",
+                "email": "myaddress@hcommons.org",
+                "user_profile": {
+                    "affiliations": "Michigan State University",
+                    "full_name": "My User",
+                    "identifiers": [
+                        {
+                            "identifier": "0000-0002-1825-0097",
+                            "scheme": "orcid",
+                        }
+                    ],
+                    "name_parts": {"first": "My", "last": "User"},
+                },
+                "preferences": {
+                    "email_visibility": "restricted",
+                    "visibility": "restricted",
+                    "locale": "en",
+                    "timezone": "Europe/Zurich",
+                },
             },
-            "preferences": {
-                "email_visibility": "restricted",
-                "visibility": "restricted",
-                "locale": "en",
-                "timezone": "Europe/Zurich",
+            {
+                "username": "knowledgeCommons-myuser",
+                "user_profile": {
+                    "affiliations": "Michigan State University",
+                    "full_name": "My User",
+                    "identifiers": [
+                        {
+                            "identifier": "0000-0002-1825-0097",
+                            "scheme": "orcid",
+                        }
+                    ],
+                    "name_parts": {"first": "My", "last": "User"},
+                },
             },
-        },
-        {
-            "username": "knowledgeCommons-myuser",
-            "user_profile": {
-                "affiliations": "Michigan State University",
-                "full_name": "My User",
-                "identifiers": [{
-                    "identifier": "0000-0002-1825-0097",
-                    "scheme": "orcid",
-                }],
-                "name_parts": {"first": "My", "last": "User"},
+            {
+                "dropped_groups": ["knowledgeCommons|cool-group|admin"],
+                "added_groups": ["knowledgeCommons|awesome-mock|admin"],
+                "unchanged_groups": [
+                    "admin",
+                    "knowledgeCommons|cool-group2|member",
+                ],
             },
-        },
-        {
-            "dropped_groups": ["knowledgeCommons|cool-group|admin"],
-            "added_groups": ["knowledgeCommons|awesome-mock|admin"],
-            "unchanged_groups": [
-                "admin",
-                "knowledgeCommons|cool-group2|member",
-            ],
-        },
-    )],
+        )
+    ],
 )
 def test_compare_remote_with_local(
     app,

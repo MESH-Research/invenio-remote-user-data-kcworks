@@ -86,7 +86,7 @@ def extra_entry_points():
 test_config = {
     # "THEME_FRONTPAGE_TEMPLATE": "invenio_remote_user_data/base.html",
     "SQLALCHEMY_DATABASE_URI": (
-        "postgresql+psycopg2://kcworks:kcworks@localhost/kcworks-test"
+        "postgresql+psycopg2://invenio:invenio@localhost/invenio"
     ),
     "SQLALCHEMY_TRACK_MODIFICATIONS": True,
     "SQLALCHEMY_POOL_SIZE": None,

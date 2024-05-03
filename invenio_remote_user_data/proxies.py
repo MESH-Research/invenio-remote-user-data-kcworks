@@ -8,3 +8,7 @@ current_remote_user_data = LocalProxy(
 current_remote_user_data_service = LocalProxy(
     lambda: current_remote_user_data.service
 )
+
+current_remote_group_data_service = LocalProxy(
+    lambda: current_remote_user_data.group_service
+)

@@ -118,11 +118,11 @@ from werkzeug.exceptions import (
 )
 import os
 
-from .utils import logger
+# from .utils import logger
 from .signals import remote_data_updated
 
 
-class IDPUpdateWebhook(MethodView):
+class RemoteUserDataUpdateWebhook(MethodView):
     """
     View class providing methods for the remote-user-data webhook api endpoint.
     """
@@ -131,7 +131,7 @@ class IDPUpdateWebhook(MethodView):
 
     def __init__(self):
         self.webhook_token = os.getenv("REMOTE_USER_DATA_WEBHOOK_TOKEN")
-        self.logger = logger
+        self.logger = app.logger
 
     def post(self):
         """
@@ -162,7 +162,7 @@ class IDPUpdateWebhook(MethodView):
 
             for e in request.json["updates"].keys():
                 if e in entity_types.keys():
-                    logger.debug(
+                    self.logger.debug(
                         f"{idp} Received {e} update signal: "
                         f"{request.json['updates'][e]}"
                     )
@@ -174,50 +174,54 @@ class IDPUpdateWebhook(MethodView):
                                 ).one_or_none()
                                 if user_identity is None:
                                     bad_users.append(u["id"])
-                                    logger.error(
+                                    self.logger.error(
                                         f"Received update signal from {idp} "
                                         f"for unknown user: {u['id']}"
                                     )
                                 else:
                                     users.append(u["id"])
-                                    events.append({
+                                    events.append(
+                                        {
+                                            "idp": idp,
+                                            "entity_type": e,
+                                            "event": u["event"],
+                                            "id": u["id"],
+                                        }
+                                    )
+                            elif e == "groups":
+                                groups.append(u["id"])
+                                events.append(
+                                    {
                                         "idp": idp,
                                         "entity_type": e,
                                         "event": u["event"],
                                         "id": u["id"],
-                                    })
-                            elif e == "groups":
-                                groups.append(u["id"])
-                                events.append({
-                                    "idp": idp,
-                                    "entity_type": e,
-                                    "event": u["event"],
-                                    "id": u["id"],
-                                })
+                                    }
+                                )
                         else:
                             bad_events.append(u)
-                            logger.error(
+                            self.logger.error(
                                 f"{idp} Received update signal for "
                                 f"unknown event: {u}"
                             )
                 else:
                     bad_entity_types.append(e)
-                    logger.error(
+                    self.logger.error(
                         f"{idp} Received update signal for unknown "
                         f"entity type: {e}"
                     )
-                    logger.error(request.json)
+                    self.logger.error(request.json)
 
             if len(events) > 0:
                 current_queues.queues["user-data-updates"].publish(events)
                 remote_data_updated.send(
                     app._get_current_object(), events=events
                 )
-                logger.debug(
+                self.logger.debug(
                     f"Published {len(events)} events to queue and emitted"
                     " remote_data_updated signal"
                 )
-                logger.debug(events)
+                self.logger.debug(events)
             else:
                 if not users and bad_users or not groups and bad_groups:
                     entity_string = ""
@@ -227,21 +231,21 @@ class IDPUpdateWebhook(MethodView):
                         if entity_string:
                             entity_string += " and "
                         entity_string += "groups"
-                    logger.error(
+                    self.logger.error(
                         f"{idp} requested updates for {entity_string} that"
                         " do not exist"
                     )
-                    logger.error(request.json["updates"])
+                    self.logger.error(request.json["updates"])
                     raise NotFound
                 elif not groups and bad_groups:
-                    logger.error(
+                    self.logger.error(
                         f"{idp} requested updates for groups that do not exist"
                     )
-                    logger.error(request.json["updates"])
+                    self.logger.error(request.json["updates"])
                     raise NotFound
                 else:
-                    logger.error(f"{idp} No valid events received")
-                    logger.error(request.json["updates"])
+                    self.logger.error(f"{idp} No valid events received")
+                    self.logger.error(request.json["updates"])
                     raise BadRequest
 
             # return error message after handling signals that are
@@ -251,7 +255,7 @@ class IDPUpdateWebhook(MethodView):
                 # completely rejected
                 raise BadRequest
         except KeyError:  # request is missing 'idp' or 'updates' keys
-            logger.error(f"Received malformed signal: {request.json}")
+            self.logger.error(f"Received malformed signal: {request.json}")
             raise BadRequest
 
         return (
@@ -262,6 +266,7 @@ class IDPUpdateWebhook(MethodView):
         )
 
     def get(self):
+        self.logger.debug("****Received GET request to webhook endpoint")
         return (
             jsonify({"message": "Webhook receiver is active", "status": 200}),
             200,
@@ -276,27 +281,31 @@ class IDPUpdateWebhook(MethodView):
 
 def create_api_blueprint(app):
     """Register blueprint on api app."""
-    blueprint = Blueprint("invenio_remote_user_data", __name__)
 
-    # routes = app.config.get("APP_RDM_ROUTES")
+    with app.app_context():
+        blueprint = Blueprint("invenio_remote_user_data", __name__)
 
-    blueprint.add_url_rule(
-        "/webhooks/idp_data_update",
-        view_func=IDPUpdateWebhook.as_view("ipd_update_webhook"),
-    )
+        # routes = app.config.get("APP_RDM_ROUTES")
 
-    # Register error handlers
-    blueprint.register_error_handler(
-        Forbidden,
-        lambda e: make_response(
-            jsonify({"error": "Forbidden", "status": 403}), 403
-        ),
-    )
-    blueprint.register_error_handler(
-        MethodNotAllowed,
-        lambda e: make_response(
-            jsonify({"message": "Method not allowed", "status": 405}), 405
-        ),
-    )
+        blueprint.add_url_rule(
+            "/webhooks/idp_data_update",
+            view_func=RemoteUserDataUpdateWebhook.as_view(
+                "ipd_update_webhook"
+            ),
+        )
+
+        # Register error handlers
+        blueprint.register_error_handler(
+            Forbidden,
+            lambda e: make_response(
+                jsonify({"error": "Forbidden", "status": 403}), 403
+            ),
+        )
+        blueprint.register_error_handler(
+            MethodNotAllowed,
+            lambda e: make_response(
+                jsonify({"message": "Method not allowed", "status": 405}), 405
+            ),
+        )
 
     return blueprint

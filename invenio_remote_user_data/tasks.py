@@ -13,20 +13,39 @@
 from celery import shared_task
 from celery.utils.log import get_task_logger
 from flask import current_app as app  # , session
-from .proxies import current_remote_user_data_service
+from .proxies import (
+    current_remote_user_data_service,
+    current_remote_group_data_service,
+)
 
 task_logger = get_task_logger(__name__)
 
 
 @shared_task(ignore_result=False)
 def do_user_data_update(user_id, idp, remote_id, **kwargs):
-    """Perform a user data update."""
+    """Perform a user metadata update."""
 
     with app.app_context():
         # task_logger.debug("doing task&&&&&&&")
         # print("doing task&&&&&&&")
         task_logger.info(dir(task_logger))
         task_logger.info(task_logger.handlers)
+        app.logger.info(task_logger.handlers)
         service = current_remote_user_data_service
-        service.update_data_from_remote(user_id, idp, remote_id)
+        service.update_user_from_remote(user_id, idp, remote_id)
+        return True
+
+
+@shared_task(ignore_result=False)
+def do_group_data_update(idp, remote_id, **kwargs):
+    """Perform a group metadata update."""
+
+    with app.app_context():
+        # task_logger.debug("doing task&&&&&&&")
+        # print("doing task&&&&&&&")
+        task_logger.info(dir(task_logger))
+        task_logger.info(task_logger.handlers)
+        app.logger.info(task_logger.handlers)
+        service = current_remote_group_data_service
+        service.update_group_from_remote(idp, remote_id)
         return True

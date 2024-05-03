@@ -5,11 +5,11 @@ This extension provides a service and event triggers to draws user and groups da
 The service checks to see whether the current user logged in with a SAML provider. If so, it sends an API request to the appropriate remote API associated with that server and stores or updates the user's data on the remote service in the Invenio database.
 
 By default this service is triggered when a user logs in. The service can also be called directly to update user data during a logged-in session, and it can
-be triggered by the remote IDP server via a webhook signal.
+be triggered by the remote service via a webhook signal.
 
 ## User data update content
 
-Responses from the user data update endpoint on the remote SAML idp service should be JSON objects with this shape:
+Responses from the user data update endpoint on the remote service should be JSON objects with this shape:
 
     ```json
     {
@@ -35,15 +35,14 @@ If "time_zone" is provided it should be ???
 
 ## Updating group memberships (InvenioRDM roles)
 
-In addition to recording and updating the user's profile information, it also updates the user's group memberships on the SAML ipd service. If the user is a member of any groups on the remote ID provider, it adds the user to the corresponding groups (InvenioRDM roles) on the Invenio server. If a group role does not exist on the Invenio server, the service creates the role. If a user has been dropped from a group on the remote IDP, they are removed from the corresponding InvenioRDM role.If a user is the last member of a group role and is removed, the service deletes the invenio-accounts role.
+In addition to recording and updating the user's profile information, it also updates the user's group memberships on the remote service. If the user is a member of any groups on the remote ID provider, it adds the user to the corresponding groups (InvenioRDM roles) on the Invenio server. If a group role does not exist on the Invenio server, the service creates the role. If a user has been dropped from a group on the remote service, they are removed from the corresponding InvenioRDM role.If a user is the last member of a group role and is removed, the service deletes the invenio-accounts role.
 
-The created group names are formed following the pattern "{IDP name}|{remote group name}|{user's role}". So if they are a "member" of the "developers" group on the remote IDP service called "myIDP", they will be assigned to
-the InvenioRDM role "myIDP|developers|member".
+The created group names are formed following the pattern "{IDP name}|{slug from remote group name}|{Invenio community permission role}". So if they are a "member" of the "developers" group on the remote service called "myCommons", and the "members" role on "myCommons" is configured to correspond with the "reader" Invenio community role, then they will be assigned to the InvenioRDM role "myCommons|developers|reader".
 
-Note that only InvenioRDM roles that begin with the user's IDP name (like "myIDP|") are included in this synchronization of memberships. Roles without
+Note that only InvenioRDM roles that begin with the user's SAML or oauth IDP name (like "myCommons|") are included in this synchronization of memberships. Roles without
 a bar-delineated IDP prefix are considered locally managed. Users will not
 be removed from these roles, even if they do not appear in their memberships
-on the remote IDP.
+on the remote service.
 
 Group membership updates are also one-directional. If a user is added to or removed from a group (role) on the Invenio server, the service does not add the user to the corresponding group on the remote ID provider.
 
@@ -55,19 +54,19 @@ The service is always called when a user logs in (triggered by the identity_chan
 
 ## Update webhook
 
-The service can also be triggered by a webhook signal from the remote ID provider. A webhook signal should be sent to the endpoint https://example.org/api/webhooks/idp_data_update/ and the request must include a security token (provided by the Invenio admins) in the request header. This token is set in the REMOTE_USER_DATA_WEBHOOK_TOKEN configuration variable.
+The service can also be triggered by a webhook signal from the remote ID provider. A webhook signal should be sent to the endpoint https://example.org/api/webhooks/user_data_update/ and the request must include a security token (provided by the Invenio admins) in the request header. This token is set in the REMOTE_USER_DATA_WEBHOOK_TOKEN configuration variable.
 
 The webhook signal should be a POST request with a JSON body. The body should be a JSON object whose top-level keys are
 
-:idp: The name of the remote IDP that is sending the signal. This is a
-string that must match one of the keys in the
+:idp: The name of the registered IDP for the remote service that is sending the
+signal. This is a string that must match one of the keys in the
 REMOTE_USER_DATA_API_ENDPOINTS configuration variable.
 
 :updates: A JSON object whose top-level keys are the types of data object that
-have been updated on the remote IDP. The value of each key is an
+have been updated on the remote service. The value of each key is an
 array of objects representing the updated entities. Each of these
 objects should include the "id" property, whose value is the entity's
-string identifier on the remote IDP. It should also include the
+string identifier on the remote service. It should also include the
 "event" property, whose value is the type of event that is being
 signalled (e.g., "updated", "created", "deleted", etc.).
 
@@ -87,7 +86,7 @@ The extension will log each POST request to the webhook endpoint, each signal re
 
 ## Configuration
 
-Invenio config variables
+Ijnvenio config variables
 
 ```
 
@@ -95,7 +94,7 @@ The extension is configured via the following Invenio config variables:
 
 REMOTE_USER_DATA_API_ENDPOINTS
 
-    A dictionary of remote ID provider names and their associated API information for each kind of user data. The dictionary keys are the names of IDPs. For each ID provider, the value is a dictionary whose keys are the different data categories ("groups", etc.).
+    A dictionary of remote ID provider names and their associated API information for each kind of user data. The dictionary keys are the names of IDPs registered for remote services. For each ID provider, the value is a dictionary whose keys are the different data categories ("groups", etc.) configured to be updated by the corresponding service.
 
     For each kind of user data, the value is again a dictionary with these keys:
 

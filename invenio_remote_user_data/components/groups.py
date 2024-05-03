@@ -20,12 +20,63 @@ from typing import Union, Optional
 from invenio_remote_user_data.utils import logger as update_logger
 
 
-class GroupsComponent(ServiceComponent):
+class GroupRolesComponent(ServiceComponent):
     """Service component for groups."""
 
     def __init__(self, service, *args, **kwargs):
         super().__init__(service, *args, **kwargs)
         self.logger = update_logger
+
+    @staticmethod
+    def make_roles_list(slug):
+        """Return a list of group permissions roles from a slug."""
+        permission_levels = ["manager", "curator", "reader"]
+        return [f"{slug}|{p}" for p in permission_levels]
+
+    @staticmethod
+    def convert_remote_roles(
+        slug: str,
+        moderate_roles: list,
+        upload_roles: list,
+        other_roles: list = ["member"],
+    ) -> dict:
+        """Convert remote group roles to Invenio community permissions roles.
+
+        params:
+            slug: The slug of the group in Invenio. Should have the form
+                {idp name}|{group name} with the group name in lower-case and
+                with spaces replaced by hyphens.
+            moderate_roles: A list of the remote group roles that should be
+                converted to the Invenio "manager" role.
+            upload_roles: A list of the remote group roles that should be
+                converted to the Invenio "curator" role.
+            other_roles: A list of the remote group roles that should be
+                converted to the Invenio "reader" role. Defaults to ["member"].
+
+        returns:
+            Returns a dictionary with the remote group roles as keys and the
+            corresponding Invenio community permissions roles as values.
+        """
+        invenio_roles = {}
+        seen_roles = []
+        # FIXME: In api user response "admin" is used, but in api group
+        # response "administrator" is used
+        # FIXME: Should upload_roles be given only "reader" permissions?
+        if "administrator" in moderate_roles:
+            moderate_roles.append("admin")
+        for r in list(set(moderate_roles)):
+            invenio_roles[r] = f"{slug}|manager"
+            seen_roles.append(r)
+        for u in [r for r in list(set(upload_roles)) if r not in seen_roles]:
+            invenio_roles[u] = f"{slug}|curator"
+            seen_roles.append(u)
+        for o in [r for r in list(set(other_roles)) if r not in seen_roles]:
+            invenio_roles[o] = f"{slug}|reader"
+            seen_roles.append(o)
+        # ensure reader role is created even if members all have higher perms
+        if f"{slug}|reader" not in invenio_roles.values():
+            invenio_roles["empty"] = f"{slug}|reader"
+        return invenio_roles
 
     def get_current_members_of_group(self, group_name: str) -> list:
         """fetch a list of the users assigned the given group role"""
@@ -116,7 +167,7 @@ class GroupsComponent(ServiceComponent):
         """Find a group role with the given name."""
         my_group_role = current_accounts.datastore.find_role(group_name)
         if my_group_role is None:
-            raise RuntimeError(f'Role "{group_name}" not found.')
+            self.logger.debug(f'Role "{group_name}" not found.')
         else:
             self.logger.debug(f'Role "{group_name}" found successfully.')
         return my_group_role

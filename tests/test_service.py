@@ -6,16 +6,24 @@ from invenio_access.permissions import system_identity
 from invenio_accounts.models import UserIdentity
 from invenio_accounts.proxies import current_accounts
 from invenio_accounts.testutils import login_user_via_session
+from invenio_communities.proxies import current_communities
+from invenio_communities.communities.records.api import Community
+from invenio_groups.proxies import current_group_collections_service
+from invenio_search import current_search_client
+from invenio_search.engine import dsl
+from invenio_search.utils import build_alias_name
 from invenio_users_resources.proxies import current_users_service
 from invenio_utilities_tuw.utils import get_identity_for_user
 from invenio_remote_user_data.components.groups import (
-    GroupsComponent,
+    GroupRolesComponent,
 )
 from invenio_remote_user_data.proxies import (
     current_remote_user_data_service as user_service,
+    current_remote_group_data_service as group_service,
 )
 from invenio_remote_user_data.utils import logger
-from pprint import pprint, pformat
+from pprint import pprint
+import requests
 import time
 
 
@@ -82,13 +90,13 @@ import time
                 "username": "knowledgeCommons-myuser",
             },
             [
-                "knowledgeCommons|digital-humanists|member",
-                "knowledgeCommons|test-bpges|admin",
+                "knowledgeCommons|digital-humanists|curator",
+                "knowledgeCommons|test-bpges|manager",
             ],
             {
                 "added_groups": [
-                    "knowledgeCommons|digital-humanists|member",
-                    "knowledgeCommons|test-bpges|admin",
+                    "knowledgeCommons|digital-humanists|curator",
+                    "knowledgeCommons|test-bpges|manager",
                 ],
                 "dropped_groups": [],
                 "unchanged_groups": [],
@@ -96,7 +104,7 @@ import time
         ),
     ],
 )
-def test_update_data_from_remote_mock(
+def test_update_user_from_remote_mock(
     app,
     user_email,
     remote_id,
@@ -123,6 +131,19 @@ def test_update_data_from_remote_mock(
         json=return_payload,
     )
 
+    if "groups" in return_payload.keys():
+        for group in return_payload["groups"]:
+            requests_mock.get(
+                f"https://hcommons-dev.org/wp-json/commons/v1/groups/"
+                f"{group['id']}",
+                json={
+                    "id": group["id"],
+                    "name": group["name"],
+                    "upload_roles": ["member", "moderator", "administrator"],
+                    "moderate_roles": ["moderator", "administrator"],
+                },
+            )
+
     myuser = user_factory(
         email=user_email, confirmed_at=arrow.utcnow().datetime
     )
@@ -130,7 +151,7 @@ def test_update_data_from_remote_mock(
         assert current_accounts.datastore.activate_user(myuser)
     UserIdentity.create(myuser, "knowledgeCommons", remote_id)
 
-    actual = user_service.update_data_from_remote(
+    actual = user_service.update_user_from_remote(
         myuser.id, "knowledgeCommons", remote_id
     )
     assert {
@@ -156,6 +177,151 @@ def test_update_data_from_remote_mock(
         },
         "user_profile": myuser_confirm["profile"],
     } == new_data
+
+
+@pytest.mark.parametrize(
+    "idp,remote_group_id,return_payload,group_role_changes",
+    [
+        (
+            "knowledgeCommons",
+            "1004290",
+            {
+                "id": 1004290,
+                "name": "The Inklings",
+                "url": "https://hcommons-dev.org/groups/the-inklings/",
+                "visibility": "public",
+                "description": "For scholars interested in J.R.R. Tolkien, C. S. Lewis, Charles Williams, and other writers associated with the Inklings.",
+                "avatar": "https://hcommons-dev.org/app/plugins/buddypress/bp-core/images/mystery-group.png",
+                "groupblog": "",
+                "upload_roles": ["member", "moderator", "administrator"],
+                "moderate_roles": ["moderator", "administrator"],
+            },
+            {
+                "knowledgeCommons|the-inklings": {
+                    "new_roles": [
+                        "knowledgeCommons|the-inklings|manager",
+                        "knowledgeCommons|the-inklings|curator",
+                        "knowledgeCommons|the-inklings|reader",
+                    ],
+                    "existing_roles": [],
+                }
+            },
+        )
+    ],
+)
+def test_update_group_from_remote_mock_new(
+    app,
+    idp,
+    remote_group_id,
+    return_payload,
+    group_role_changes,
+    db,
+    requests_mock,
+    search_clear,
+):
+
+    base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
+        "remote_endpoint"
+    ]
+
+    requests_mock.get(
+        f"{base_url}{remote_group_id}",
+        json=return_payload,
+    )
+
+    actual = group_service.update_group_from_remote(idp, remote_group_id)
+
+    assert actual == group_role_changes
+    grouper = GroupRolesComponent(user_service)
+    for f in actual["knowledgeCommons|the-inklings"]["new_roles"]:
+        assert grouper.find_group(f)
+
+
+@pytest.mark.parametrize(
+    "idp,remote_group_id,return_payload,group_role_changes",
+    [
+        (
+            "knowledgeCommons",
+            "1004290",
+            {
+                "id": "1004290",
+                "name": "The Inklings",
+                "url": "https://hcommons-dev.org/groups/the-inklings/",
+                "visibility": "public",
+                "description": "For scholars interested in J.R.R. Tolkien, C. S. Lewis, Charles Williams, and other writers associated with the Inklings.",  # noqa
+                "avatar": "",  # avoid testing file operations here
+                "groupblog": "",
+                "upload_roles": ["member", "moderator", "administrator"],
+                "moderate_roles": ["moderator", "administrator"],
+            },
+            {
+                "knowledgeCommons|the-inklings": {
+                    "new_roles": [],
+                    "existing_roles": [
+                        "knowledgeCommons|the-inklings|manager",
+                        "knowledgeCommons|the-inklings|curator",
+                        "knowledgeCommons|the-inklings|reader",
+                    ],
+                    "metadata_updated": {},
+                }
+            },
+        )
+    ],
+)
+def test_update_group_from_remote_existing(
+    app,
+    idp,
+    remote_group_id,
+    return_payload,
+    group_role_changes,
+    db,
+    location,
+    requests_mock,
+    search_clear,
+):
+    base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
+        "remote_endpoint"
+    ]
+
+    requests_mock.get(
+        f"{base_url}{remote_group_id}",
+        json=return_payload,
+    )
+
+    GroupRolesComponent(user_service).create_new_group("administrator")
+
+    # create the group collection/community in the database
+    existing_collection = current_group_collections_service.create(
+        system_identity, remote_group_id, idp
+    )
+    logger.debug(
+        f"Created group collection {existing_collection.to_dict()['slug']}"
+    )
+    # requests_mock.real_http = True
+    # response = requests.get("http://localhost:9200/_cat/indices?v")
+    # logger.debug(response.text)
+    # requests_mock.real_http = False
+    Community.index.refresh()
+
+    communities_index = dsl.Index(
+        build_alias_name(
+            current_communities.service.config.record_cls.index._name
+        ),
+        using=current_search_client,
+    )
+    logger.debug(f"Communities index: {communities_index}")
+
+    search_result = current_group_collections_service.read(
+        system_identity, existing_collection["slug"]
+    )
+    logger.debug(f"Read group collection {search_result}")
+
+    actual = group_service.update_group_from_remote(idp, remote_group_id)
+    assert actual == group_role_changes
+
+
+def test_udpate_group_from_remote_with_community():
+    pass
 
 
 @pytest.mark.parametrize(
@@ -194,83 +360,83 @@ def test_update_data_from_remote_mock(
                 "username": "knowledgeCommons-mikethicke",
             },
             [
-                "knowledgeCommons|digital-humanists|member",
-                "knowledgeCommons|test-bpges|member",
-                "knowledgeCommons|public-philosophy-hournal|member",
-                "knowledgeCommons|mdpx|member",
-                "knowledgeCommons|science-and-technology-studies-(sts)|member",
+                "knowledgeCommons|digital-humanists|reader",
+                "knowledgeCommons|test-bpges|reader",
+                "knowledgeCommons|public-philosophy-hournal|reader",
+                "knowledgeCommons|mdpx|reader",
+                "knowledgeCommons|science-and-technology-studies-(sts)|reader",
                 (
                     "knowledgeCommons|hc-participating-organization"
-                    "-council|member"
+                    "-council|reader"
                 ),
-                "knowledgeCommons|mesh|member",
-                "knowledgeCommons|mla-group-test|admin",
+                "knowledgeCommons|mesh|reader",
+                "knowledgeCommons|mla-group-test|manager",
                 (
                     "knowledgeCommons|humanities-commons-user-advisory"
-                    "-group|member"
+                    "-group|reader"
                 ),
                 (
                     "knowledgeCommons|humanities-commons-technical-advisory"
-                    "-group|admin"
+                    "-group|manager"
                 ),
-                "knowledgeCommons|arlisna-test-group|admin",
-                "knowledgeCommons|stemed+-commons-working-group|member",
-                "knowledgeCommons|test-group|member",
-                "knowledgeCommons|teaching-and-learning|admin",
-                "knowledgeCommons|humanities-arts-and-media|admin",
-                "knowledgeCommons|technology-networks-and-sciences|admin",
-                "knowledgeCommons|social-and-political-issues|admin",
-                "knowledgeCommons|educational-and-cultural-institutions|admin",
-                "knowledgeCommons|publishing-and-archives|admin",
-                "knowledgeCommons|a-new-group-for testing new groups|admin",
-                "knowledgeCommons|private-testing-group|admin",
-                "knowledgeCommons|msu-commons-test-group|admin",
+                "knowledgeCommons|arlisna-test-group|manager",
+                "knowledgeCommons|stemed+-commons-working-group|reader",
+                "knowledgeCommons|test-group|reader",
+                "knowledgeCommons|teaching-and-learning|manager",
+                "knowledgeCommons|humanities-arts-and-media|manager",
+                "knowledgeCommons|technology-networks-and-sciences|manager",
+                "knowledgeCommons|social-and-political-issues|manager",
+                "knowledgeCommons|educational-and-cultural-institutions|manager",
+                "knowledgeCommons|publishing-and-archives|manager",
+                "knowledgeCommons|a-new-group-for testing new groups|manager",
+                "knowledgeCommons|private-testing-group|manager",
+                "knowledgeCommons|msu-commons-test-group|manager",
             ],
             {
                 "added_groups": [
-                    "knowledgeCommons|digital-humanists|member",
-                    "knowledgeCommons|test-bpges|member",
-                    "knowledgeCommons|public-philosophy journal|member",
-                    "knowledgeCommons|mdpx|member",
+                    "knowledgeCommons|digital-humanists|reader",
+                    "knowledgeCommons|test-bpges|reader",
+                    "knowledgeCommons|public-philosophy journal|reader",
+                    "knowledgeCommons|mdpx|reader",
                     (
                         "knowledgeCommons|science-and-technology-studies"
-                        "-(sts)|member"
+                        "-(sts)|reader"
                     ),
                     (
                         "knowledgeCommons|hc-participating-organization"
-                        "-council|member"
+                        "-council|reader"
                     ),
-                    "knowledgeCommons|mesh|member",
-                    "knowledgeCommons|mla-group-test|admin",
+                    "knowledgeCommons|mesh|reader",
+                    "knowledgeCommons|mla-group-test|manager",
                     (
                         "knowledgeCommons|humanities-commons-user-advisory"
-                        "-group|member"
+                        "-group|reader"
                     ),
                     (
                         "knowledgeCommons|humanities-commons-technical"
-                        "-advisory-group|admin"
+                        "-advisory-group|manager"
                     ),
-                    "knowledgeCommons|arlisna-test-group|admin",
-                    "knowledgeCommons|stemed+-commons-working-group|member",
-                    "knowledgeCommons|test-group|member",
-                    "knowledgeCommons|teaching-and-learning|admin",
-                    "knowledgeCommons|humanities,-arts,-and-media|admin",
+                    "knowledgeCommons|arlisna-test-group|manager",
+                    "knowledgeCommons|stemed+-commons-working-group|reader",
+                    "knowledgeCommons|test-group|reader",
+                    "knowledgeCommons|teaching-and-learning|manager",
+                    "knowledgeCommons|humanities,-arts,-and-media|manager",
                     (
                         "knowledgeCommons|technology-networks-and"
-                        "-sciences|admin"
+                        "-sciences|manager"
                     ),
-                    "knowledgeCommons|social-and-political-issues|admin",
+                    "knowledgeCommons|social-and-political-issues|manager",
                     (
                         "knowledgeCommons|educational-and-cultural"
-                        "-institutions|admin"
+                        "-institutions|manager"
                     ),
-                    "knowledgeCommons|publishing-and-archives|admin",
+                    "knowledgeCommons|publishing-and-archives|manager",
                     (
                         "knowledgeCommons|a-new-group-for-testing-new"
-                        "-groups|admin"
+                        "-groups|manager"
                     ),
-                    "knowledgeCommons|private-testing-group|admin",
-                    "knowledgeCommons|msu-commons-test-group|admin",
+                    "knowledgeCommons|private-testing-group|manager",
+                    "knowledgeCommons|msu-commons-test-group|manager",
                 ],
                 "dropped_groups": [],
                 "unchanged_groups": [],
@@ -278,7 +444,7 @@ def test_update_data_from_remote_mock(
         ),
     ],
 )
-def test_update_data_from_remote_live(
+def test_update_user_from_remote_live(
     app,
     user_email,
     remote_id,
@@ -299,7 +465,7 @@ def test_update_data_from_remote_live(
         assert current_accounts.datastore.activate_user(myuser)
     UserIdentity.create(myuser, "knowledgeCommons", "testuser")
 
-    actual = user_service.update_data_from_remote(
+    actual = user_service.update_user_from_remote(
         myuser.id, "knowledgeCommons", remote_id
     )
     assert {
@@ -359,11 +525,11 @@ def test_on_identity_changed(client, app, user_factory, requests_mock, myuser):
     # mock SAML login info for the test user and add them to new groups
     myuser1 = user_factory(confirmed_at=arrow.utcnow().datetime)
     UserIdentity.create(myuser1, "knowledgeCommons", "testuser")
-    grouper = GroupsComponent(user_service)
-    grouper.create_new_group(group_name="knowledgeCommons|cool-group|admin")
+    grouper = GroupRolesComponent(user_service)
+    grouper.create_new_group(group_name="knowledgeCommons|cool-group|manager")
     grouper.create_new_group(group_name="admin")
     grouper.add_user_to_group(
-        group_name="knowledgeCommons|cool-group|admin", user=myuser1
+        group_name="knowledgeCommons|cool-group|manager", user=myuser1
     )
     grouper.add_user_to_group(group_name="admin", user=myuser1)
 
@@ -384,8 +550,8 @@ def test_on_identity_changed(client, app, user_factory, requests_mock, myuser):
                 for n in my_identity.provides
                 if n.value
                 in [
-                    "knowledgeCommons|admin|member",
-                    "knowledgeCommons|awesome-mock|admin",
+                    "knowledgeCommons|admin|reader",
+                    "knowledgeCommons|awesome-mock|manager",
                     "any_user",
                     myuser1.id,
                     "authenticated_user",
@@ -402,8 +568,8 @@ def test_on_identity_changed(client, app, user_factory, requests_mock, myuser):
                 for n in my_identity.provides
                 if n.value
                 not in [
-                    "knowledgeCommons|admin|member",
-                    "knowledgeCommons|awesome-mock|admin",
+                    "knowledgeCommons|admin|reader",
+                    "knowledgeCommons|awesome-mock|manager",
                     "any_user",
                     myuser1.id,
                     "authenticated_user",
@@ -560,11 +726,11 @@ def test_on_identity_changed(client, app, user_factory, requests_mock, myuser):
                 },
             },
             {
-                "dropped_groups": ["knowledgeCommons|cool-group|admin"],
-                "added_groups": ["knowledgeCommons|awesome-mock|admin"],
+                "dropped_groups": ["knowledgeCommons|cool-group|manager"],
+                "added_groups": ["knowledgeCommons|awesome-mock|manager"],
                 "unchanged_groups": [
                     "admin",
-                    "knowledgeCommons|cool-group2|member",
+                    "knowledgeCommons|cool-group2|reader",
                 ],
             },
         )
@@ -581,7 +747,7 @@ def test_compare_remote_with_local(
     db,
 ):
     """Test comparison of remote and local user data."""
-    grouper = GroupsComponent(user_service)
+    grouper = GroupRolesComponent(user_service)
     myuser = user_factory(**starting_data["user"])
     grouper.create_new_group(group_name="admin")
     grouper.add_user_to_group(group_name="admin", user=myuser)
@@ -617,7 +783,7 @@ def test_update_invenio_group_memberships(app, user_factory, db):
     my_identity = get_identity_for_user(myuser.email)
 
     # set up starting roles and memberships
-    grouper = GroupsComponent(user_service)
+    grouper = GroupRolesComponent(user_service)
     grouper.create_new_group(group_name="cool-group")
     grouper.create_new_group(group_name="admin")
     grouper.add_user_to_group("cool-group", myuser)

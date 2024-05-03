@@ -22,7 +22,7 @@ remote service in the Invenio database.
 By default this service is triggered when a user first registers and then
 each time the user logs in. The service can also be called directly to
 update user data during a logged-in session, and it can be triggered by
-the remote IDP server via a webhook signal.
+the remote service via a webhook signal.
 
 Group memberships (Invenio roles)
 ---------------------------------
@@ -57,16 +57,16 @@ Keeping remote data updated
 The service is always called when a user logs in (triggered by the
 identity_changed signal emitted by flask-principal). During a logged-in
 session updates may be triggered by a background task or by a webhook
-signal from the user's remote IDP. In this case the user's data for the
+signal from the user's remote service. In this case the user's data for the
 current session will be updated immediately and will become visible in the
 UI on the next page refresh.
 
 Update webhook
 --------------
 
-The service can be triggered by a webhook signal from the remote IDP. A
+The service can be triggered by a webhook signal from the remote service. A
 webhook signal should be sent to the endpoint https://example.org/api/webhooks
-/idp_data_update/ and the request must include a security token (provided by
+/user_data_update/ and the request must include a security token (provided by
 the Invenio instance admins) in the request header. This token is set in the
 REMOTE_USER_DATA_WEBHOOK_TOKEN configuration variable for the InvenioRDM
 instance.
@@ -74,15 +74,15 @@ instance.
 The webhook signal should be a POST request with a JSON body. The body should
 be a JSON object whose top-level keys are
 
-:idp: The name of the remote IDP that is sending the signal. This is a
+:idp: The name of the IDP registered for the remote service that is sending the signal. This is a
       string that must match one of the keys in the
       REMOTE_USER_DATA_API_ENDPOINTS configuration variable.
 
 :updates: A JSON object whose top-level keys are the types of data object that
-          have been updated on the remote IDP. The value of each key is an
+          have been updated on the remote service. The value of each key is an
           array of objects representing the updated entities. Each of these
           objects should include the "id" property, whose value is the entity's
-          string identifier on the remote IDP. It should also include the
+          string identifier on the remote service. It should also include the
           "event" property, whose value is the type of event that is being
           signalled (e.g., "updated", "created", "deleted", etc.).
 
@@ -122,11 +122,48 @@ REMOTE_USER_DATA_API_ENDPOINTS
 
     A dictionary of remote ID provider names and their associated API
     information for each kind of user data. The dictionary keys are the
-    names of IDPs. For each ID provider, the value is a dictionary whose
+    names of SAML or oath IDPs registered for remote services. For each ID provider, the value is a dictionary whose
     keys are the different data categories ("groups", etc.).
 
-    For each kind of user data, the value is again a dictionary with these
-    keys:
+    For each kind of user data, the value is again a dictionary shaped like this:
+
+    ```python
+    REMOTE_USER_DATA_API_ENDPOINTS = {
+        "knowledgeCommons": {
+            "users": {
+                "remote_endpoint": (
+                    "https://hcommons-dev.org/wp-json/commons/v1/users/"
+                ),
+                "remote_identifier": "id",
+                "remote_method": "GET",
+                "token_env_variable_label": "COMMONS_API_TOKEN",
+            },
+            "groups": {
+                "remote_endpoint": (
+                    "https://hcommons-dev.org/wp-json/commons/v1/groups/"
+                ),
+                "remote_identifier": "id",
+                "remote_method": "GET",
+                "token_env_variable_label": "COMMONS_API_TOKEN",
+            },
+            "entity_types": {
+                "users": {"events": ["created", "updated", "deleted"]},
+                "groups": {"events": ["created", "updated", "deleted"]},
+            },
+        }
+    }
+    ```
+
+    The top level keys are the names of the remote ID providers. For each
+    ID provider, the value is a dictionary with the following keys:
+
+    :users: providing the configuration for the user data
+    :groups: providing the configuration for the group data
+    :entity_types: providing the configuration for the types of events that
+                   can be signalled by the remote service for each kind of data
+
+    For the `users` and `groups` keys, the value is a dictionary with the
+    following keys:
 
     :remote_endpoint: the URL for the API endpoint where that kind of data can
                       be retrieved, including a placeholder (the string
@@ -134,8 +171,9 @@ REMOTE_USER_DATA_API_ENDPOINTS
                       API request.:
                       e.g., "https://example.com/api/user/{placeholder}"
 
-    :remote_identifier: the Invenio user property to be used as an identifier
-                        in the API request (e.g., "id", "email", etc.)
+    :remote_identifier: the property of the Invenio record (user, group role)
+                        to be used as an identifier in the API request (e.g.,
+                        "id", "email", etc.)
 
     :remote_method: the method for the request to the remote API
 
@@ -145,6 +183,10 @@ REMOTE_USER_DATA_API_ENDPOINTS
                                .env file in the root directory of the Invenio
                                instance or set in the server system
                                environment.
+
+    In addition, the `groups` key may include a `group_roles` key, whose value
+    is a dictionary mapping the Invenio role names for group collection
+    privilege roles to the corresponding role names on the remote ID provider.
 
 REMOTE_USER_DATA_ENTITY_TYPES
 

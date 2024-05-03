@@ -8,19 +8,22 @@
 # LICENSE file for more details.
 
 import datetime
+import re
 
 # frm pprint import pformat
+from invenio_access.permissions import system_identity
 from invenio_accounts.models import User, UserIdentity  # Role,
 from invenio_accounts.proxies import current_accounts
 
 # from invenio_accounts.utils import jwt_create_token
 from invenio_groups.utils import make_group_slug
+from invenio_groups.proxies import current_group_collections_service
+from invenio_communities.members.errors import AlreadyMemberError
 from invenio_queues.proxies import current_queues
 from invenio_records_resources.services import Service
 
 # from invenio_users_resources.proxies import current_users_service
-from flask import session
-from .tasks import do_user_data_update
+from .tasks import do_group_data_update, do_user_data_update
 import os
 
 # from pprint import pprint
@@ -29,15 +32,16 @@ import traceback
 
 # from typing import Optional
 from werkzeug.local import LocalProxy
-from .components.groups import GroupsComponent
+from .components.groups import GroupRolesComponent
 from .signals import remote_data_updated
-from .utils import logger as update_logger, diff_between_nested_dicts
+from .utils import (
+    logger as update_logger,
+    diff_between_nested_dicts,
+)
 
-# from .views import IDPUpdateWebhook
 
-
-class RemoteUserDataService(Service):
-    """Service for retrieving user data from a Remote server."""
+class RemoteGroupDataService(Service):
+    """Service for updating a group's metadata from a remote server."""
 
     def __init__(self, app, config={}, **kwargs):
         """Constructor."""
@@ -49,9 +53,303 @@ class RemoteUserDataService(Service):
             lambda: app.extensions["invenio-communities"].service
         )
         self.update_interval = datetime.timedelta(
-            minutes=app.config["REMOTE_USER_DATA_UPDATE_INTERVAL"]
+            minutes=config["REMOTE_USER_DATA_UPDATE_INTERVAL"]
         )
-        self.user_data_stale = True
+        self.group_data_stale = True
+
+        @remote_data_updated.connect_via(app)
+        def on_webhook_update_signal(_, events: list) -> None:
+            """Update group roles and metadata data from remote server
+            when webhook is triggered.
+            """
+
+            self.logger.info("%%%%% webhook signal received")
+
+            for event in current_queues.queues["user-data-updates"].consume():
+                if event["entity_type"] == "groups" and event["event"] in [
+                    "created",
+                    "updated",
+                ]:
+                    celery_result = do_group_data_update.delay(  # noqa
+                        event["idp"], event["id"]
+                    )
+                elif (
+                    event["entity_type"] == "groups"
+                    and event["event"] == "deleted"
+                ):
+                    raise NotImplementedError(
+                        "Group role deletion from remote signal is not "
+                        "yet implemented."
+                    )
+
+    def _update_community_metadata_dict(
+        self, starting_dict: dict, new_data: dict
+    ) -> dict:
+        """Update a dictionary of community metadata with new data."""
+        assert (
+            new_data["id"]
+            == starting_dict["custom_fields"]["kcr:commons_group_id"]
+        )
+
+        metadata_updates = starting_dict["metadata"]
+        custom_fields_updates = starting_dict["custom_fields"]
+
+        if "avatar" in new_data.keys():
+            try:
+                assert current_group_collections_service.upload_avatar(
+                    starting_dict["id"], new_data["avatar"]
+                )
+            except AssertionError:
+                self.logger.error(
+                    f"Error uploading avatar for {new_data['id']} group."
+                )
+
+        if "url" in new_data.keys():
+            metadata_updates["website"] = new_data["url"]
+
+        if "visibility" in new_data.keys():
+            custom_fields_updates["kcr:commons_group_visibility"] = new_data[
+                "visibility"
+            ]
+        if "description" in new_data.keys():
+            custom_fields_updates["kcr:commons_group_description"] = new_data[
+                "description"
+            ]
+        if "name" in new_data.keys():
+            custom_fields_updates["kcr:commons_group_name"] = new_data["name"]
+
+        updates = {
+            "metadata": starting_dict["metadata"].update(metadata_updates),
+            "custom_fields": starting_dict["custom_fields"].update(
+                custom_fields_updates
+            ),
+        }
+        starting_dict.update(updates)
+
+        return starting_dict
+
+    def _add_user_to_community(
+        self, user_id: int, role: str, community_id: int
+    ) -> dict:
+        """Add a user to a community with a given role."""
+
+        members = None
+        try:
+            payload = [{"type": "user", "id": user_id}]
+            members = self.communities_service.members.add(
+                system_identity,
+                community_id,
+                data={"members": payload, "role": role},
+            )
+            assert members
+        except AlreadyMemberError:
+            self.logger.error(
+                f"User {user_id} was already a {role} member of community "
+                f"{community_id}"
+            )
+        except AssertionError:
+            self.logger.error(
+                f"Error adding user {user_id} to community {community_id}"
+            )
+        return members
+
+    def update_group_from_remote(
+        self, idp: str, remote_group_id: str, **kwargs
+    ) -> dict:
+        """Update group data from remote server.
+
+        If the three Invenio group roles for the remote group do not exist,
+        they will be created. If the group's collection exists, its metadata
+        will be updated. If the group's collection does not exist, it will NOT
+        be created. Creation of group collections is handled by the
+        `invenio_groups` service.
+
+        This method is triggered by the
+        :class:`invenio_remote_user_data.views.RemoteUserDataUpdateWebhook`
+        view.
+
+        Parameters:
+            idp (str): The identity provider name.
+            remote_group_id (str): The identifier for the group on the
+            remote service.
+            **kwargs: Additional keyword arguments to pass to the method.
+
+        Returns:
+            dict: A dictionary of the updated group data.
+        """
+        results_dict = {}
+        idp_config = self.config[idp]
+        response = requests.get(
+            f"{idp_config['groups']['remote_endpoint']}{remote_group_id}"
+        )
+        group_metadata = response.json()
+        group_slugs = []
+
+        # check if the group's collection(s) exists
+        query_params = (
+            f"+custom_fields.kcr\:commons_instance:{idp} "  # noqa:W605
+            f"+custom_fields.kcr\:commons_group_id:"  # noqa:W605
+            f"{remote_group_id}"
+        )
+        community_list = self.communities_service.search(
+            system_identity, q=query_params
+        )
+
+        # use slugs from existing group collections if they exist
+        # otherwise make new slug(s)
+        if community_list.to_dict()["hits"]["total"] == 0:
+            self.logger.error(
+                f"No group collection found for {idp} group {remote_group_id}"
+            )
+            group_slugs = make_group_slug(
+                group_metadata["id"], group_metadata["name"], idp
+            )
+            # if more than one slug is returned we need to assign membership
+            # roles for all of them. This can happen if the group name is reused
+            # or if a group's collection has been soft deleted.
+            if isinstance(group_slugs, str):
+                group_slugs = [group_slugs]
+        else:
+            for community in community_list.to_dict()["hits"]["hits"]:
+                assert (
+                    community["custom_fields"]["kcr:commons_group_id"]
+                    == remote_group_id
+                )
+                assert (
+                    community["custom_fields"]["kcr:commons_instance"] == idp
+                )
+                group_slugs.append(community["slug"])
+                update_result = self.communities_service.update(
+                    self._update_community_metadata_dict(
+                        community, group_metadata
+                    )
+                )
+                self.logger.debug(
+                    f"Group collection {community['slug']} metadata updated:",
+                    update_result,
+                )
+                results_dict[community["slug"]["metadata_updated"]] = (
+                    update_result
+                )
+
+        # create group roles in Invenio if they don't exist already
+        for slug in group_slugs:
+            grouper = GroupRolesComponent(self)
+            group_roles = grouper.make_roles_list(slug)
+            existing_roles = [g for g in group_roles if grouper.find_group(g)]
+            new_roles = [
+                grouper.create_new_group(g).name
+                for g in group_roles
+                if g not in existing_roles
+            ]
+
+            results_dict[slug] = {
+                "new_roles": new_roles,
+                "existing_roles": existing_roles,
+            }
+        self.logger.debug("Results dict: " + str(results_dict))
+        return results_dict
+
+    def delete_group_from_remote(self, idp: str, remote_group_id: str) -> dict:
+        """Delete roles for a remote group if there is no corresponding group.
+
+        If a group collection exists for the remote group, its metadata will
+        be updated to remove the link to the remote collection. Its role-based
+        memberships will be replaced by individual memberships for each
+        currently-assigned user.
+
+        We don't delete the group collection because that is handled by the
+        `invenio_groups` service. We also don't delete roles for an existing
+        group collection because that would disrupt the group memberships. In
+        theory this could result in orphaned group collections with matching
+        roles. But when the group collection for a defunct remote group is
+        deleted, then any dangling Invenio roles will also be deleted by the
+        `invenio_groups` service.
+
+        # FIXME: What about the case of an orphaned group collection that is
+        # soft-deleted? restored?
+        """
+        results_dict = {}
+
+        # find any group collections that match the remote group
+
+        query_params = (
+            f"+custom_fields.kcr\:commons_instance:{idp} "  # noqa:W605
+            f"+custom_fields.kcr\:commons_group_id:"  # noqa:W605
+            f"{remote_group_id}"
+        )
+        community_list = self.communities_service.search(
+            system_identity, q=query_params
+        )
+
+        # If there are collections, gather slugs. Otherwise create slugs.
+
+        if community_list is not None:
+            group_slugs = [
+                community["slug"]
+                for community in community_list.to_dict()["hits"]["hits"]
+            ]
+        else:
+            group_slugs = make_group_slug(remote_group_id, idp)
+            if isinstance(group_slugs, str):
+                group_slugs = [group_slugs]
+
+        grouper = GroupRolesComponent(self)
+        # make flat list of role names for all the slugs
+        for slug in group_slugs:
+            slug_community = self.communities_service.read(slug)
+            # FIXME: redundant call?
+            group_roles = make_roles_list(slug)
+            # find all users with the group roles
+            for role in group_roles:
+                if slug_community:
+                    group_members = grouper.get_current_members_of_group(role)
+                    individual_memberships = []
+                    for member in group_members:
+                        # assign member to the group collection community
+                        # directly with a community role based on their former
+                        # group role
+                        add_result = self._add_user_to_community(
+                            member.id, role.split("|")[-1], slug_community.id
+                        )
+                        if add_result:
+                            individual_memberships.append(member.id)
+                    results_dict[slug][role][
+                        "individual_memberships"
+                    ] = individual_memberships
+                    if not [
+                        m
+                        for m in group_members
+                        if m.id not in individual_memberships
+                    ]:
+                        results_dict[slug][role]["group_role_deleted"] = (
+                            grouper.delete_group(role)
+                        )
+                    else:
+                        self.logger.error(
+                            "Error deleting group role. Not all members "
+                            "were reassigned."
+                        )
+                else:
+                    results_dict[slug][role]["group_role_deleted"] = (
+                        grouper.delete_group(role)
+                    )
+
+        return results_dict
+
+
+class RemoteUserDataService(Service):
+    """Service for updating a user's metadata from a remote server."""
+
+    def __init__(self, app, config={}, **kwargs):
+        """Constructor."""
+        super().__init__(config=config, **kwargs)
+        self.config = config["REMOTE_USER_DATA_API_ENDPOINTS"]
+        self.logger = update_logger
+        self.updated_data = {}
+        self.communities_service = LocalProxy(
+            lambda: app.extensions["invenio-communities"].service
+        )
         # TODO: Is there a risk of colliding operations?
         self.update_in_progress = False
 
@@ -115,7 +413,7 @@ class RemoteUserDataService(Service):
     #                 user_data_stale = False
     #     return user_data_stale
 
-    def update_data_from_remote(
+    def update_user_from_remote(
         self, user_id: int, idp: str, remote_id: str, **kwargs
     ) -> tuple[User, dict, list[str], dict]:
         """Main method to update user data from remote server.
@@ -153,7 +451,7 @@ class RemoteUserDataService(Service):
             remote_data = self.fetch_from_remote_api(
                 user, idp, remote_id, **kwargs
             )
-            new_data = {}
+            new_data, user_changes, groups_changes = [{}, {}, {}]
             if remote_data:
                 new_data, user_changes, groups_changes = (
                     self.compare_remote_with_local(
@@ -298,13 +596,36 @@ class RemoteUserDataService(Service):
             if groups:
                 remote_groups = []
                 for g in groups:
-                    # If more than one slug is returned we need to assign
-                    # membership roles for all of them
-                    slugs = make_group_slug(g["id"], g["name"], idp)
-                    if isinstance(slugs, str):
-                        slugs = [slugs]
-                    for slug in slugs:
-                        remote_groups.append(f'{slug}|{g["role"]}')
+                    # Fetch group metadata from remote service
+                    response = requests.get(
+                        f"{self.config[idp]['groups']['remote_endpoint']}"
+                        f"{g['id']}"
+                    )
+                    if response.status_code != 200:
+                        self.logger.error(
+                            f"Error fetching group data from remote API "
+                            f"for group: {g['id']}. Could not add user to "
+                            "group."
+                        )
+                    else:
+                        group_metadata = response.json()
+                        # FIXME: change these role category names in
+                        # API response
+
+                        # If more than one slug is returned we need to assign
+                        # membership roles for all of them
+                        slugs = make_group_slug(g["id"], g["name"], idp)
+                        if isinstance(slugs, str):
+                            slugs = [slugs]
+                        for slug in slugs:
+                            roles_dict = (
+                                GroupRolesComponent.convert_remote_roles(
+                                    slug,
+                                    group_metadata["moderate_roles"],
+                                    group_metadata["upload_roles"],
+                                )
+                            )
+                            remote_groups.append(roles_dict[g["role"]])
                 if remote_groups != local_groups:
                     group_changes = {
                         "dropped_groups": [
@@ -411,7 +732,7 @@ class RemoteUserDataService(Service):
         Returns:
             list: The updated list of group role names.
         """
-        grouper = GroupsComponent(self)
+        grouper = GroupRolesComponent(self)
         updated_local_groups = [r.name for r in user.roles]
         for group_name in changed_memberships["added_groups"]:
             group_role = grouper.find_or_create_group(group_name)

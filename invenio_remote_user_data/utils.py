@@ -15,7 +15,9 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-formatter = logging.Formatter("%(asctime)s:%(levelname)s : %(message)s")
+formatter = logging.Formatter(
+    "%(asctime)s:RemoteUserDataService:%(levelname)s: %(message)s"
+)
 log_folder = Path(__file__).parent / "logs"
 os.makedirs(log_folder, exist_ok=True)
 file_handler = logging.handlers.RotatingFileHandler(

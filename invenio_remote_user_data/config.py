@@ -8,12 +8,22 @@
 # LICENSE file for more details.
 
 from kombu import Exchange
+from .permissions import CustomCommunitiesPermissionPolicy
+
 
 REMOTE_USER_DATA_API_ENDPOINTS = {
     "knowledgeCommons": {
         "users": {
             "remote_endpoint": (
                 "https://hcommons-dev.org/wp-json/commons/v1/users/"
+            ),
+            "remote_identifier": "id",
+            "remote_method": "GET",
+            "token_env_variable_label": "COMMONS_API_TOKEN",
+        },
+        "groups": {
+            "remote_endpoint": (
+                "https://hcommons-dev.org/wp-json/commons/v1/groups/"
             ),
             "remote_identifier": "id",
             "remote_method": "GET",
@@ -33,3 +43,5 @@ REMOTE_USER_DATA_MQ_EXCHANGE = Exchange(
     type="direct",
     delivery_mode="transient",  # in-memory queue
 )
+
+COMMUNITIES_PERMISSION_POLICY = CustomCommunitiesPermissionPolicy

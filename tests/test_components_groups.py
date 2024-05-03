@@ -1,6 +1,6 @@
 # from invenio_utilities_tuw.utils import get_user_by_identifier
 from invenio_remote_user_data.components.groups import (
-    GroupsComponent,
+    GroupRolesComponent,
 )
 
 # from pprint import pprint
@@ -18,7 +18,7 @@ def test_get_current_user_roles(app, user_factory):
         myuser (_type_): _description_
     """
     myuser = user_factory()
-    roles = GroupsComponent(
+    roles = GroupRolesComponent(
         current_remote_user_data_service
     ).get_current_user_roles(user=myuser)
     assert roles == []
@@ -26,7 +26,7 @@ def test_get_current_user_roles(app, user_factory):
 
 def test_find_or_create_group(app, user_factory, db):
     """Test fetching or creating a group role"""
-    grouper = GroupsComponent(current_remote_user_data_service)
+    grouper = GroupRolesComponent(current_remote_user_data_service)
     my_group_role = grouper.find_or_create_group(
         group_name="my_group", description="A group for me"
     )
@@ -41,7 +41,7 @@ def test_find_or_create_group(app, user_factory, db):
 
 def test_create_new_group(app, user_factory, db):
     """Test creating a new group role"""
-    grouper = GroupsComponent(current_remote_user_data_service)
+    grouper = GroupRolesComponent(current_remote_user_data_service)
     my_group_role = grouper.create_new_group(
         group_name="my_group", description="A group for me"
     )
@@ -53,7 +53,7 @@ def test_create_new_group(app, user_factory, db):
 
 def test_add_user_to_group(app, user_factory, db):
     """Test adding a user to a group role"""
-    grouper = GroupsComponent(current_remote_user_data_service)
+    grouper = GroupRolesComponent(current_remote_user_data_service)
     my_group_role = grouper.create_new_group(
         group_name="my_group", description="A group for me"
     )
@@ -80,7 +80,7 @@ def test_get_current_members_of_group(app, user_factory, db):
         myuser (_type_): _description_
         db (_type_): _description_
     """
-    grouper = GroupsComponent(current_remote_user_data_service)
+    grouper = GroupRolesComponent(current_remote_user_data_service)
     my_group_role = grouper.find_or_create_group(
         group_name="my_group", description="A group for me"
     )

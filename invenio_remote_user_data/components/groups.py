@@ -44,7 +44,7 @@ class GroupRolesComponent(ServiceComponent):
 
         params:
             slug: The slug of the group in Invenio. Should have the form
-                {idp name}|{group name} with the group name in lower-case and
+                {idp name}---{group name} with the group name in lower-case and
                 with spaces replaced by hyphens.
             moderate_roles: A list of the remote group roles that should be
                 converted to the Invenio "manager" role.
@@ -106,7 +106,6 @@ class GroupRolesComponent(ServiceComponent):
         my_group_role = current_accounts.datastore.find_or_create_role(
             name=group_name, **kwargs
         )
-        # FIXME: Is this right?
         current_accounts.datastore.commit()
         if my_group_role is not None:
             self.logger.debug(
@@ -123,7 +122,6 @@ class GroupRolesComponent(ServiceComponent):
         my_group_role = current_accounts.datastore.create_role(
             name=group_name, **kwargs
         )
-        # FIXME: Is this right?
         current_accounts.datastore.commit()
         if my_group_role is not None:
             self.logger.info(f'Role "{group_name}" created successfully.')
@@ -134,12 +132,12 @@ class GroupRolesComponent(ServiceComponent):
     def delete_group(self, group_name: str, **kwargs) -> bool:
         """Delete a group role with the given name."""
         my_group_role = current_accounts.datastore.find_role(group_name)
-        # FIXME: Is this right?
-        current_accounts.datastore.commit()
         if my_group_role is None:
             raise RuntimeError(f'Role "{group_name}" not found.')
         else:
             deleted_group = current_accounts.datastore.delete(my_group_role)
+            current_accounts.datastore.commit()
+            # FIXME: Is this right?
             if deleted_group is False:
                 raise RuntimeError(f'Role "{group_name}" not deleted.')
             else:
@@ -152,7 +150,6 @@ class GroupRolesComponent(ServiceComponent):
         user_added = current_accounts.datastore.add_role_to_user(
             user, group_name
         )
-        # FIXME: Is this right?
         current_accounts.datastore.commit()
         if user_added is False:
             raise RuntimeError("Cannot add user to group role.")
@@ -186,7 +183,6 @@ class GroupRolesComponent(ServiceComponent):
         removed_user = current_accounts.datastore.remove_role_from_user(
             user, group_name
         )
-        # FIXME: Is this right?
         current_accounts.datastore.commit()
         if removed_user is False:
             raise RuntimeError("Cannot remove group role from user.")

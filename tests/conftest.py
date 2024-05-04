@@ -565,6 +565,12 @@ def create_app(entry_points):
 
 
 @pytest.fixture(scope="module")
+def custom_fields(app):
+    create_communities_custom_fields(app)
+    return True
+
+
+@pytest.fixture(scope="module")
 def testapp(app):
     """Application database and search."""
     yield app
@@ -599,13 +605,6 @@ def create_communities_custom_fields(app):
     except search_engine.RequestError as e:
         print("An error occured while creating custom fields.")
         print(e.info["error"]["reason"])
-
-
-@pytest.fixture(scope="function")
-def db(app):
-    """Return the database object."""
-    create_communities_custom_fields(app)
-    yield db
 
 
 @pytest.fixture(scope="function")

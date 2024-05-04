@@ -90,13 +90,13 @@ import time
                 "username": "knowledgeCommons-myuser",
             },
             [
-                "knowledgeCommons|digital-humanists|curator",
-                "knowledgeCommons|test-bpges|manager",
+                "knowledgecommons---digital-humanists|curator",
+                "knowledgecommons---test-bpges|manager",
             ],
             {
                 "added_groups": [
-                    "knowledgeCommons|digital-humanists|curator",
-                    "knowledgeCommons|test-bpges|manager",
+                    "knowledgecommons---digital-humanists|curator",
+                    "knowledgecommons---test-bpges|manager",
                 ],
                 "dropped_groups": [],
                 "unchanged_groups": [],
@@ -105,7 +105,7 @@ import time
     ],
 )
 def test_update_user_from_remote_mock(
-    app,
+    testapp,
     user_email,
     remote_id,
     return_payload,
@@ -119,7 +119,7 @@ def test_update_user_from_remote_mock(
     search_clear,
 ):
     """Test updating user data from mocked remote API."""
-    base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][
+    base_url = testapp.config["REMOTE_USER_DATA_API_ENDPOINTS"][
         "knowledgeCommons"
     ]["users"]["remote_endpoint"]
     print(base_url)
@@ -197,11 +197,11 @@ def test_update_user_from_remote_mock(
                 "moderate_roles": ["moderator", "administrator"],
             },
             {
-                "knowledgeCommons|the-inklings": {
+                "knowledgecommons---the-inklings": {
                     "new_roles": [
-                        "knowledgeCommons|the-inklings|manager",
-                        "knowledgeCommons|the-inklings|curator",
-                        "knowledgeCommons|the-inklings|reader",
+                        "knowledgecommons---the-inklings|manager",
+                        "knowledgecommons---the-inklings|curator",
+                        "knowledgecommons---the-inklings|reader",
                     ],
                     "existing_roles": [],
                 }
@@ -210,7 +210,7 @@ def test_update_user_from_remote_mock(
     ],
 )
 def test_update_group_from_remote_mock_new(
-    app,
+    testapp,
     idp,
     remote_group_id,
     return_payload,
@@ -220,7 +220,7 @@ def test_update_group_from_remote_mock_new(
     search_clear,
 ):
 
-    base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
+    base_url = testapp.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
         "remote_endpoint"
     ]
 
@@ -233,7 +233,7 @@ def test_update_group_from_remote_mock_new(
 
     assert actual == group_role_changes
     grouper = GroupRolesComponent(user_service)
-    for f in actual["knowledgeCommons|the-inklings"]["new_roles"]:
+    for f in actual["knowledgecommons---the-inklings"]["new_roles"]:
         assert grouper.find_group(f)
 
 
@@ -255,21 +255,70 @@ def test_update_group_from_remote_mock_new(
                 "moderate_roles": ["moderator", "administrator"],
             },
             {
-                "knowledgeCommons|the-inklings": {
+                "knowledgecommons---the-inklings": {
                     "new_roles": [],
                     "existing_roles": [
-                        "knowledgeCommons|the-inklings|manager",
-                        "knowledgeCommons|the-inklings|curator",
-                        "knowledgeCommons|the-inklings|reader",
+                        "knowledgecommons---the-inklings|manager",
+                        "knowledgecommons---the-inklings|curator",
+                        "knowledgecommons---the-inklings|reader",
                     ],
-                    "metadata_updated": {},
+                    "metadata_updated": {
+                        "id": "55d2af81-fa4e-4ac0-866f-a8d99c333c6d",
+                        "created": "2024-05-03T23:48:46.312644+00:00",
+                        "updated": "2024-05-03T23:48:46.536669+00:00",
+                        "links": {
+                            "featured": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/featured",  # noqa
+                            "self": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d",  # noqa
+                            "self_html": "https://127.0.0.1:5000/communities/knowledgecommons---the-inklings",  # noqa
+                            "settings_html": "https://127.0.0.1:5000/communities/knowledgecommons---the-inklings/settings",  # noqa
+                            "logo": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/logo",  # noqa
+                            "rename": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/rename",  # noqa
+                            "members": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/members",  # noqa
+                            "public_members": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/members/public",  # noqa
+                            "invitations": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/invitations",  # noqa
+                            "requests": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/requests",
+                            "records": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/records",  # noqa
+                        },
+                        "revision_id": 3,
+                        "slug": "knowledgecommons---the-inklings",
+                        "metadata": {
+                            "title": "The Inklings",
+                            "description": "A collection managed by the The Inklings group of Knowledge Commons",  # noqa
+                            "curation_policy": "",
+                            "page": "This is a collection of works curated by the The Inklings group of Knowledge Commons",
+                            "website": "https://hcommons-dev.org/groups/the-inklings/",  # noqa
+                            "organizations": [
+                                {"name": "The Inklings"},
+                                {"name": "Knowledge Commons"},
+                            ],
+                        },
+                        "access": {
+                            "visibility": "restricted",
+                            "members_visibility": "public",
+                            "member_policy": "closed",
+                            "record_policy": "closed",
+                            "review_policy": "closed",
+                        },
+                        "custom_fields": {
+                            "kcr:commons_instance": "knowledgeCommons",
+                            "kcr:commons_group_id": "1004290",
+                            "kcr:commons_group_name": "The Inklings",
+                            "kcr:commons_group_description": "For scholars interested in J.R.R. Tolkien, C. S. Lewis, Charles Williams, and other writers associated with the Inklings.",  # noqa
+                            "kcr:commons_group_visibility": "public",
+                        },
+                        "deletion_status": {
+                            "is_deleted": False,
+                            "status": "P",
+                        },
+                        "children": {"allow": False},
+                    },
                 }
             },
         )
     ],
 )
-def test_update_group_from_remote_existing(
-    app,
+def test_update_group_from_remote_with_community(
+    testapp,
     idp,
     remote_group_id,
     return_payload,
@@ -278,8 +327,9 @@ def test_update_group_from_remote_existing(
     location,
     requests_mock,
     search_clear,
+    custom_fields,
 ):
-    base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
+    base_url = testapp.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
         "remote_endpoint"
     ]
 
@@ -317,10 +367,121 @@ def test_update_group_from_remote_existing(
     logger.debug(f"Read group collection {search_result}")
 
     actual = group_service.update_group_from_remote(idp, remote_group_id)
-    assert actual == group_role_changes
+    assert (
+        actual[existing_collection["slug"]]["new_roles"]
+        == group_role_changes[existing_collection["slug"]]["new_roles"]
+    )
+    assert (
+        actual[existing_collection["slug"]]["existing_roles"]
+        == group_role_changes[existing_collection["slug"]]["existing_roles"]
+    )
+
+    actual_md = {
+        k: v
+        for k, v in actual[existing_collection["slug"]][
+            "metadata_updated"
+        ].items()
+        if k not in ["revision_id", "created", "updated", "links", "id"]
+    }
+    expected_md = {
+        k: v
+        for k, v in group_role_changes[existing_collection["slug"]][
+            "metadata_updated"
+        ].items()
+        if k not in ["revision_id", "created", "updated", "links", "id"]
+    }
+    assert actual_md == expected_md
 
 
-def test_udpate_group_from_remote_with_community():
+@pytest.mark.parametrize(
+    "user_email,remote_id,new_data",
+    [
+        (
+            "myaddress@hcommons.org",
+            "myuser",
+            {
+                "username": "myuser",
+                "email": "myaddress@hcommons.org",
+                "name": "My User",
+                "first_name": "My",
+                "last_name": "User",
+                "institutional_affiliation": "Michigan State University",
+                "orcid": "0000-0002-1825-0097",
+                "groups": [
+                    {
+                        "id": 1000551,
+                        "name": "Digital Humanists",
+                        "role": "member",
+                    },
+                    {"id": 1000576, "name": "test bpges", "role": "admin"},
+                ],
+            },
+        )
+    ],
+)
+def test_delete_group_from_remote(
+    testapp,
+    user_email,
+    remote_id,
+    new_data,
+    requests_mock,
+    user_factory,
+    db,
+    search_clear,
+):
+    grouper = GroupRolesComponent(user_service)
+    grouper.create_new_group("knowledgecommons---the-inklings|manager")
+    grouper.create_new_group("knowledgecommons---the-inklings|curator")
+    grouper.create_new_group("knowledgecommons---the-inklings|reader")
+
+    myuser = user_factory(
+        email=user_email, confirmed_at=arrow.utcnow().datetime
+    )
+    if not myuser.active:
+        assert current_accounts.datastore.activate_user(myuser)
+    UserIdentity.create(myuser, "knowledgeCommons", "testuser")
+
+    grouper.add_user_to_group(
+        "knowledgecommons---the-inklings|manager", user=myuser
+    )
+    assert grouper.get_current_user_roles(myuser) == [
+        "knowledgecommons---the-inklings|manager"
+    ]
+
+    actual = group_service.delete_group_from_remote(
+        "knowledgeCommons", "1004290", "The Inklings"
+    )
+
+    assert (
+        grouper.find_group("knowledgecommons---the-inklings|manager") is None
+    )
+    assert (
+        grouper.find_group("knowledgecommons---the-inklings|curator") is None
+    )
+    assert grouper.find_group("knowledgecommons---the-inklings|reader") is None
+
+    assert (
+        "knowledgecommons---the-inklings|manager"
+        not in grouper.get_current_user_roles(myuser)
+    )
+
+    assert actual == {
+        "knowledgecommons---the-inklings": {
+            "knowledgecommons---the-inklings|manager": {
+                "group_role_deleted": True
+            },
+            "knowledgecommons---the-inklings|curator": {
+                "group_role_deleted": True
+            },
+            "knowledgecommons---the-inklings|reader": {
+                "group_role_deleted": True
+            },
+        }
+    }
+
+
+def test_delete_group_from_remote_with_community():
+    # TODO: Implement this test
     pass
 
 
@@ -328,18 +489,18 @@ def test_udpate_group_from_remote_with_community():
     "user_email,remote_id,new_data,user_changes,new_groups,group_changes",
     [
         (
-            "thickemi@msu.edu",
-            "mikethicke",
+            "scottianw@signgmail.com",
+            "ianscott",
             {
-                "username": "knowledgeCommons-mikethicke",
-                "email": "thickemi@msu.edu",
+                "username": "knowledgeCommons-ianscott",
+                "email": "scottianw@signgmail.com",
                 "user_profile": {
-                    "full_name": "Mike Thicke",
+                    "full_name": "Ian Scott",
                     "name_parts": {
-                        "first": "Mike",
-                        "last": "Thicke",
+                        "first": "Ian",
+                        "last": "Scott",
                     },
-                    "affiliations": "Michigan State University",
+                    "affiliations": "MESH Research, Michigan State University",
                 },
                 "preferences": {
                     "email_visibility": "restricted",
@@ -350,94 +511,18 @@ def test_udpate_group_from_remote_with_community():
             },
             {
                 "user_profile": {
-                    "affiliations": "Michigan State University",
-                    "full_name": "Mike Thicke",
+                    "affiliations": "MESH Research, Michigan State University",
+                    "full_name": "Ian Scott",
                     "name_parts": {
-                        "first": "Mike",
-                        "last": "Thicke",
+                        "first": "Ian",
+                        "last": "Scott",
                     },
                 },
-                "username": "knowledgeCommons-mikethicke",
+                "username": "knowledgeCommons-ianscott",
             },
-            [
-                "knowledgeCommons|digital-humanists|reader",
-                "knowledgeCommons|test-bpges|reader",
-                "knowledgeCommons|public-philosophy-hournal|reader",
-                "knowledgeCommons|mdpx|reader",
-                "knowledgeCommons|science-and-technology-studies-(sts)|reader",
-                (
-                    "knowledgeCommons|hc-participating-organization"
-                    "-council|reader"
-                ),
-                "knowledgeCommons|mesh|reader",
-                "knowledgeCommons|mla-group-test|manager",
-                (
-                    "knowledgeCommons|humanities-commons-user-advisory"
-                    "-group|reader"
-                ),
-                (
-                    "knowledgeCommons|humanities-commons-technical-advisory"
-                    "-group|manager"
-                ),
-                "knowledgeCommons|arlisna-test-group|manager",
-                "knowledgeCommons|stemed+-commons-working-group|reader",
-                "knowledgeCommons|test-group|reader",
-                "knowledgeCommons|teaching-and-learning|manager",
-                "knowledgeCommons|humanities-arts-and-media|manager",
-                "knowledgeCommons|technology-networks-and-sciences|manager",
-                "knowledgeCommons|social-and-political-issues|manager",
-                "knowledgeCommons|educational-and-cultural-institutions|manager",
-                "knowledgeCommons|publishing-and-archives|manager",
-                "knowledgeCommons|a-new-group-for testing new groups|manager",
-                "knowledgeCommons|private-testing-group|manager",
-                "knowledgeCommons|msu-commons-test-group|manager",
-            ],
+            [],
             {
-                "added_groups": [
-                    "knowledgeCommons|digital-humanists|reader",
-                    "knowledgeCommons|test-bpges|reader",
-                    "knowledgeCommons|public-philosophy journal|reader",
-                    "knowledgeCommons|mdpx|reader",
-                    (
-                        "knowledgeCommons|science-and-technology-studies"
-                        "-(sts)|reader"
-                    ),
-                    (
-                        "knowledgeCommons|hc-participating-organization"
-                        "-council|reader"
-                    ),
-                    "knowledgeCommons|mesh|reader",
-                    "knowledgeCommons|mla-group-test|manager",
-                    (
-                        "knowledgeCommons|humanities-commons-user-advisory"
-                        "-group|reader"
-                    ),
-                    (
-                        "knowledgeCommons|humanities-commons-technical"
-                        "-advisory-group|manager"
-                    ),
-                    "knowledgeCommons|arlisna-test-group|manager",
-                    "knowledgeCommons|stemed+-commons-working-group|reader",
-                    "knowledgeCommons|test-group|reader",
-                    "knowledgeCommons|teaching-and-learning|manager",
-                    "knowledgeCommons|humanities,-arts,-and-media|manager",
-                    (
-                        "knowledgeCommons|technology-networks-and"
-                        "-sciences|manager"
-                    ),
-                    "knowledgeCommons|social-and-political-issues|manager",
-                    (
-                        "knowledgeCommons|educational-and-cultural"
-                        "-institutions|manager"
-                    ),
-                    "knowledgeCommons|publishing-and-archives|manager",
-                    (
-                        "knowledgeCommons|a-new-group-for-testing-new"
-                        "-groups|manager"
-                    ),
-                    "knowledgeCommons|private-testing-group|manager",
-                    "knowledgeCommons|msu-commons-test-group|manager",
-                ],
+                "added_groups": [],
                 "dropped_groups": [],
                 "unchanged_groups": [],
             },
@@ -445,7 +530,7 @@ def test_udpate_group_from_remote_with_community():
     ],
 )
 def test_update_user_from_remote_live(
-    app,
+    testapp,
     user_email,
     remote_id,
     new_data,
@@ -493,10 +578,12 @@ def test_update_user_from_remote_live(
     } == new_data
 
 
-def test_on_identity_changed(client, app, user_factory, requests_mock, myuser):
+def test_on_identity_changed(
+    client, testapp, user_factory, requests_mock, myuser
+):
     """Test service initialization and signal triggers."""
-    assert "invenio-remote-user-data" in app.extensions
-    assert app.extensions["invenio-remote-user-data"].service
+    assert "invenio-remote-user-data" in testapp.extensions
+    assert testapp.extensions["invenio-remote-user-data"].service
 
     # mock the remote api endpoint
     # base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][
@@ -526,10 +613,12 @@ def test_on_identity_changed(client, app, user_factory, requests_mock, myuser):
     myuser1 = user_factory(confirmed_at=arrow.utcnow().datetime)
     UserIdentity.create(myuser1, "knowledgeCommons", "testuser")
     grouper = GroupRolesComponent(user_service)
-    grouper.create_new_group(group_name="knowledgeCommons|cool-group|manager")
+    grouper.create_new_group(
+        group_name="knowledgecommons---cool-group|manager"
+    )
     grouper.create_new_group(group_name="admin")
     grouper.add_user_to_group(
-        group_name="knowledgeCommons|cool-group|manager", user=myuser1
+        group_name="knowledgecommons---cool-group|manager", user=myuser1
     )
     grouper.add_user_to_group(group_name="admin", user=myuser1)
 
@@ -539,7 +628,7 @@ def test_on_identity_changed(client, app, user_factory, requests_mock, myuser):
     login_user_via_session(client, email=myuser1.email)
     client.get("/api")
     my_identity = g.identity
-    # note that the user is dropped from knowledgeCommons|cool-group|admin
+    # note that the user is dropped from knowledgecommons---cool-group|admin
     # because that's a remotely managed group (idp prefix). But they are
     # not dropped from the admin group because that's a locally managed
     # group (no idp prefix).
@@ -550,8 +639,8 @@ def test_on_identity_changed(client, app, user_factory, requests_mock, myuser):
                 for n in my_identity.provides
                 if n.value
                 in [
-                    "knowledgeCommons|admin|reader",
-                    "knowledgeCommons|awesome-mock|manager",
+                    "knowledgecommons---admin|reader",
+                    "knowledgecommons---awesome-mock|manager",
                     "any_user",
                     myuser1.id,
                     "authenticated_user",
@@ -568,8 +657,8 @@ def test_on_identity_changed(client, app, user_factory, requests_mock, myuser):
                 for n in my_identity.provides
                 if n.value
                 not in [
-                    "knowledgeCommons|admin|reader",
-                    "knowledgeCommons|awesome-mock|manager",
+                    "knowledgecommons---admin|reader",
+                    "knowledgecommons---awesome-mock|manager",
                     "any_user",
                     myuser1.id,
                     "authenticated_user",
@@ -726,18 +815,18 @@ def test_on_identity_changed(client, app, user_factory, requests_mock, myuser):
                 },
             },
             {
-                "dropped_groups": ["knowledgeCommons|cool-group|manager"],
-                "added_groups": ["knowledgeCommons|awesome-mock|manager"],
+                "dropped_groups": ["knowledgecommons---cool-group|manager"],
+                "added_groups": ["knowledgecommons---awesome-mock|manager"],
                 "unchanged_groups": [
                     "admin",
-                    "knowledgeCommons|cool-group2|reader",
+                    "knowledgecommons---cool-group2|reader",
                 ],
             },
         )
     ],
 )
 def test_compare_remote_with_local(
-    app,
+    testapp,
     remote_data,
     starting_data,
     new_data,
@@ -753,10 +842,10 @@ def test_compare_remote_with_local(
     grouper.add_user_to_group(group_name="admin", user=myuser)
     for group in starting_data["groups"]:
         grouper.create_new_group(
-            group_name=f"knowledgeCommons|{group['name']}|{group['role']}"
+            group_name=f"knowledgecommons---{group['name']}|{group['role']}"
         )
         grouper.add_user_to_group(
-            group_name=f"knowledgeCommons|{group['name']}|{group['role']}",
+            group_name=f"knowledgecommons---{group['name']}|{group['role']}",
             user=myuser,
         )
 
@@ -772,7 +861,7 @@ def test_compare_remote_with_local(
     assert actual_group_changes == group_changes
 
 
-def test_update_invenio_group_memberships(app, user_factory, db):
+def test_update_invenio_group_memberships(testapp, user_factory, db):
     """Test updating invenio group memberships based on remote comparison."""
     test_changed_memberships = {
         "dropped_groups": ["cool-group"],

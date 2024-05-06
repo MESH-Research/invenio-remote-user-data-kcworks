@@ -16,7 +16,7 @@ from invenio_accounts.models import User, UserIdentity  # Role,
 from invenio_accounts.proxies import current_accounts
 
 # from invenio_accounts.utils import jwt_create_token
-from invenio_groups.utils import make_group_slug
+from invenio_groups.utils import make_base_group_slug
 from invenio_groups.proxies import current_group_collections_service
 from invenio_communities.members.errors import AlreadyMemberError
 from invenio_pidstore.errors import PIDDoesNotExistError
@@ -30,6 +30,7 @@ import os
 # from pprint import pprint
 import requests
 import traceback
+from typing import Optional
 
 # from typing import Optional
 from werkzeug.local import LocalProxy
@@ -91,6 +92,8 @@ class RemoteGroupDataService(Service):
             new_data["id"]
             == starting_dict["custom_fields"]["kcr:commons_group_id"]
         )
+        self.logger.debug("Starting dict: " + pformat(starting_dict))
+        self.logger.debug("New data: " + pformat(new_data))
 
         metadata_updates = starting_dict["metadata"]
         custom_fields_updates = starting_dict["custom_fields"]
@@ -151,7 +154,7 @@ class RemoteGroupDataService(Service):
 
     def update_group_from_remote(
         self, idp: str, remote_group_id: str, **kwargs
-    ) -> dict:
+    ) -> Optional[dict]:
         """Update group data from remote server.
 
         If the three Invenio group roles for the remote group do not exist,
@@ -185,7 +188,6 @@ class RemoteGroupDataService(Service):
             headers=headers,
         )
         group_metadata = response.json()
-        group_slugs = []
 
         # check if the group's collection(s) exists
         query_params = (
@@ -203,24 +205,25 @@ class RemoteGroupDataService(Service):
             self.logger.error(
                 f"No group collection found for {idp} group {remote_group_id}"
             )
-            group_slugs = make_group_slug(
-                group_metadata["id"], group_metadata["name"], idp
-            )
-            # if more than one slug is returned we need to assign membership
-            # roles for all of them. This can happen if the group name is reused
-            # or if a group's collection has been soft deleted.
-            if isinstance(group_slugs, str):
-                group_slugs = [group_slugs]
         else:
-            for community in community_list.to_dict()["hits"]["hits"]:
-                assert (
-                    community["custom_fields"]["kcr:commons_group_id"]
-                    == remote_group_id
+            deleted_comms = [
+                community
+                for community in community_list.to_dict()["hits"]["hits"]
+                if community["deletion_status"]["is_deleted"] is True
+            ]
+            active_comms = [
+                community
+                for community in community_list.to_dict()["hits"]["hits"]
+                if community["deletion_status"]["is_deleted"] is False
+            ]
+
+            if len(active_comms) > 1:
+                raise RuntimeError(
+                    f"Multiple active group collections found for {idp} "
+                    f"group {remote_group_id}"
                 )
-                assert (
-                    community["custom_fields"]["kcr:commons_instance"] == idp
-                )
-                group_slugs.append(community["slug"])
+            elif len(active_comms) == 1:
+                community = active_comms[0]
                 update_result = self.communities_service.update(
                     system_identity,
                     id_=community["id"],
@@ -231,25 +234,19 @@ class RemoteGroupDataService(Service):
                 results_dict.setdefault(community["slug"], {})[
                     "metadata_updated"
                 ] = update_result.to_dict()
+            elif len(active_comms) == 0:
+                self.logger.info(
+                    f"No active group collection found for {idp} "
+                    f"group {remote_group_id}"
+                )
 
-        # create group roles in Invenio if they don't exist already
-        for slug in group_slugs:
-            grouper = GroupRolesComponent(self)
-            group_roles = grouper.make_roles_list(slug)
-            existing_roles = [g for g in group_roles if grouper.find_group(g)]
-            new_roles = [
-                grouper.create_new_group(g).name
-                for g in group_roles
-                if g not in existing_roles
-            ]
+            if len(deleted_comms) > 0:
+                for community in deleted_comms:
+                    results_dict.setdefault(community["slug"], {})[
+                        "metadata_updated"
+                    ] = "deleted"
 
-            results_dict.setdefault(slug, {}).update(
-                {
-                    "new_roles": new_roles,
-                    "existing_roles": existing_roles,
-                }
-            )
-        return results_dict
+        return results_dict if results_dict else None
 
     def delete_group_from_remote(
         self, idp: str, remote_group_id: str, remote_group_name
@@ -293,11 +290,10 @@ class RemoteGroupDataService(Service):
                 for community in community_list.to_dict()["hits"]["hits"]
             ]
         else:
-            group_slugs = make_group_slug(
+            created_slugs = make_group_slug(
                 remote_group_id, remote_group_name, idp
             )
-            if isinstance(group_slugs, str):
-                group_slugs = [group_slugs]
+            group_slugs = [created_slugs["fresh_slug"]]
         self.logger.debug(
             f"In delete_group_from_remote: Group slugs: {group_slugs}"
         )
@@ -312,7 +308,7 @@ class RemoteGroupDataService(Service):
             except PIDDoesNotExistError:
                 slug_community = None
             # FIXME: redundant call?
-            group_roles = grouper.make_roles_list(slug)
+            group_roles = grouper.make_roles_list(slug, idp)
             self.logger.debug(
                 f"In delete_group_from_remote: Group roles: {group_roles}"
             )
@@ -620,41 +616,9 @@ class RemoteUserDataService(Service):
                 remote_groups = []
                 for g in groups:
                     # Fetch group metadata from remote service
-                    groups_config = self.config[idp]["groups"]
-                    remote_api_token = os.environ[
-                        groups_config["token_env_variable_label"]
-                    ]
-                    headers = {"Authorization": f"Bearer {remote_api_token}"}
-                    response = requests.get(
-                        f"{groups_config['remote_endpoint']}" f"{g['id']}",
-                        headers=headers,
-                    )
-                    if response.status_code != 200:
-                        self.logger.error(pformat(response.json()))
-                        self.logger.error(
-                            f"Error fetching group data from remote API "
-                            f"for group: {g['id']}. Could not add user to "
-                            "group."
-                        )
-                    else:
-                        group_metadata = response.json()
-                        # FIXME: change these role category names in
-                        # API response
-
-                        # If more than one slug is returned we need to assign
-                        # membership roles for all of them
-                        slugs = make_group_slug(g["id"], g["name"], idp)
-                        if isinstance(slugs, str):
-                            slugs = [slugs]
-                        for slug in slugs:
-                            roles_dict = (
-                                GroupRolesComponent.convert_remote_roles(
-                                    slug,
-                                    group_metadata["moderate_roles"],
-                                    group_metadata["upload_roles"],
-                                )
-                            )
-                            remote_groups.append(roles_dict[g["role"]])
+                    slug = make_base_group_slug(g["name"])
+                    role_string = f"{idp}---{slug}|{g['id']}|{g['role']}"
+                    remote_groups.append(role_string)
                 if remote_groups != local_groups:
                     group_changes = {
                         "dropped_groups": [

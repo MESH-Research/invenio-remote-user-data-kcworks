@@ -28,6 +28,154 @@ from werkzeug.exceptions import NotFound
 
 
 @pytest.mark.parametrize(
+    "remote_data,starting_data,new_data,user_changes,group_changes",
+    [
+        (
+            {
+                "users": {
+                    "username": "myuser",
+                    "email": "myaddress@hcommons.org",
+                    "name": "My User",
+                    "first_name": "My",
+                    "last_name": "User",
+                    "institutional_affiliation": "Michigan State University",
+                    "orcid": "0000-0002-1825-0097",
+                    "groups": [
+                        {
+                            "id": 1000576,
+                            "name": "awesome-mock",
+                            "role": "admin",
+                        },
+                        {
+                            "id": 1000577,
+                            "name": "cool-group2",
+                            "role": "member",
+                        },
+                    ],
+                },
+            },
+            {
+                "user": {"email": "myaddress@hcommons.org"},
+                "groups": [
+                    {"id": 1000570, "name": "cool-group", "role": "admin"},
+                    {"id": 1000577, "name": "cool-group2", "role": "member"},
+                ],
+            },
+            {
+                "active": True,
+                "username": "knowledgeCommons-myuser",
+                "email": "myaddress@hcommons.org",
+                "user_profile": {
+                    "affiliations": "Michigan State University",
+                    "full_name": "My User",
+                    "identifiers": [
+                        {
+                            "identifier": "0000-0002-1825-0097",
+                            "scheme": "orcid",
+                        }
+                    ],
+                    "name_parts": {"first": "My", "last": "User"},
+                },
+                "preferences": {
+                    "email_visibility": "restricted",
+                    "visibility": "restricted",
+                    "locale": "en",
+                    "timezone": "Europe/Zurich",
+                },
+            },
+            {
+                "username": "knowledgeCommons-myuser",
+                "user_profile": {
+                    "affiliations": "Michigan State University",
+                    "full_name": "My User",
+                    "identifiers": [
+                        {
+                            "identifier": "0000-0002-1825-0097",
+                            "scheme": "orcid",
+                        }
+                    ],
+                    "name_parts": {"first": "My", "last": "User"},
+                },
+            },
+            {
+                "dropped_groups": ["knowledgeCommons---1000570|admin"],
+                "added_groups": ["knowledgeCommons---1000576|admin"],
+                "unchanged_groups": [
+                    "admin",
+                    "knowledgeCommons---1000577|member",
+                ],
+            },
+        )
+    ],
+)
+def test_compare_remote_with_local(
+    testapp,
+    remote_data,
+    starting_data,
+    new_data,
+    user_changes,
+    group_changes,
+    user_factory,
+    db,
+):
+    """Test comparison of remote and local user data."""
+    grouper = GroupRolesComponent(user_service)
+    myuser = user_factory(**starting_data["user"])
+    grouper.create_new_group(group_name="admin")
+    grouper.add_user_to_group(group_name="admin", user=myuser)
+    for group in starting_data["groups"]:
+        grouper.create_new_group(
+            group_name=f"knowledgeCommons---{group['id']}|{group['role']}"
+        )
+        grouper.add_user_to_group(
+            group_name=f"knowledgeCommons---{group['id']}|{group['role']}",
+            user=myuser,
+        )
+
+    (
+        actual_new,
+        actual_user_changes,
+        actual_group_changes,
+    ) = user_service.compare_remote_with_local(
+        user=myuser, remote_data=remote_data, idp="knowledgeCommons"
+    )
+    assert actual_new == new_data
+    assert actual_user_changes == user_changes
+    assert actual_group_changes == group_changes
+
+
+def test_update_invenio_group_memberships(testapp, user_factory, db):
+    """Test updating invenio group memberships based on remote comparison."""
+    test_changed_memberships = {
+        "dropped_groups": ["cool-group"],
+        "added_groups": ["awesome-mock"],
+    }
+    expected_updated_memberships = ["admin", "awesome-mock"]
+    myuser = user_factory()
+    my_identity = get_identity_for_user(myuser.email)
+
+    # set up starting roles and memberships
+    grouper = GroupRolesComponent(user_service)
+    grouper.create_new_group(group_name="cool-group")
+    grouper.create_new_group(group_name="admin")
+    grouper.add_user_to_group("cool-group", myuser)
+    grouper.add_user_to_group("admin", myuser)
+
+    actual_updated_memberships = user_service.update_invenio_group_memberships(
+        myuser, test_changed_memberships
+    )
+
+    assert actual_updated_memberships == expected_updated_memberships
+    assert [r for r in myuser.roles] == ["admin", "awesome-mock"]
+    my_identity = get_identity_for_user(myuser.email)
+    assert all(
+        n.value
+        for n in my_identity.provides
+        if n in ["admin", "awesome-mock", "any_user", 5]
+    )
+
+
+@pytest.mark.parametrize(
     "user_email,remote_id,return_payload,new_data,user_changes,"
     "new_groups,group_changes",
     [
@@ -90,13 +238,13 @@ from werkzeug.exceptions import NotFound
                 "username": "knowledgeCommons-myuser",
             },
             [
-                "knowledgeCommons---digital-humanists|1000551|member",
-                "knowledgeCommons---test-bpges|1000576|admin",
+                "knowledgeCommons---1000551|member",
+                "knowledgeCommons---1000576|admin",
             ],
             {
                 "added_groups": [
-                    "knowledgeCommons---digital-humanists|1000551|member",
-                    "knowledgeCommons---test-bpges|1000576|admin",
+                    "knowledgeCommons---1000551|member",
+                    "knowledgeCommons---1000576|admin",
                 ],
                 "dropped_groups": [],
                 "unchanged_groups": [],
@@ -282,8 +430,8 @@ def test_update_group_from_remote_mock_new(
                         "links": {
                             "featured": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/featured",  # noqa
                             "self": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d",  # noqa
-                            "self_html": "https://127.0.0.1:5000/communities/knowledgeCommons---the-inklings|1004290",  # noqa
-                            "settings_html": "https://127.0.0.1:5000/communities/knowledgeCommons---the-inklings|1004290/settings",  # noqa
+                            "self_html": "https://127.0.0.1:5000/communities/knowledgeCommons---1004290",  # noqa
+                            "settings_html": "https://127.0.0.1:5000/communities/knowledgeCommons---1004290/settings",  # noqa
                             "logo": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/logo",  # noqa
                             "rename": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/rename",  # noqa
                             "members": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/members",  # noqa
@@ -355,7 +503,9 @@ def test_update_group_from_remote_with_community(
         json=return_payload,
     )
 
-    GroupRolesComponent(user_service).create_new_group("administrator")
+    GroupRolesComponent(user_service).create_new_group(
+        group_name="administrator"
+    )
 
     # create the group collection/community in the database
     existing_collection = current_communities.service.create(
@@ -370,7 +520,7 @@ def test_update_group_from_remote_with_community(
         build_alias_name(
             current_communities.service.config.record_cls.index._name
         ),
-        using=current_search_client,
+        using=current_search_client,  # type: ignore
     )
     logger.debug(f"Communities index: {communities_index}")
 
@@ -427,11 +577,42 @@ def test_update_group_from_remote_with_community(
 
 
 @pytest.mark.parametrize(
-    "idp,remote_group_id,return_payload,group_role_changes",
+    "idp,remote_group_id,creation_data,return_payload,group_role_changes",
     [
         (
             "knowledgeCommons",
             "1004290",
+            {
+                "access": {
+                    "visibility": "restricted",
+                    "member_policy": "closed",
+                    "record_policy": "closed",
+                },
+                "slug": "the-inklings",
+                "metadata": {
+                    "title": f"The Inklings Unedited",
+                    "description": f"A collection managed by the "
+                    f"The Inklings Unedited group of Knowledge Commons",
+                    "curation_policy": "",
+                    "page": f"This"
+                    " is a collection of works curated by the "
+                    f"The Inklings group of Knowledge Commons",
+                    "website": "https://theinklings.org",
+                    "organizations": [
+                        {
+                            "name": "The Inklings",
+                        },
+                        {"name": "Knowledge Commons"},
+                    ],
+                },
+                "custom_fields": {
+                    "kcr:commons_instance": "knowledgeCommons",
+                    "kcr:commons_group_id": "1004290",
+                    "kcr:commons_group_name": "The Inklings Unedited",
+                    "kcr:commons_group_description": "",  # noqa: E501
+                    "kcr:commons_group_visibility": "public",  # noqa: E501
+                },
+            },
             {
                 "id": "1004290",
                 "name": "The Inklings",
@@ -447,20 +628,14 @@ def test_update_group_from_remote_with_community(
                 "the-inklings": {
                     "new_roles": [],
                     "existing_roles": [
-                        "knowledgeCommons---the-inklings|1004290|admin",
-                        "knowledgeCommons---the-inklings|1004290|member",
-                        "knowledgeCommons---the-inklings|1004290|member",
+                        "knowledgeCommons---1004290|admin",
+                        "knowledgeCommons---1004290|member",
+                        "knowledgeCommons---1004290|member",
                     ],
                     "metadata_updated": "deleted",
                 },
                 "the-inklings-1": {
-                    "new_roles": [
-                        "knowledgeCommons---the-inklings|1004290-1|admin",
-                        "knowledgeCommons---the-inklings|1004290-1|member",
-                        "knowledgeCommons---the-inklings|1004290-1|member",
-                    ],
-                    "existing_roles": [],
-                    "metadata_updated": {},
+                    "metadata_updated": "deleted",
                 },
             },
         )
@@ -470,6 +645,7 @@ def test_update_group_from_remote_with_deleted_community(
     testapp,
     idp,
     remote_group_id,
+    creation_data,
     return_payload,
     group_role_changes,
     db,
@@ -486,29 +662,25 @@ def test_update_group_from_remote_with_deleted_community(
         f"{base_url}{remote_group_id}",
         json=return_payload,
     )
-    logger.debug("Checking permissions")
-    logger.debug(
-        current_communities.service.check_permission(
-            system_identity, "read_deleted"
-        )
+
+    GroupRolesComponent(user_service).create_new_group(
+        group_name="administrator"
     )
 
-    GroupRolesComponent(user_service).create_new_group("administrator")
-
     # create the group collection/community in the database
-    existing_collection = current_group_collections_service.create(
-        system_identity, remote_group_id, idp
+    existing_collection = current_communities.service.create(
+        identity=system_identity, data=creation_data
     )
     logger.debug(
         f"Created group collection {existing_collection.to_dict()['slug']}"
     )
     Community.index.refresh()
 
-    communities_index = dsl.Index(
+    communities_index = dsl.Index(  # noqa:F841
         build_alias_name(
             current_communities.service.config.record_cls.index._name
         ),
-        using=current_search_client,
+        using=current_search_client,  # type: ignore
     )
 
     search_result = current_group_collections_service.read(
@@ -530,8 +702,8 @@ def test_update_group_from_remote_with_deleted_community(
     # )
     # logger.debug(f"Deleted and searched community: {deleted_community}")
     query_params = (
-        f"+custom_fields.kcr\:commons_instance:{idp} "  # noqa:W605
-        f"+custom_fields.kcr\:commons_group_id:"  # noqa:W605
+        f"+custom_fields.kcr\:commons_instance:{idp} "  # noqa
+        f"+custom_fields.kcr\:commons_group_id:"  # noqa
         f"{remote_group_id}"
     )
     community_list = current_communities.service.search(
@@ -543,14 +715,6 @@ def test_update_group_from_remote_with_deleted_community(
 
     actual = group_service.update_group_from_remote(idp, remote_group_id)
     logger.debug(f"Actual: {actual.keys()}")
-    assert (
-        actual[existing_collection["slug"]]["new_roles"]
-        == group_role_changes[existing_collection["slug"]]["new_roles"]
-    )
-    assert (
-        actual[existing_collection["slug"]]["existing_roles"]
-        == group_role_changes[existing_collection["slug"]]["existing_roles"]
-    )
 
     actual_md = actual[existing_collection["slug"]]["metadata_updated"]
     expected_md = group_role_changes[existing_collection["slug"]][
@@ -596,9 +760,8 @@ def test_delete_group_from_remote(
     search_clear,
 ):
     grouper = GroupRolesComponent(user_service)
-    grouper.create_new_group("knowledgeCommons---the-inklings|1004290|admin")
-    grouper.create_new_group("knowledgeCommons---the-inklings|1004290|member")
-    grouper.create_new_group("knowledgeCommons---the-inklings|1004290|member")
+    grouper.create_new_group(group_name="knowledgeCommons---1004290|admin")
+    grouper.create_new_group(group_name="knowledgeCommons---1004290|member")
 
     myuser = user_factory(
         email=user_email, confirmed_at=arrow.utcnow().datetime
@@ -607,11 +770,9 @@ def test_delete_group_from_remote(
         assert current_accounts.datastore.activate_user(myuser)
     UserIdentity.create(myuser, "knowledgeCommons", "testuser")
 
-    grouper.add_user_to_group(
-        "knowledgeCommons---the-inklings|1004290|admin", user=myuser
-    )
+    grouper.add_user_to_group("knowledgeCommons---1004290|admin", user=myuser)
     assert grouper.get_current_user_roles(myuser) == [
-        "knowledgeCommons---the-inklings|1004290|admin"
+        "knowledgeCommons---1004290|admin"
     ]
 
     actual = group_service.delete_group_from_remote(
@@ -619,41 +780,249 @@ def test_delete_group_from_remote(
     )
 
     assert (
-        grouper.find_group("knowledgeCommons---the-inklings|1004290|admin")
+        current_accounts.datastore.find_role(
+            "knowledgeCommons---1004290|admin"
+        )
         is None
     )
     assert (
-        grouper.find_group("knowledgeCommons---the-inklings|1004290|member")
-        is None
-    )
-    assert (
-        grouper.find_group("knowledgeCommons---the-inklings|1004290|member")
+        current_accounts.datastore.find_role(
+            "knowledgeCommons---1004290|member"
+        )
         is None
     )
 
     assert (
-        "knowledgeCommons---the-inklings|1004290|admin"
+        "knowledgeCommons---1004290|admin"
         not in grouper.get_current_user_roles(myuser)
     )
 
     assert actual == {
-        "knowledgeCommons---the-inklings|1004290": {
-            "knowledgeCommons---the-inklings|1004290|admin": {
-                "group_role_deleted": True
-            },
-            "knowledgeCommons---the-inklings|1004290|member": {
-                "group_role_deleted": True
-            },
-            "knowledgeCommons---the-inklings|1004290|member": {
-                "group_role_deleted": True
-            },
-        }
+        "disowned_communities": [],
+        "deleted_roles": [
+            "knowledgeCommons---1004290|member",
+            "knowledgeCommons---1004290|admin",
+        ],
     }
 
 
-def test_delete_group_from_remote_with_community():
-    # TODO: Implement this test
-    pass
+@pytest.mark.parametrize(
+    "user_email,remote_id,new_data,idp,remote_group_id,creation_data,"
+    "return_payload,group_role_changes",
+    [
+        (
+            "myaddress@hcommons.org",
+            "myuser",
+            {
+                "username": "myuser",
+                "email": "myaddress@hcommons.org",
+                "name": "My User",
+                "first_name": "My",
+                "last_name": "User",
+                "institutional_affiliation": "Michigan State University",
+                "orcid": "0000-0002-1825-0097",
+                "groups": [
+                    {
+                        "id": 1000551,
+                        "name": "Digital Humanists",
+                        "role": "member",
+                    },
+                    {"id": 1004290, "name": "The Inklings", "role": "admin"},
+                ],
+            },
+            "knowledgeCommons",
+            "1004290",
+            {
+                "access": {
+                    "visibility": "restricted",
+                    "member_policy": "closed",
+                    "record_policy": "closed",
+                },
+                "slug": "the-inklings",
+                "metadata": {
+                    "title": f"The Inklings Unedited",
+                    "description": f"A collection managed by the "
+                    f"The Inklings Unedited group of Knowledge Commons",
+                    "curation_policy": "",
+                    "page": f"This"
+                    " is a collection of works curated by the "
+                    f"The Inklings group of Knowledge Commons",
+                    "website": "https://theinklings.org",
+                    "organizations": [
+                        {
+                            "name": "The Inklings",
+                        },
+                        {"name": "Knowledge Commons"},
+                    ],
+                },
+                "custom_fields": {
+                    "kcr:commons_instance": "knowledgeCommons",
+                    "kcr:commons_group_id": "1004290",
+                    "kcr:commons_group_name": "The Inklings Unedited",
+                    "kcr:commons_group_description": "",  # noqa: E501
+                    "kcr:commons_group_visibility": "public",  # noqa: E501
+                },
+            },
+            {
+                "id": "1004290",
+                "name": "The Inklings",
+                "url": "https://hcommons-dev.org/groups/the-inklings/",
+                "visibility": "public",
+                "description": "For scholars interested in J.R.R. Tolkien, C. S. Lewis, Charles Williams, and other writers associated with the Inklings.",  # noqa
+                "avatar": "",  # avoid testing file operations here
+                "groupblog": "",
+                "upload_roles": ["member", "moderator", "administrator"],
+                "moderate_roles": ["moderator", "administrator"],
+            },
+            {
+                "the-inklings": {
+                    "metadata_updated": {
+                        "id": "55d2af81-fa4e-4ac0-866f-a8d99c333c6d",
+                        "created": "2024-05-03T23:48:46.312644+00:00",
+                        "updated": "2024-05-03T23:48:46.536669+00:00",
+                        "links": {
+                            "featured": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/featured",  # noqa
+                            "self": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d",  # noqa
+                            "self_html": "https://127.0.0.1:5000/communities/knowledgeCommons---1004290",  # noqa
+                            "settings_html": "https://127.0.0.1:5000/communities/knowledgeCommons---1004290/settings",  # noqa
+                            "logo": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/logo",  # noqa
+                            "rename": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/rename",  # noqa
+                            "members": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/members",  # noqa
+                            "public_members": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/members/public",  # noqa
+                            "invitations": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/invitations",  # noqa
+                            "requests": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/requests",
+                            "records": "https://127.0.0.1:5000/api/communities/55d2af81-fa4e-4ac0-866f-a8d99c333c6d/records",  # noqa
+                        },
+                        "revision_id": 3,
+                        "slug": "the-inklings",
+                        "metadata": {
+                            "title": "The Inklings Unedited",
+                            "description": "A collection managed by the The Inklings Unedited group of Knowledge Commons",  # noqa
+                            "curation_policy": "",
+                            "page": "This is a collection of works curated by the The Inklings group of Knowledge Commons",
+                            "website": "https://hcommons-dev.org/groups/the-inklings/",  # noqa
+                            "organizations": [
+                                {"name": "The Inklings"},
+                                {"name": "Knowledge Commons"},
+                            ],
+                        },
+                        "access": {
+                            "visibility": "restricted",
+                            "members_visibility": "public",
+                            "member_policy": "closed",
+                            "record_policy": "closed",
+                            "review_policy": "closed",
+                        },
+                        "custom_fields": {
+                            "kcr:commons_instance": "knowledgeCommons",
+                            "kcr:commons_group_id": "1004290",
+                            "kcr:commons_group_name": "The Inklings",
+                            "kcr:commons_group_description": "For scholars interested in J.R.R. Tolkien, C. S. Lewis, Charles Williams, and other writers associated with the Inklings.",  # noqa
+                            "kcr:commons_group_visibility": "public",
+                        },
+                        "deletion_status": {
+                            "is_deleted": False,
+                            "status": "P",
+                        },
+                        "children": {"allow": False},
+                    },
+                }
+            },
+        )
+    ],
+)
+def test_delete_group_from_remote_with_community(
+    testapp,
+    user_email,
+    remote_id,
+    new_data,
+    idp,
+    remote_group_id,
+    creation_data,
+    return_payload,
+    group_role_changes,
+    requests_mock,
+    location,
+    user_factory,
+    db,
+    search_clear,
+    custom_fields,
+):
+    base_url = testapp.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
+        "remote_endpoint"
+    ]
+
+    requests_mock.get(
+        f"{base_url}{remote_group_id}",
+        json=return_payload,
+    )
+
+    grouper = GroupRolesComponent(user_service)
+    grouper.create_new_group(group_name="administrator")
+
+    # create the group collection/community in the database
+    existing_collection = current_group_collections_service.create(
+        system_identity, remote_group_id, idp
+    )
+    logger.debug(
+        f"Created group collection {existing_collection.to_dict()['slug']}"
+    )
+    Community.index.refresh()
+
+    search_result = current_group_collections_service.read(
+        system_identity, existing_collection["slug"]
+    )
+    logger.debug(f"Read group collection {search_result}")
+
+    role_search_result = grouper.get_roles_for_remote_group(
+        "1004290", "knowledgeCommons"
+    )
+    logger.debug(
+        f"Group roles created for collection: "
+        f"{[r.id for r in role_search_result]}"
+    )
+
+    myuser = user_factory(
+        email=user_email, confirmed_at=arrow.utcnow().datetime
+    )
+    if not myuser.active:
+        assert current_accounts.datastore.activate_user(myuser)
+    UserIdentity.create(myuser, "knowledgeCommons", "testuser")
+
+    grouper.add_user_to_group("knowledgeCommons---1004290|admin", user=myuser)
+    assert grouper.get_current_user_roles(myuser) == [
+        "knowledgeCommons---1004290|admin"
+    ]
+
+    actual = group_service.delete_group_from_remote(
+        "knowledgeCommons", "1004290", "The Inklings"
+    )
+
+    assert (
+        current_accounts.datastore.find_role(
+            "knowledgeCommons---1004290|admin"
+        )
+        is None
+    )
+    assert (
+        current_accounts.datastore.find_role(
+            "knowledgeCommons---1004290|member"
+        )
+        is None
+    )
+
+    assert (
+        "knowledgeCommons---1004290|admin"
+        not in grouper.get_current_user_roles(myuser)
+    )
+
+    assert actual == {
+        "disowned_communities": [],
+        "deleted_roles": [
+            "knowledgeCommons---1004290|member",
+            "knowledgeCommons---1004290|admin",
+        ],
+    }
 
 
 @pytest.mark.parametrize(
@@ -750,7 +1119,7 @@ def test_update_user_from_remote_live(
 
 
 def test_on_identity_changed(
-    client, testapp, user_factory, requests_mock, myuser
+    client, testapp, db, user_factory, requests_mock, myuser
 ):
     """Test service initialization and signal triggers."""
     assert "invenio-remote-user-data" in testapp.extensions
@@ -911,151 +1280,3 @@ def test_on_identity_changed(
         == 0
     )
     assert myuser2.username is None
-
-
-@pytest.mark.parametrize(
-    "remote_data,starting_data,new_data,user_changes,group_changes",
-    [
-        (
-            {
-                "users": {
-                    "username": "myuser",
-                    "email": "myaddress@hcommons.org",
-                    "name": "My User",
-                    "first_name": "My",
-                    "last_name": "User",
-                    "institutional_affiliation": "Michigan State University",
-                    "orcid": "0000-0002-1825-0097",
-                    "groups": [
-                        {
-                            "id": 1000576,
-                            "name": "awesome-mock",
-                            "role": "admin",
-                        },
-                        {
-                            "id": 1000577,
-                            "name": "cool-group2",
-                            "role": "member",
-                        },
-                    ],
-                },
-            },
-            {
-                "user": {"email": "myaddress@hcommons.org"},
-                "groups": [
-                    {"name": "cool-group", "role": "admin"},
-                    {"name": "cool-group2", "role": "member"},
-                ],
-            },
-            {
-                "active": True,
-                "username": "knowledgeCommons-myuser",
-                "email": "myaddress@hcommons.org",
-                "user_profile": {
-                    "affiliations": "Michigan State University",
-                    "full_name": "My User",
-                    "identifiers": [
-                        {
-                            "identifier": "0000-0002-1825-0097",
-                            "scheme": "orcid",
-                        }
-                    ],
-                    "name_parts": {"first": "My", "last": "User"},
-                },
-                "preferences": {
-                    "email_visibility": "restricted",
-                    "visibility": "restricted",
-                    "locale": "en",
-                    "timezone": "Europe/Zurich",
-                },
-            },
-            {
-                "username": "knowledgeCommons-myuser",
-                "user_profile": {
-                    "affiliations": "Michigan State University",
-                    "full_name": "My User",
-                    "identifiers": [
-                        {
-                            "identifier": "0000-0002-1825-0097",
-                            "scheme": "orcid",
-                        }
-                    ],
-                    "name_parts": {"first": "My", "last": "User"},
-                },
-            },
-            {
-                "dropped_groups": ["knowledgeCommons---cool-group|admin"],
-                "added_groups": ["knowledgeCommons---awesome-mock|admin"],
-                "unchanged_groups": [
-                    "admin",
-                    "knowledgeCommons---cool-group2|member",
-                ],
-            },
-        )
-    ],
-)
-def test_compare_remote_with_local(
-    testapp,
-    remote_data,
-    starting_data,
-    new_data,
-    user_changes,
-    group_changes,
-    user_factory,
-    db,
-):
-    """Test comparison of remote and local user data."""
-    grouper = GroupRolesComponent(user_service)
-    myuser = user_factory(**starting_data["user"])
-    grouper.create_new_group(group_name="admin")
-    grouper.add_user_to_group(group_name="admin", user=myuser)
-    for group in starting_data["groups"]:
-        grouper.create_new_group(
-            group_name=f"knowledgeCommons---{group['name']}|{group['role']}"
-        )
-        grouper.add_user_to_group(
-            group_name=f"knowledgeCommons---{group['name']}|{group['role']}",
-            user=myuser,
-        )
-
-    (
-        actual_new,
-        actual_user_changes,
-        actual_group_changes,
-    ) = user_service.compare_remote_with_local(
-        user=myuser, remote_data=remote_data, idp="knowledgeCommons"
-    )
-    assert actual_new == new_data
-    assert actual_user_changes == user_changes
-    assert actual_group_changes == group_changes
-
-
-def test_update_invenio_group_memberships(testapp, user_factory, db):
-    """Test updating invenio group memberships based on remote comparison."""
-    test_changed_memberships = {
-        "dropped_groups": ["cool-group"],
-        "added_groups": ["awesome-mock"],
-    }
-    expected_updated_memberships = ["admin", "awesome-mock"]
-    myuser = user_factory()
-    my_identity = get_identity_for_user(myuser.email)
-
-    # set up starting roles and memberships
-    grouper = GroupRolesComponent(user_service)
-    grouper.create_new_group(group_name="cool-group")
-    grouper.create_new_group(group_name="admin")
-    grouper.add_user_to_group("cool-group", myuser)
-    grouper.add_user_to_group("admin", myuser)
-
-    actual_updated_memberships = user_service.update_invenio_group_memberships(
-        myuser, test_changed_memberships
-    )
-
-    assert actual_updated_memberships == expected_updated_memberships
-    assert [r for r in myuser.roles] == ["admin", "awesome-mock"]
-    my_identity = get_identity_for_user(myuser.email)
-    assert all(
-        n.value
-        for n in my_identity.provides
-        if n in ["admin", "awesome-mock", "any_user", 5]
-    )

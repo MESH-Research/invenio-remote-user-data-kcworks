@@ -7,17 +7,30 @@
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
-from flask import current_app
+from invenio_access.permissions import system_identity
 from invenio_accounts.models import Role, User
 from invenio_accounts.proxies import current_accounts
+from invenio_pidstore.errors import PIDDoesNotExistError
+from invenio_users_resources.proxies import current_groups_service
+from invenio_records_resources.resources.errors import PermissionDeniedError
+from invenio_users_resources.services.groups.results import (
+    GroupItem,
+    GroupList,
+)
 
 # from invenio_records_resources.services.uow import unit_of_work
 # , RecordCommitOp
 from invenio_records_resources.services.records.components import (
     ServiceComponent,
 )
+from pprint import pformat
 from typing import Union, Optional
+
 from invenio_remote_user_data.utils import logger as update_logger
+
+# TODO: Most of these operations use the invenio_accounts datastore
+# directly. The invenio-users-resources groups service may be appropriate,
+# but it seems not to support the same kind of record operations.
 
 
 class GroupRolesComponent(ServiceComponent):
@@ -27,7 +40,21 @@ class GroupRolesComponent(ServiceComponent):
         super().__init__(service, *args, **kwargs)
         self.logger = update_logger
 
-    def get_current_members_of_group(self, group_name: str) -> list:
+    def get_roles_for_remote_group(
+        self, remote_group_id: str, idp: str
+    ) -> list[Role]:
+        """Get the Invenio roles for a remote group."""
+        query_string = f"{idp}---{remote_group_id}|"
+
+        query = current_accounts.datastore.role_model.query.filter(
+            Role.id.contains(query_string)
+        )
+
+        local_groups = query.all()
+
+        return local_groups
+
+    def get_current_members_of_group(self, group_name: str) -> list[User]:
         """fetch a list of the users assigned the given group role"""
         my_group_role = current_accounts.datastore.find_role(group_name)
         return [user for user in my_group_role.users]
@@ -79,19 +106,32 @@ class GroupRolesComponent(ServiceComponent):
         return my_group_role
 
     def delete_group(self, group_name: str, **kwargs) -> bool:
-        """Delete a group role with the given name."""
+        """Delete a group role with the given name.
+
+        returns:
+            bool: True if the group was deleted successfully, otherwise False.
+        """
+        deleted = False
         my_group_role = current_accounts.datastore.find_role(group_name)
         if my_group_role is None:
             raise RuntimeError(f'Role "{group_name}" not found.')
         else:
-            deleted_group = current_accounts.datastore.delete(my_group_role)
-            current_accounts.datastore.commit()
-            # FIXME: Is this right?
-            if deleted_group is False:
-                raise RuntimeError(f'Role "{group_name}" not deleted.')
-            else:
+            try:
+                current_accounts.datastore.delete(my_group_role)
+                current_accounts.datastore.commit()
                 self.logger.info(f'Role "{group_name}" deleted successfully.')
-        return deleted_group
+                deleted = True
+            # FIXME: This is a hack to catch the AttributeError that
+            # is thrown when the deleted role is not found in the post-commit
+            # cleanup.
+            except AttributeError as a:
+                self.logger.error(a)
+                deleted = True
+            except Exception as e:
+                raise RuntimeError(
+                    f'Role "{group_name}" not deleted. {pformat(e)}'
+                )
+        return deleted
 
     def add_user_to_group(self, group_name: str, user: User, **kwargs) -> bool:
         """Add a user to a group."""
@@ -129,12 +169,24 @@ class GroupRolesComponent(ServiceComponent):
             user: The user object to remove from the group, or the user's email
                 address.
         """
+        user = (
+            user
+            if isinstance(user, User)
+            else current_accounts.datastore.get_user_by_id(user)
+        )
+        group_name = (
+            group_name if isinstance(group_name, str) else group_name.id
+        )
+        self.logger.debug(f"removing from user {user.email}")
+        self.logger.debug(user.roles)
         removed_user = current_accounts.datastore.remove_role_from_user(
             user, group_name
         )
         current_accounts.datastore.commit()
         if removed_user is False:
-            raise RuntimeError("Cannot remove group role from user.")
+            self.logger.debug(
+                "Role {group_name} could not be removed from user."
+            )
         else:
             self.logger.info(
                 f'Role "{group_name}" removed from user "{user.email}"'

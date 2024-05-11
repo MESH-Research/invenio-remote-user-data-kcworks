@@ -7,16 +7,15 @@
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
-from datetime import datetime
+import arrow
 from flask import current_app, session  # after_this_request, request,
 from flask_principal import identity_changed, Identity  # identity_loaded,
 from flask_security import current_user
-from invenio_accounts.models import UserIdentity  # Role,
 from . import config
 from .service import RemoteGroupDataService, RemoteUserDataService
-from .tasks import do_user_data_update, do_group_data_update
+from .tasks import do_user_data_update
 
-# from .utils import logger
+from .utils import logger
 
 
 def on_identity_changed(_, identity: Identity) -> None:
@@ -24,36 +23,43 @@ def on_identity_changed(_, identity: Identity) -> None:
     changed.
     """
     # FIXME: Do we need this check now that we're using webhooks?
+    # with current_app.app_context():
+
+    logger.info(
+        "invenio_remote_user_data.ext: identity_changed signal received "
+        f"for user {identity.id}"
+    )
     with current_app.app_context():
-        # FIXME: for some reason we're getting a detached User object
-        # downstream in the login process unless we do this. This is a
-        # hack.
-        user_roles_fix = current_user.roles  # noqa
+        logger.debug(f"current_user: {current_user}")
+    # if self._data_is_stale(identity.id) and not self.update_in_progress:
+    # my_user_identity = UserIdentity.query.filter_by(
+    #     id_user=identity.id
+    # ).one_or_none()
+    # # will have a UserIdentity if the user has logged in via an IDP
+    # if my_user_identity is not None:
+    #     my_idp = my_user_identity.method
+    #     my_remote_id = my_user_identity.id
 
-        current_app.logger.info(
-            "invenio_remote_user_data.ext: identity_changed signal received "
-            f"for user {identity.id}"
+    # TODO: For the moment we're not tracking the last update
+    # time because we're using logins and webhooks to trigger updates.
+    #
+    if identity.id:
+        last_timestamp = session.get("user-data-updated", {}).get(identity.id)
+        logger.debug(f"last_updated: {last_timestamp}")
+        last_updated = arrow.get(last_timestamp) if last_timestamp else None
+        update_interval = current_app.config.get(
+            "INVENIO_REMOTE_USER_DATA_UPDATE_INTERVAL", 10
         )
-        # if self._data_is_stale(identity.id) and not self.update_in_progress:
-        my_user_identity = UserIdentity.query.filter_by(
-            id_user=identity.id
-        ).one_or_none()
-        # will have a UserIdentity if the user has logged in via an IDP
-        if my_user_identity is not None:
-            my_idp = my_user_identity.method
-            my_remote_id = my_user_identity.id
 
-            # TODO: For the moment we're not tracking the last update
-            # time because we're using logins and webhooks to trigger updates.
-            #
-            # timestamp = datetime.utcnow().isoformat()
-            # session.setdefault("user-data-updated", {})[
-            #     identity.id
-            # ] = timestamp
+        if not last_updated or last_updated < arrow.now("UTC").shift(
+            minutes=-1 * update_interval
+        ):
+            do_user_data_update.delay(identity.id)  # noqa
 
-            celery_result = do_user_data_update.delay(  # noqa
-                identity.id, my_idp, my_remote_id
-            )
+            new_timestamp = arrow.now("UTC").isoformat()
+            session.setdefault("user-data-updated", {})[
+                identity.id
+            ] = new_timestamp
 
 
 class InvenioRemoteUserData(object):

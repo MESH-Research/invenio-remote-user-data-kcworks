@@ -19,9 +19,11 @@ from invenio_access.models import ActionRoles, Role
 from invenio_access.permissions import superuser_access, system_identity
 from invenio_accounts.testutils import login_user_via_session
 from invenio_administration.permissions import administration_access_action
-from invenio_app.factory import create_app as create_ui_api
+from invenio_app.factory import create_api  # create_app as create_ui_api
 from invenio_communities.proxies import current_communities
 from invenio_oauthclient.models import UserIdentity
+from invenio_oauth2server.models import Token
+from invenio_queues.proxies import current_queues
 from invenio_records_resources.services.custom_fields import TextCF
 from invenio_records_resources.services.custom_fields.errors import (
     CustomFieldsException,
@@ -36,6 +38,7 @@ from invenio_search.engine import search as search_engine
 from invenio_search.utils import build_alias_name
 from invenio_vocabularies.proxies import current_service as vocabulary_service
 from invenio_vocabularies.records.api import Vocabulary
+from kombu import Exchange
 
 from marshmallow import Schema, fields
 import os
@@ -60,43 +63,6 @@ def _(x):
     return x
 
 
-@pytest.fixture(scope="module")
-def extra_entry_points():
-    return {
-        "console_scripts": [
-            "invenio-remote-user-data = invenio_remote_user_data.cli:cli"
-        ],
-        "invenio_base.api_apps": [
-            "invenio_remote_user_data ="
-            " invenio_remote_user_data.ext:InvenioRemoteUserData"
-        ],
-        "invenio_base.apps": [
-            "invenio_remote_user_data ="
-            " invenio_remote_user_data.ext:InvenioRemoteUserData"
-        ],
-        "invenio_base.api_blueprints": [
-            "invenio_remote_user_data ="
-            " invenio_remote_user_data.views:create_api_blueprint"
-        ],
-        "invenio_queues.queues": [
-            "invenio_remote_user_data ="
-            " invenio_remote_user_data.queues:declare_queues"
-        ],
-        "invenio_celery.tasks": [
-            "invenio_remote_user_data = invenio_remote_user_data.tasks"
-        ],
-    }
-
-
-# @pytest.fixture(scope="module")
-# def celery_config():
-#     """Override pytest-invenio fixture.
-
-#     TODO: Remove this fixture if you add Celery support.
-#     """
-#     return {}
-
-
 test_config = {
     # "THEME_FRONTPAGE_TEMPLATE": "invenio_remote_user_data/base.html",
     "SQLALCHEMY_DATABASE_URI": (
@@ -113,6 +79,13 @@ test_config = {
         "force_https": False,
     },
     "BROKER_URL": "amqp://guest:guest@localhost:5672//",
+    "QUEUES_BROKER_URL": "amqp://guest:guest@localhost:5672//",
+    "REMOTE_USER_DATA_MQ_EXCHANGE": Exchange(
+        "user-data-updates",
+        type="direct",
+        delivery_mode="transient",  # in-memory queue
+        durable=True,
+    ),
     "CELERY_CACHE_BACKEND": "memory",
     "CELERY_RESULT_BACKEND": "cache",
     "CELERY_TASK_ALWAYS_EAGER": True,
@@ -561,10 +534,38 @@ def app_config(app_config) -> dict:
 
 @pytest.fixture(scope="module")
 def create_app(entry_points):
-    return create_ui_api
+    return create_api
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture()
+def event_queues(app):
+    """Delete and declare test queues."""
+    current_queues.delete()
+    try:
+        current_queues.declare()
+        yield
+    finally:
+        current_queues.delete()
+
+
+@pytest.fixture(scope="function")
+def db_session_options():
+    """Database session options.
+
+    Use to override options like ``expire_on_commit`` for the database session, which
+    helps with ``sqlalchemy.orm.exc.DetachedInstanceError`` when models are not bound
+    to the session between transactions/requests/service-calls.
+
+    .. code-block:: python
+
+        @pytest.fixture(scope='function')
+        def db_session_options():
+            return dict(expire_on_commit=False)
+    """
+    return {"expire_on_commit": True}
+
+
+@pytest.fixture(scope="function")
 def custom_fields(app):
     create_communities_custom_fields(app)
     return True
@@ -602,26 +603,34 @@ def create_communities_custom_fields(app):
             using=current_search_client,
         )
         communities_index.put_mapping(body={"properties": properties})
+        communities_index.refresh()
+
     except search_engine.RequestError as e:
         print("An error occured while creating custom fields.")
         print(e.info["error"]["reason"])
 
 
 @pytest.fixture(scope="function")
-def user_factory(app, db):
+def user_factory(app, db, UserFixture):
     def make_user(
         email="info@inveniosoftware.org", password="password", **kwargs
     ):
-        with db.session.begin_nested():
-            datastore = app.extensions["security"].datastore
-            user1 = datastore.create_user(
-                email=email,
-                password=hash_password(password),
-                active=True,
-                **kwargs,
-            )
-        db.session.commit()
-        return user1
+        # with db.session.begin_nested():
+        #     datastore = app.extensions["security"].datastore
+        #     user1 = datastore.create_user(
+        #         email=email,
+        #         password=hash_password(password),
+        #         active=True,
+        #         **kwargs,
+        #     )
+        # db.session.commit()
+        u = UserFixture(
+            email=email,
+            password=password,
+        )
+        u.create(app, db)
+
+        return u.user
 
     return make_user
 
@@ -729,6 +738,12 @@ def admin(UserFixture, app, db, admin_role_need):
         password="admin",
     )
     u.create(app, db)
+
+    u.allowed_token = Token.create_personal(
+        "webhook", u.id, scopes=[]  # , is_internal=False
+    ).access_token
+
+    db.session.commit()
 
     datastore = app.extensions["security"].datastore
     _, role = datastore._prepare_role_modify_args(

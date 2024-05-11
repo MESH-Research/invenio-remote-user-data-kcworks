@@ -8,7 +8,10 @@
 # LICENSE file for more details.
 
 from kombu import Exchange
-from .permissions import CustomCommunitiesPermissionPolicy
+from .permissions import (
+    CustomCommunitiesPermissionPolicy,
+    RemoteUserDataPermissionPolicy,
+)
 
 
 REMOTE_USER_DATA_API_ENDPOINTS = {
@@ -45,3 +48,5 @@ REMOTE_USER_DATA_MQ_EXCHANGE = Exchange(
 )
 
 COMMUNITIES_PERMISSION_POLICY = CustomCommunitiesPermissionPolicy
+
+REMOTE_USER_DATA_PERMISSION_POLICY = RemoteUserDataPermissionPolicy

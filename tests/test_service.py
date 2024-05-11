@@ -9,6 +9,7 @@ from invenio_accounts.testutils import login_user_via_session
 from invenio_communities.proxies import current_communities
 from invenio_communities.communities.records.api import Community
 from invenio_groups.proxies import current_group_collections_service
+from invenio_groups.utils import add_user_to_community
 from invenio_search import current_search_client
 from invenio_search.engine import dsl
 from invenio_search.utils import build_alias_name
@@ -300,7 +301,7 @@ def test_update_user_from_remote_mock(
     UserIdentity.create(myuser, "knowledgeCommons", remote_id)
 
     actual = user_service.update_user_from_remote(
-        myuser.id, "knowledgeCommons", remote_id
+        system_identity, myuser.id, "knowledgeCommons", remote_id
     )
     assert {
         "username": actual[0].username,
@@ -368,7 +369,9 @@ def test_update_group_from_remote_mock_new(
         json=return_payload,
     )
 
-    actual = group_service.update_group_from_remote(idp, remote_group_id)
+    actual = group_service.update_group_from_remote(
+        system_identity, idp, remote_group_id
+    )
 
     assert actual == group_role_changes
 
@@ -494,25 +497,21 @@ def test_update_group_from_remote_with_community(
     """Note that the group title and description are *not* updated from
     the remote group data because these may have been edited locally.
     """
+    # mock the remote group data api endpoint
     base_url = testapp.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
         "remote_endpoint"
     ]
-
     requests_mock.get(
         f"{base_url}{remote_group_id}",
         json=return_payload,
     )
 
+    # create the group collection/community in the database
     GroupRolesComponent(user_service).create_new_group(
         group_name="administrator"
     )
-
-    # create the group collection/community in the database
     existing_collection = current_communities.service.create(
         identity=system_identity, data=creation_data
-    )
-    logger.debug(
-        f"Created group collection {existing_collection.to_dict()['slug']}"
     )
     Community.index.refresh()
 
@@ -522,14 +521,14 @@ def test_update_group_from_remote_with_community(
         ),
         using=current_search_client,  # type: ignore
     )
-    logger.debug(f"Communities index: {communities_index}")
 
     search_result = current_group_collections_service.read(
         system_identity, existing_collection["slug"]
     )
-    logger.debug(f"Read group collection {search_result}")
 
-    actual = group_service.update_group_from_remote(idp, remote_group_id)
+    actual = group_service.update_group_from_remote(
+        system_identity, idp, remote_group_id
+    )
     expected = group_role_changes[existing_collection["slug"]]
 
     actual_md = {
@@ -671,9 +670,6 @@ def test_update_group_from_remote_with_deleted_community(
     existing_collection = current_communities.service.create(
         identity=system_identity, data=creation_data
     )
-    logger.debug(
-        f"Created group collection {existing_collection.to_dict()['slug']}"
-    )
     Community.index.refresh()
 
     communities_index = dsl.Index(  # noqa:F841
@@ -686,7 +682,6 @@ def test_update_group_from_remote_with_deleted_community(
     search_result = current_group_collections_service.read(
         system_identity, existing_collection["slug"]
     )
-    logger.debug(f"Read group collection {search_result}")
 
     delete_result = current_communities.service.delete_community(
         system_identity, existing_collection["slug"]
@@ -709,12 +704,10 @@ def test_update_group_from_remote_with_deleted_community(
     community_list = current_communities.service.search(
         system_identity, q=query_params
     )
-    logger.debug(
-        f"Community list: {[c for c in community_list.to_dict()['hits']['hits']]}"
-    )
 
-    actual = group_service.update_group_from_remote(idp, remote_group_id)
-    logger.debug(f"Actual: {actual.keys()}")
+    actual = group_service.update_group_from_remote(
+        system_identity, idp, remote_group_id
+    )
 
     actual_md = actual[existing_collection["slug"]]["metadata_updated"]
     expected_md = group_role_changes[existing_collection["slug"]][
@@ -943,45 +936,49 @@ def test_delete_group_from_remote_with_community(
     group_role_changes,
     requests_mock,
     location,
+    admin,
     user_factory,
     db,
     search_clear,
     custom_fields,
 ):
+    # mocker remote group data api endpoint
     base_url = testapp.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
         "remote_endpoint"
     ]
-
     requests_mock.get(
         f"{base_url}{remote_group_id}",
         json=return_payload,
     )
 
+    # create the group collection/community
     grouper = GroupRolesComponent(user_service)
     grouper.create_new_group(group_name="administrator")
-
-    # create the group collection/community in the database
     existing_collection = current_group_collections_service.create(
         system_identity, remote_group_id, idp
     )
-    logger.debug(
-        f"Created group collection {existing_collection.to_dict()['slug']}"
-    )
-    Community.index.refresh()
 
+    # confirm that the group collection/community and its roles were created
     search_result = current_group_collections_service.read(
         system_identity, existing_collection["slug"]
     )
-    logger.debug(f"Read group collection {search_result}")
-
+    assert search_result["slug"] == existing_collection["slug"]
     role_search_result = grouper.get_roles_for_remote_group(
         "1004290", "knowledgeCommons"
     )
-    logger.debug(
-        f"Group roles created for collection: "
-        f"{[r.id for r in role_search_result]}"
-    )
+    assert not [
+        r.id
+        for r in role_search_result
+        if r
+        not in [
+            "knowledgeCommons---1004290|admin",
+            "knowledgeCommons---1004290|member",
+            "knowledgeCommons---1004290|moderator",
+            "knowledgeCommons---1004290|administrator",
+        ]
+    ]
 
+    # create user and add to community via group
     myuser = user_factory(
         email=user_email, confirmed_at=arrow.utcnow().datetime
     )
@@ -994,10 +991,18 @@ def test_delete_group_from_remote_with_community(
         "knowledgeCommons---1004290|admin"
     ]
 
+    # create a second user to be an individual member
+    myuser2 = user_factory()
+    if not myuser2.active:
+        assert current_accounts.datastore.activate_user(myuser2)
+    add_user_to_community(str(myuser2.id), "reader", existing_collection["id"])
+
+    # ****** perform the delete operation ******
     actual = group_service.delete_group_from_remote(
         "knowledgeCommons", "1004290", "The Inklings"
     )
 
+    # confirm that the group roles were deleted
     assert (
         current_accounts.datastore.find_role(
             "knowledgeCommons---1004290|admin"
@@ -1011,20 +1016,63 @@ def test_delete_group_from_remote_with_community(
         is None
     )
 
+    # confirm that the user was removed from the group
     assert (
         "knowledgeCommons---1004290|admin"
         not in grouper.get_current_user_roles(myuser)
     )
 
+    # confirm that the user is an individual member of the community
+    user_memberships = current_communities.service.members.read_memberships(
+        myuser
+    )
+    assert existing_collection["id"] in [
+        m[0] for m in user_memberships["memberships"]
+    ]
+
+    # confirm that the other individual member is still a member of
+    # the community
+    user2_memberships = current_communities.service.members.read_memberships(
+        myuser2
+    )
+    assert existing_collection["id"] in [
+        m[0] for m in user2_memberships["memberships"]
+    ]
+
+    # confirm that the community no longer has the group info
+    final_collection_state = current_group_collections_service.read(
+        system_identity, existing_collection["slug"]
+    )
+    assert (
+        final_collection_state["custom_fields"]["kcr:commons_group_id"] == ""
+    )
+    assert (
+        final_collection_state["custom_fields"]["kcr:commons_group_name"] == ""
+    )
+    assert (
+        final_collection_state["custom_fields"][
+            "kcr:commons_group_description"
+        ]
+        == ""
+    )
+    assert (
+        final_collection_state["custom_fields"]["kcr:commons_group_visibility"]
+        == ""
+    )
+
+    # confirm that the return value reporting the operations is correct
     assert actual == {
-        "disowned_communities": [],
+        "disowned_communities": [existing_collection["slug"]],
         "deleted_roles": [
+            "knowledgeCommons---1004290|moderator",
+            "knowledgeCommons---1004290|administrator",
             "knowledgeCommons---1004290|member",
             "knowledgeCommons---1004290|admin",
         ],
     }
 
 
+"""
 @pytest.mark.parametrize(
     "user_email,remote_id,new_data,user_changes,new_groups,group_changes",
     [
@@ -1081,7 +1129,7 @@ def test_update_user_from_remote_live(
     db,
     search_clear,
 ):
-    """Test updating user data from live remote API."""
+    '''Test updating user data from live remote API.'''
 
     myuser = user_factory(
         email=user_email, confirmed_at=arrow.utcnow().datetime
@@ -1091,7 +1139,7 @@ def test_update_user_from_remote_live(
     UserIdentity.create(myuser, "knowledgeCommons", "testuser")
 
     actual = user_service.update_user_from_remote(
-        myuser.id, "knowledgeCommons", remote_id
+        system_identity, myuser.id, "knowledgeCommons", remote_id
     )
     assert {
         "username": actual[0].username,
@@ -1116,6 +1164,7 @@ def test_update_user_from_remote_live(
         },
         "user_profile": myuser_confirm["profile"],
     } == new_data
+"""
 
 
 def test_on_identity_changed(
@@ -1153,10 +1202,10 @@ def test_on_identity_changed(
     myuser1 = user_factory(confirmed_at=arrow.utcnow().datetime)
     UserIdentity.create(myuser1, "knowledgeCommons", "testuser")
     grouper = GroupRolesComponent(user_service)
-    grouper.create_new_group(group_name="knowledgeCommons---cool-group|admin")
+    grouper.create_new_group(group_name="knowledgeCommons---222222|admin")
     grouper.create_new_group(group_name="admin")
     grouper.add_user_to_group(
-        group_name="knowledgeCommons---cool-group|admin", user=myuser1
+        group_name="knowledgeCommons---222222|admin", user=myuser1
     )
     grouper.add_user_to_group(group_name="admin", user=myuser1)
 
@@ -1177,8 +1226,8 @@ def test_on_identity_changed(
                 for n in my_identity.provides
                 if n.value
                 in [
-                    "knowledgeCommons---admin|member",
-                    "knowledgeCommons---awesome-mock|admin",
+                    "knowledgeCommons---67891|member",
+                    "knowledgeCommons---12345|admin",
                     "any_user",
                     myuser1.id,
                     "authenticated_user",
@@ -1195,8 +1244,8 @@ def test_on_identity_changed(
                 for n in my_identity.provides
                 if n.value
                 not in [
-                    "knowledgeCommons---admin|member",
-                    "knowledgeCommons---awesome-mock|admin",
+                    "knowledgeCommons---67891|member",
+                    "knowledgeCommons---12345|admin",
                     "any_user",
                     myuser1.id,
                     "authenticated_user",
@@ -1254,6 +1303,7 @@ def test_on_identity_changed(
     # log a different user in without mocking SAML login (so like local)
     # no request should be made for any user updates
     myuser2 = user_factory(email="anotheruser@msu.edu")
+    assert myuser2.roles == []
     login_user(myuser2)
     login_user_via_session(client, email=myuser2.email)
     client.get("/api")

@@ -17,7 +17,7 @@ This endpoint is not used to receive the actual data updates. It only receives
 notifications that data has been updated. The actual data updates are
 handled by a callback to the remote IDP's API.
 
-One endpoint is exposed: https://example.org/api/webhooks/idp_data_update/
+One endpoint is exposed: https://example.org/api/webhooks/user_data_update/
 
 Request methods
 ---------------
@@ -29,7 +29,7 @@ that the endpoint is active. No other action will be taken.
 
 .. code-block:: bash
 
-    curl -k -X GET https://example.org/api/webhooks/idp_data_update
+    curl -k -X GET https://example.org/api/webhooks/user_data_update
     --referer https://127.0.0.1 -H "Authorization: Bearer
     my-token-string"
 
@@ -44,7 +44,7 @@ may take some time to complete.
 
 .. code-block:: bash
 
-    curl -k -X POST https://example.org/api/webhooks/idp_data_update
+    curl -k -X POST https://example.org/api/webhooks/user_data_update
     --referer https://127.0.0.1 -d '{"users": [{"id": "1234",
     "event": "updated"}], "groups": [{"id": "4567", "event":
     "created"}]}' -H "Content-type: application/json" -H
@@ -99,6 +99,7 @@ and included in the request header.
 """
 
 # from flask import render_template
+from crypt import methods
 from flask import (
     Blueprint,
     jsonify,
@@ -118,7 +119,7 @@ from werkzeug.exceptions import (
 )
 import os
 
-# from .utils import logger
+from .utils import logger
 from .signals import remote_data_updated
 
 
@@ -127,11 +128,15 @@ class RemoteUserDataUpdateWebhook(MethodView):
     View class providing methods for the remote-user-data webhook api endpoint.
     """
 
-    init_every_request = False  # FIXME: is this right?
+    # init_every_request = False  # FIXME: is this right?
+    view_name = "remote_user_data_webhook"
 
     def __init__(self):
-        self.webhook_token = os.getenv("REMOTE_USER_DATA_WEBHOOK_TOKEN")
-        self.logger = app.logger
+        # self.webhook_token = os.getenv("REMOTE_USER_DATA_WEBHOOK_TOKEN")
+        # self.logger = app.logger
+        self.logger = logger
+
+        self.logger.debug(f"decorators {self.decorators}")
 
     def post(self):
         """
@@ -149,7 +154,8 @@ class RemoteUserDataUpdateWebhook(MethodView):
         #     raise Unauthorized
 
         try:
-            idp = request.json["idp"]
+            data = request.get_json()
+            idp = data["idp"]
             events = []
             config = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]
             entity_types = config["entity_types"]
@@ -160,13 +166,13 @@ class RemoteUserDataUpdateWebhook(MethodView):
             groups = []
             bad_groups = []
 
-            for e in request.json["updates"].keys():
+            for e in data["updates"].keys():
                 if e in entity_types.keys():
                     self.logger.debug(
-                        f"{idp} Received {e} update signal: "
-                        f"{request.json['updates'][e]}"
+                        f"In POST view: Received {e} update signal from "
+                        f"{idp}: {data['updates'][e]}"
                     )
-                    for u in request.json["updates"][e]:
+                    for u in data["updates"][e]:
                         if u["event"] in entity_types[e]["events"]:
                             if e == "users":
                                 user_identity = UserIdentity.query.filter_by(
@@ -210,7 +216,7 @@ class RemoteUserDataUpdateWebhook(MethodView):
                         f"{idp} Received update signal for unknown "
                         f"entity type: {e}"
                     )
-                    self.logger.error(request.json)
+                    self.logger.error(data)
 
             if len(events) > 0:
                 current_queues.queues["user-data-updates"].publish(events)
@@ -235,17 +241,17 @@ class RemoteUserDataUpdateWebhook(MethodView):
                         f"{idp} requested updates for {entity_string} that"
                         " do not exist"
                     )
-                    self.logger.error(request.json["updates"])
+                    self.logger.error(data["updates"])
                     raise NotFound
                 elif not groups and bad_groups:
                     self.logger.error(
                         f"{idp} requested updates for groups that do not exist"
                     )
-                    self.logger.error(request.json["updates"])
+                    self.logger.error(data["updates"])
                     raise NotFound
                 else:
                     self.logger.error(f"{idp} No valid events received")
-                    self.logger.error(request.json["updates"])
+                    self.logger.error(data["updates"])
                     raise BadRequest
 
             # return error message after handling signals that are
@@ -255,12 +261,16 @@ class RemoteUserDataUpdateWebhook(MethodView):
                 # completely rejected
                 raise BadRequest
         except KeyError:  # request is missing 'idp' or 'updates' keys
-            self.logger.error(f"Received malformed signal: {request.json}")
+            self.logger.error(f"Received malformed signal: {data}")
             raise BadRequest
 
         return (
             jsonify(
-                {"message": "Webhook notification accepted", "status": 202}
+                {
+                    "message": "Webhook notification accepted",
+                    "status": 202,
+                    "updates": data["updates"],
+                }
             ),
             202,
         )
@@ -283,14 +293,18 @@ def create_api_blueprint(app):
     """Register blueprint on api app."""
 
     with app.app_context():
-        blueprint = Blueprint("invenio_remote_user_data", __name__)
+        blueprint = Blueprint(
+            "invenio_remote_user_data",
+            __name__,
+            url_prefix="/webhooks/user_data_update",
+        )
 
         # routes = app.config.get("APP_RDM_ROUTES")
 
         blueprint.add_url_rule(
-            "/webhooks/idp_data_update",
+            "",
             view_func=RemoteUserDataUpdateWebhook.as_view(
-                "ipd_update_webhook"
+                RemoteUserDataUpdateWebhook.view_name
             ),
         )
 

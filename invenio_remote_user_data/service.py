@@ -47,7 +47,11 @@ class RemoteGroupDataService(Service):
     def __init__(self, app, config={}, **kwargs):
         """Constructor."""
         super().__init__(config=config, **kwargs)
-        self.config = config["REMOTE_USER_DATA_API_ENDPOINTS"]
+        self.config = config
+        self.config.permission_policy_cls = config.get(
+            "REMOTE_USER_DATA_PERMISSION_POLICY"
+        )
+        self.endpoints_config = config.get("REMOTE_USER_DATA_API_ENDPOINTS")
         self.logger = update_logger
         self.updated_data = {}
         self.communities_service = LocalProxy(
@@ -130,7 +134,7 @@ class RemoteGroupDataService(Service):
         return starting_dict
 
     def update_group_from_remote(
-        self, idp: str, remote_group_id: str, **kwargs
+        self, identity, idp: str, remote_group_id: str, **kwargs
     ) -> Optional[dict]:
         """Update group data from remote server.
 
@@ -156,8 +160,9 @@ class RemoteGroupDataService(Service):
         Returns:
             dict: A dictionary of the updated group data. The keys are the slugs of the updated group collections. The values are dictionaries with the key "metadata_updated" and a value of "deleted" if the group collection was deleted, or the result of the update operation if the group collection was updated.
         """
+        self.require_permission(identity, "trigger_update")
         results_dict = {}
-        idp_config = self.config[idp]
+        idp_config = self.endpoints_config[idp]
         remote_api_token = os.environ[
             idp_config["groups"]["token_env_variable_label"]
         ]
@@ -268,7 +273,7 @@ class RemoteGroupDataService(Service):
                     remote_group_id,
                     idp,
                 )
-                disowned_communities.append(disowned_community)
+                disowned_communities.append(disowned_community["slug"])
 
         stranded_roles = self.group_role_component.get_roles_for_remote_group(
             remote_group_id=remote_group_id, idp=idp
@@ -295,7 +300,11 @@ class RemoteUserDataService(Service):
     def __init__(self, app, config={}, **kwargs):
         """Constructor."""
         super().__init__(config=config, **kwargs)
-        self.config = config["REMOTE_USER_DATA_API_ENDPOINTS"]
+        self.config = config
+        self.endpoints_config = config["REMOTE_USER_DATA_API_ENDPOINTS"]
+        self.config.permission_policy_cls = config.get(
+            "REMOTE_USER_DATA_PERMISSION_POLICY"
+        )
         self.logger = update_logger
         self.updated_data = {}
         self.communities_service = LocalProxy(
@@ -359,7 +368,7 @@ class RemoteUserDataService(Service):
     #     return user_data_stale
 
     def update_user_from_remote(
-        self, user_id: int, idp: str, remote_id: str, **kwargs
+        self, identity, user_id: int, idp: str, remote_id: str, **kwargs
     ) -> tuple[User, dict, list[str], dict]:
         """Main method to update user data from remote server.
 
@@ -383,6 +392,8 @@ class RemoteUserDataService(Service):
                 and "unchanged_groups").
 
         """
+        self.require_permission(identity, "trigger_update")
+
         # TODO: Can we refresh the user's identity if they're currently
         # logged in?
         update_logger.info(
@@ -448,8 +459,8 @@ class RemoteUserDataService(Service):
                   endpoint.
         """
         remote_data = {}
-        if "users" in self.config[idp].keys():
-            users_config = self.config[idp]["users"]
+        if "users" in self.endpoints_config[idp].keys():
+            users_config = self.endpoints_config[idp]["users"]
 
             remote_api_token = None
             if (

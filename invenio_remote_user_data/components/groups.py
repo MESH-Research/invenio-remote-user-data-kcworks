@@ -7,6 +7,7 @@
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
+from flask import current_app as app
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import Role, User
 from invenio_accounts.proxies import current_accounts
@@ -54,9 +55,11 @@ class GroupRolesComponent(ServiceComponent):
 
         return local_groups
 
-    def get_current_members_of_group(self, group_name: str) -> list[User]:
+    @staticmethod
+    def get_current_members_of_group(group_name: str) -> list[User]:
         """fetch a list of the users assigned the given group role"""
         my_group_role = current_accounts.datastore.find_role(group_name)
+        app.logger.debug(f"got group role {my_group_role}")
         return [user for user in my_group_role.users]
 
     def get_current_user_roles(self, user: Union[str, User]) -> list:
@@ -68,11 +71,12 @@ class GroupRolesComponent(ServiceComponent):
         Returns:
             list: _description_
         """
+        return_user = user
         if isinstance(user, str):
-            user = current_accounts.datastore.find_user(email=user)
-        if user is None:
+            return_user = current_accounts.datastore.find_user(email=user)
+        if return_user is None:
             raise RuntimeError(f'User "{user}" not found.')
-        return user.roles
+        return return_user.roles
 
     def find_or_create_group(
         self, group_name: str, **kwargs

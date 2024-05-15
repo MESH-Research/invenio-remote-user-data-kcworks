@@ -8,8 +8,14 @@ from invenio_communities.permissions import CommunityPermissionPolicy
 from invenio_communities.generators import (
     AllowedMemberTypes,
     CommunityManagersForRole,
-    GroupsEnabled,
 )
+
+# FIXME: This is a temporary hack since the GroupsEnabled generator
+# has moved
+try:
+    from invenio_users_resources.services.generators import GroupsEnabled
+except ImportError:
+    from invenio_communities.generators import GroupsEnabled
 from invenio_records_permissions import BasePermissionPolicy
 from invenio_records_permissions.generators import (
     AnyUser,

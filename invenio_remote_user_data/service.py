@@ -17,8 +17,10 @@ from invenio_accounts.proxies import current_accounts
 from invenio_communities.communities.services.results import CommunityItem
 
 # from invenio_accounts.utils import jwt_create_token
-from invenio_groups.utils import make_base_group_slug  # noqa
-from invenio_groups.proxies import current_group_collections_service  # noqa
+from invenio_group_collections.utils import make_base_group_slug  # noqa
+from invenio_group_collections.proxies import (
+    current_group_collections_service,
+)  # noqa
 from invenio_queues.proxies import current_queues
 from invenio_records_resources.services import Service
 
@@ -142,7 +144,7 @@ class RemoteGroupDataService(Service):
         they will not be created. If the group's collection exists, its metadata
         will be updated. If the group's collection does not exist, it will NOT
         be created. Creation of group collections is handled by the
-        `invenio_groups` service.
+        `invenio_group_collections` service.
 
         If the update uncovers deleted group collections, the method will
         not update them. Instead, it will return a value of "deleted" for the "metadata_updated" key for that collection's slug in the return dictionary.

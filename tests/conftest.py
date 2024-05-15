@@ -571,12 +571,6 @@ def custom_fields(app):
     return True
 
 
-@pytest.fixture(scope="module")
-def testapp(app):
-    """Application database and search."""
-    yield app
-
-
 def create_communities_custom_fields(app):
     """Creates one or all custom fields for communities.
 
@@ -650,23 +644,23 @@ def user_factory_logged_in(app, db, user_factory):
 
 
 @pytest.fixture(scope="function")
-def myuser(UserFixture, testapp, db):
+def myuser(UserFixture, app, db):
     u = UserFixture(
         email="auser@inveniosoftware.org",
         password="auser",
     )
-    u.create(testapp, db)
+    u.create(app, db)
     u.roles = u.user.roles
     return u
 
 
 @pytest.fixture(scope="function")
-def myuser2(UserFixture, testapp, db):
+def myuser2(UserFixture, app, db):
     u = UserFixture(
         email="myuser2@inveniosoftware.org",
         password="auser2",
     )
-    u.create(testapp, db)
+    u.create(app, db)
     u.roles = u.user.roles
     return u
 

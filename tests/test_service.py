@@ -8,8 +8,8 @@ from invenio_accounts.proxies import current_accounts
 from invenio_accounts.testutils import login_user_via_session
 from invenio_communities.proxies import current_communities
 from invenio_communities.communities.records.api import Community
-from invenio_groups.proxies import current_group_collections_service
-from invenio_groups.utils import add_user_to_community
+from invenio_group_collections.proxies import current_group_collections_service
+from invenio_group_collections.utils import add_user_to_community
 from invenio_search import current_search_client
 from invenio_search.engine import dsl
 from invenio_search.utils import build_alias_name
@@ -110,7 +110,7 @@ from werkzeug.exceptions import NotFound
     ],
 )
 def test_compare_remote_with_local(
-    testapp,
+    app,
     remote_data,
     starting_data,
     new_data,
@@ -145,7 +145,7 @@ def test_compare_remote_with_local(
     assert actual_group_changes == group_changes
 
 
-def test_update_invenio_group_memberships(testapp, user_factory, db):
+def test_update_invenio_group_memberships(app, user_factory, db):
     """Test updating invenio group memberships based on remote comparison."""
     test_changed_memberships = {
         "dropped_groups": ["cool-group"],
@@ -254,7 +254,7 @@ def test_update_invenio_group_memberships(testapp, user_factory, db):
     ],
 )
 def test_update_user_from_remote_mock(
-    testapp,
+    app,
     user_email,
     remote_id,
     return_payload,
@@ -268,7 +268,7 @@ def test_update_user_from_remote_mock(
     search_clear,
 ):
     """Test updating user data from mocked remote API."""
-    base_url = testapp.config["REMOTE_USER_DATA_API_ENDPOINTS"][
+    base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][
         "knowledgeCommons"
     ]["users"]["remote_endpoint"]
     print(base_url)
@@ -350,7 +350,7 @@ def test_update_user_from_remote_mock(
     ],
 )
 def test_update_group_from_remote_mock_new(
-    testapp,
+    app,
     idp,
     remote_group_id,
     return_payload,
@@ -360,7 +360,7 @@ def test_update_group_from_remote_mock_new(
     search_clear,
 ):
 
-    base_url = testapp.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
+    base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
         "remote_endpoint"
     ]
 
@@ -482,7 +482,7 @@ def test_update_group_from_remote_mock_new(
     ],
 )
 def test_update_group_from_remote_with_community(
-    testapp,
+    app,
     idp,
     remote_group_id,
     creation_data,
@@ -498,7 +498,7 @@ def test_update_group_from_remote_with_community(
     the remote group data because these may have been edited locally.
     """
     # mock the remote group data api endpoint
-    base_url = testapp.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
+    base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
         "remote_endpoint"
     ]
     requests_mock.get(
@@ -521,10 +521,12 @@ def test_update_group_from_remote_with_community(
         ),
         using=current_search_client,  # type: ignore
     )
+    logger.debug(f"Communities index: {communities_index}")
 
     search_result = current_group_collections_service.read(
         system_identity, existing_collection["slug"]
     )
+    logger.debug(f"Read group collection {search_result}")
 
     actual = group_service.update_group_from_remote(
         system_identity, idp, remote_group_id
@@ -641,7 +643,7 @@ def test_update_group_from_remote_with_community(
     ],
 )
 def test_update_group_from_remote_with_deleted_community(
-    testapp,
+    app,
     idp,
     remote_group_id,
     creation_data,
@@ -653,7 +655,7 @@ def test_update_group_from_remote_with_deleted_community(
     search_clear,
     custom_fields,
 ):
-    base_url = testapp.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
+    base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
         "remote_endpoint"
     ]
 
@@ -670,6 +672,9 @@ def test_update_group_from_remote_with_deleted_community(
     existing_collection = current_communities.service.create(
         identity=system_identity, data=creation_data
     )
+    logger.debug(
+        f"Created group collection {existing_collection.to_dict()['slug']}"
+    )
     Community.index.refresh()
 
     communities_index = dsl.Index(  # noqa:F841
@@ -682,6 +687,7 @@ def test_update_group_from_remote_with_deleted_community(
     search_result = current_group_collections_service.read(
         system_identity, existing_collection["slug"]
     )
+    logger.debug(f"Read group collection {search_result}")
 
     delete_result = current_communities.service.delete_community(
         system_identity, existing_collection["slug"]
@@ -704,10 +710,14 @@ def test_update_group_from_remote_with_deleted_community(
     community_list = current_communities.service.search(
         system_identity, q=query_params
     )
+    logger.debug(
+        f"Community list: {[c for c in community_list.to_dict()['hits']['hits']]}"
+    )
 
     actual = group_service.update_group_from_remote(
         system_identity, idp, remote_group_id
     )
+    logger.debug(f"Actual: {actual.keys()}")
 
     actual_md = actual[existing_collection["slug"]]["metadata_updated"]
     expected_md = group_role_changes[existing_collection["slug"]][
@@ -743,7 +753,7 @@ def test_update_group_from_remote_with_deleted_community(
     ],
 )
 def test_delete_group_from_remote(
-    testapp,
+    app,
     user_email,
     remote_id,
     new_data,
@@ -925,7 +935,7 @@ def test_delete_group_from_remote(
     ],
 )
 def test_delete_group_from_remote_with_community(
-    testapp,
+    app,
     user_email,
     remote_id,
     new_data,
@@ -943,7 +953,7 @@ def test_delete_group_from_remote_with_community(
     custom_fields,
 ):
     # mocker remote group data api endpoint
-    base_url = testapp.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
+    base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
         "remote_endpoint"
     ]
     requests_mock.get(
@@ -990,12 +1000,14 @@ def test_delete_group_from_remote_with_community(
     assert grouper.get_current_user_roles(myuser) == [
         "knowledgeCommons---1004290|admin"
     ]
+    assert len(myuser.roles)
 
     # create a second user to be an individual member
     myuser2 = user_factory()
     if not myuser2.active:
         assert current_accounts.datastore.activate_user(myuser2)
     add_user_to_community(str(myuser2.id), "reader", existing_collection["id"])
+    assert len(myuser2.roles)
 
     # ****** perform the delete operation ******
     actual = group_service.delete_group_from_remote(
@@ -1026,6 +1038,7 @@ def test_delete_group_from_remote_with_community(
     user_memberships = current_communities.service.members.read_memberships(
         myuser
     )
+    logger.debug(f"User memberships: {user_memberships}")
     assert existing_collection["id"] in [
         m[0] for m in user_memberships["memberships"]
     ]
@@ -1118,7 +1131,7 @@ def test_delete_group_from_remote_with_community(
     ],
 )
 def test_update_user_from_remote_live(
-    testapp,
+    app,
     user_email,
     remote_id,
     new_data,
@@ -1168,11 +1181,11 @@ def test_update_user_from_remote_live(
 
 
 def test_on_identity_changed(
-    client, testapp, db, user_factory, requests_mock, myuser
+    client, app, db, user_factory, requests_mock, myuser
 ):
     """Test service initialization and signal triggers."""
-    assert "invenio-remote-user-data" in testapp.extensions
-    assert testapp.extensions["invenio-remote-user-data"].service
+    assert "invenio-remote-user-data" in app.extensions
+    assert app.extensions["invenio-remote-user-data"].service
 
     # mock the remote api endpoint
     # base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][
@@ -1201,6 +1214,7 @@ def test_on_identity_changed(
     # mock SAML login info for the test user and add them to new groups
     myuser1 = user_factory(confirmed_at=arrow.utcnow().datetime)
     UserIdentity.create(myuser1, "knowledgeCommons", "testuser")
+    db.session.commit()
     grouper = GroupRolesComponent(user_service)
     grouper.create_new_group(group_name="knowledgeCommons---222222|admin")
     grouper.create_new_group(group_name="admin")
@@ -1211,6 +1225,7 @@ def test_on_identity_changed(
 
     # log user in and check whether group memberships were updated
     # need both login functions to log in and update client session
+    assert len(myuser1.roles)
     assert login_user(myuser1)
     login_user_via_session(client, email=myuser1.email)
     client.get("/api")
@@ -1256,25 +1271,26 @@ def test_on_identity_changed(
         == 0
     )
 
-    assert myuser1.username == "knowledgeCommons-myuser"
-    assert myuser1.email == "info@inveniosoftware.org"
-    assert myuser1.user_profile["full_name"] == "Jane User"
-    assert myuser1.user_profile["affiliations"] == "Michigan State University"
-    assert myuser1.user_profile["identifiers"] == [
+    myuser1 = current_users_service.read(system_identity, myuser1.id).data
+    assert myuser1["username"] == "knowledgeCommons-myuser"
+    assert myuser1["email"] == "info@inveniosoftware.org"
+    assert myuser1["profile"]["full_name"] == "Jane User"
+    assert myuser1["profile"]["affiliations"] == "Michigan State University"
+    assert myuser1["profile"]["identifiers"] == [
         {
             "identifier": "123-456-7891",
             "scheme": "orcid",
         }
     ]
-    assert myuser1.user_profile["name_parts"] == {
+    assert myuser1["profile"]["name_parts"] == {
         "first": "Jane",
         "last": "User",
     }
-    assert myuser1.preferences["email_visibility"] == "restricted"
-    assert myuser1.preferences["visibility"] == "restricted"
-    assert myuser1.preferences["locale"] == "en"
+    assert myuser1["preferences"]["email_visibility"] == "restricted"
+    assert myuser1["preferences"]["visibility"] == "restricted"
+    assert myuser1["preferences"]["locale"] == "en"
     # FIXME: Change the default timezone to UTC
-    assert myuser1.preferences["timezone"] == "Europe/Zurich"
+    assert myuser1["preferences"]["timezone"] == "Europe/Zurich"
 
     # log user out and check whether group memberships were updated
     logout_user()

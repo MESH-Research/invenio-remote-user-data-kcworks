@@ -55,7 +55,7 @@ Keeping remote data updated
 ---------------------------
 
 The service is always called when a user logs in (triggered by the
-identity_changed signal emitted by flask-principal). During a logged-in
+user_logged_in signal emitted by flask-login). During a logged-in
 session updates may be triggered by a background task or by a webhook
 signal from the user's remote service. In this case the user's data for the
 current session will be updated immediately and will become visible in the
@@ -74,7 +74,8 @@ instance.
 The webhook signal should be a POST request with a JSON body. The body should
 be a JSON object whose top-level keys are
 
-:idp: The name of the IDP registered for the remote service that is sending the signal. This is a
+:idp: The name of the IDP registered for the remote service that is sending
+      the signal. This is a
       string that must match one of the keys in the
       REMOTE_USER_DATA_API_ENDPOINTS configuration variable.
 

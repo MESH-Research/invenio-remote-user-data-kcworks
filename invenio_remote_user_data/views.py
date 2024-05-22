@@ -117,9 +117,7 @@ from werkzeug.exceptions import (
     NotFound,
     # Unauthorized,
 )
-import os
 
-from .utils import logger
 from .signals import remote_data_updated
 
 
@@ -133,8 +131,8 @@ class RemoteUserDataUpdateWebhook(MethodView):
 
     def __init__(self):
         # self.webhook_token = os.getenv("REMOTE_USER_DATA_WEBHOOK_TOKEN")
-        # self.logger = app.logger
-        self.logger = logger
+        self.logger = app.logger
+        # self.logger = logger
 
         self.logger.debug(f"decorators {self.decorators}")
 

@@ -10,15 +10,13 @@
 import arrow
 from flask import current_app, session  # after_this_request, request,
 from flask_login import user_logged_in
-from flask_principal import identity_changed, Identity  # identity_loaded,
+
+# from flask_principal import  identity_changed, Identity
 from flask_security import current_user
 from invenio_accounts.models import User
-from invenio_db import db
 from . import config
 from .service import RemoteGroupDataService, RemoteUserDataService
 from .tasks import do_user_data_update
-
-from .utils import logger
 
 
 def on_user_logged_in(_, user: User) -> None:
@@ -28,12 +26,12 @@ def on_user_logged_in(_, user: User) -> None:
     # FIXME: Do we need this check now that we're using webhooks?
     # with current_app.app_context():
 
-    logger.info(
-        "invenio_remote_user_data.ext: identity_changed signal received "
-        f"for user {user.id}"
-    )
     with current_app.app_context():
-        logger.debug(f"current_user: {current_user}")
+        current_app.logger.info(
+            "invenio_remote_user_data.ext: user_logged_in signal received "
+            f"for user {user.id}"
+        )
+        current_app.logger.debug(f"current_user: {current_user}")
         # if self._data_is_stale(identity.id) and not self.update_in_progress:
         # my_user_identity = UserIdentity.query.filter_by(
         #     id_user=identity.id
@@ -48,7 +46,7 @@ def on_user_logged_in(_, user: User) -> None:
         #
         if user.id:
             last_timestamp = session.get("user-data-updated", {}).get(user.id)
-            logger.debug(f"last_updated: {last_timestamp}")
+            current_app.logger.debug(f"last_updated: {last_timestamp}")
             last_updated = (
                 arrow.get(last_timestamp) if last_timestamp else None
             )

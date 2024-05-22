@@ -27,7 +27,6 @@ from invenio_records_resources.services.records.components import (
 from pprint import pformat
 from typing import Union, Optional
 
-from invenio_remote_user_data.utils import logger as update_logger
 
 # TODO: Most of these operations use the invenio_accounts datastore
 # directly. The invenio-users-resources groups service may be appropriate,
@@ -39,7 +38,6 @@ class GroupRolesComponent(ServiceComponent):
 
     def __init__(self, service, *args, **kwargs):
         super().__init__(service, *args, **kwargs)
-        self.logger = update_logger
 
     def get_roles_for_remote_group(
         self, remote_group_id: str, idp: str
@@ -88,7 +86,7 @@ class GroupRolesComponent(ServiceComponent):
         )
         current_accounts.datastore.commit()
         if my_group_role is not None:
-            self.logger.debug(
+            app.logger.debug(
                 f'Role for group "{group_name}" found or created.'
             )
         else:
@@ -104,7 +102,7 @@ class GroupRolesComponent(ServiceComponent):
         )
         current_accounts.datastore.commit()
         if my_group_role is not None:
-            self.logger.info(f'Role "{group_name}" created successfully.')
+            app.logger.info(f'Role "{group_name}" created successfully.')
         else:
             raise RuntimeError(f'Role "{group_name}" not created.')
         return my_group_role
@@ -123,13 +121,13 @@ class GroupRolesComponent(ServiceComponent):
             try:
                 current_accounts.datastore.delete(my_group_role)
                 current_accounts.datastore.commit()
-                self.logger.info(f'Role "{group_name}" deleted successfully.')
+                app.logger.info(f'Role "{group_name}" deleted successfully.')
                 deleted = True
             # FIXME: This is a hack to catch the AttributeError that
             # is thrown when the deleted role is not found in the post-commit
             # cleanup.
             except AttributeError as a:
-                self.logger.error(a)
+                app.logger.error(a)
                 deleted = True
             except Exception as e:
                 raise RuntimeError(
@@ -139,7 +137,7 @@ class GroupRolesComponent(ServiceComponent):
 
     def add_user_to_group(self, group_name: str, user: User, **kwargs) -> bool:
         """Add a user to a group."""
-        self.logger.debug(f"got group name {group_name}")
+        app.logger.debug(f"got group name {group_name}")
         user_added = current_accounts.datastore.add_role_to_user(
             user, group_name
         )
@@ -148,7 +146,7 @@ class GroupRolesComponent(ServiceComponent):
             raise RuntimeError("Cannot add user to group role.")
         else:
             user_str = user.email if isinstance(user, User) else user
-            self.logger.info(
+            app.logger.info(
                 f'Role "{group_name}" added to user"{user_str}" successfully.'
             )
         return user_added
@@ -157,9 +155,9 @@ class GroupRolesComponent(ServiceComponent):
         """Find a group role with the given name."""
         my_group_role = current_accounts.datastore.find_role(group_name)
         if my_group_role is None:
-            self.logger.debug(f'Role "{group_name}" not found.')
+            app.logger.debug(f'Role "{group_name}" not found.')
         else:
-            self.logger.debug(f'Role "{group_name}" found successfully.')
+            app.logger.debug(f'Role "{group_name}" found successfully.')
         return my_group_role
 
     def remove_user_from_group(
@@ -181,18 +179,18 @@ class GroupRolesComponent(ServiceComponent):
         group_name = (
             group_name if isinstance(group_name, str) else group_name.id
         )
-        self.logger.debug(f"removing from user {user.email}")
-        self.logger.debug(user.roles)
+        app.logger.debug(f"removing from user {user.email}")
+        app.logger.debug(user.roles)
         removed_user = current_accounts.datastore.remove_role_from_user(
             user, group_name
         )
         current_accounts.datastore.commit()
         if removed_user is False:
-            self.logger.debug(
+            app.logger.debug(
                 "Role {group_name} could not be removed from user."
             )
         else:
-            self.logger.info(
+            app.logger.info(
                 f'Role "{group_name}" removed from user "{user.email}"'
                 "successfully."
             )

@@ -9,27 +9,27 @@
 
 """Utility functions for invenio-remote-user-data."""
 
-import logging
-import os
-from pathlib import Path
+# import logging
+# import os
+# from pathlib import Path
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-formatter = logging.Formatter(
-    "%(asctime)s:RemoteUserDataService:%(levelname)s: %(message)s"
-)
-log_folder = Path(__file__).parent / "logs"
-os.makedirs(log_folder, exist_ok=True)
-file_handler = logging.handlers.RotatingFileHandler(
-    log_folder / "remote_data_updates.log",
-    mode="a",
-    maxBytes=1000000,
-    backupCount=5,
-)
-file_handler.setFormatter(formatter)
-if logger.hasHandlers():
-    logger.handlers.clear()
-logger.addHandler(file_handler)
+# logger = logging.getLogger(__name__)
+# logger.setLevel(logging.DEBUG)
+# formatter = logging.Formatter(
+#     "%(asctime)s:RemoteUserDataService:%(levelname)s: %(message)s"
+# )
+# log_folder = Path(__file__).parent / "logs"
+# os.makedirs(log_folder, exist_ok=True)
+# file_handler = logging.handlers.RotatingFileHandler(
+#     log_folder / "remote_data_updates.log",
+#     mode="a",
+#     maxBytes=1000000,
+#     backupCount=5,
+# )
+# file_handler.setFormatter(formatter)
+# if logger.hasHandlers():
+#     logger.handlers.clear()
+# logger.addHandler(file_handler)
 
 
 def update_nested_dict(original, update):

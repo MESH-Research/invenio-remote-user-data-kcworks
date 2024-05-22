@@ -38,7 +38,6 @@ from werkzeug.local import LocalProxy
 from .components.groups import GroupRolesComponent
 from .signals import remote_data_updated
 from .utils import (
-    logger as update_logger,
     diff_between_nested_dicts,
 )
 
@@ -54,7 +53,7 @@ class RemoteGroupDataService(Service):
             "REMOTE_USER_DATA_PERMISSION_POLICY"
         )
         self.endpoints_config = config.get("REMOTE_USER_DATA_API_ENDPOINTS")
-        self.logger = update_logger
+        self.logger = app.logger
         self.updated_data = {}
         self.communities_service = LocalProxy(
             lambda: app.extensions["invenio-communities"].service
@@ -307,7 +306,7 @@ class RemoteUserDataService(Service):
         self.config.permission_policy_cls = config.get(
             "REMOTE_USER_DATA_PERMISSION_POLICY"
         )
-        self.logger = update_logger
+        self.logger = app.logger
         self.updated_data = {}
         self.communities_service = LocalProxy(
             lambda: app.extensions["invenio-communities"].service
@@ -339,7 +338,7 @@ class RemoteUserDataService(Service):
                             my_user_identity.id_user, event["idp"], event["id"]
                         )  # noqa
                     except AssertionError:
-                        update_logger.error(
+                        self.logger.error(
                             f'Cannot update: user {event["id"]} does not exist'
                             " in Invenio."
                         )
@@ -398,7 +397,7 @@ class RemoteUserDataService(Service):
 
         # TODO: Can we refresh the user's identity if they're currently
         # logged in?
-        update_logger.info(
+        self.logger.info(
             f"Updating data from remote server -- user: {user_id}; "
             f"idp: {idp};"
             f" remote_id: {remote_id}."
@@ -426,7 +425,7 @@ class RemoteUserDataService(Service):
                         *groups_changes["unchanged_groups"],
                     ]
                 )
-            update_logger.info(
+            self.logger.info(
                 "User data successfully updated from remote "
                 f"server: {updated_data}"
             )
@@ -437,10 +436,10 @@ class RemoteUserDataService(Service):
                 groups_changes,
             )
         except Exception as e:
-            update_logger.error(
+            self.logger.error(
                 f"Error updating user data from remote server: {repr(e)}"
             )
-            update_logger.error(traceback.format_exc())
+            self.logger.error(traceback.format_exc())
             return None, None, None, None
 
     def fetch_from_remote_api(
@@ -483,15 +482,15 @@ class RemoteUserDataService(Service):
             headers = {}
             if remote_api_token:
                 headers = {"Authorization": f"Bearer {remote_api_token}"}
-            update_logger.debug(f"API URL: {api_url}")
+            self.logger.debug(f"API URL: {api_url}")
             response = callfunc(
                 api_url, headers=headers, verify=False, timeout=10
             )
             if response.status_code != 200:
-                update_logger.error(
+                self.logger.error(
                     f"Error fetching user data from remote API: {api_url}"
                 )
-                update_logger.error(
+                self.logger.error(
                     "Response status code: " + str(response.status_code)
                 )
             try:

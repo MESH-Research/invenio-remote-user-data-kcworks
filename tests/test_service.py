@@ -22,7 +22,6 @@ from invenio_remote_user_data.proxies import (
     current_remote_user_data_service as user_service,
     current_remote_group_data_service as group_service,
 )
-from invenio_remote_user_data.utils import logger
 from pprint import pprint
 import time
 from werkzeug.exceptions import NotFound
@@ -521,12 +520,12 @@ def test_update_group_from_remote_with_community(
         ),
         using=current_search_client,  # type: ignore
     )
-    logger.debug(f"Communities index: {communities_index}")
+    app.logger.debug(f"Communities index: {communities_index}")
 
     search_result = current_group_collections_service.read(
         system_identity, existing_collection["slug"]
     )
-    logger.debug(f"Read group collection {search_result}")
+    app.logger.debug(f"Read group collection {search_result}")
 
     actual = group_service.update_group_from_remote(
         system_identity, idp, remote_group_id
@@ -672,7 +671,7 @@ def test_update_group_from_remote_with_deleted_community(
     existing_collection = current_communities.service.create(
         identity=system_identity, data=creation_data
     )
-    logger.debug(
+    app.logger.debug(
         f"Created group collection {existing_collection.to_dict()['slug']}"
     )
     Community.index.refresh()
@@ -687,7 +686,7 @@ def test_update_group_from_remote_with_deleted_community(
     search_result = current_group_collections_service.read(
         system_identity, existing_collection["slug"]
     )
-    logger.debug(f"Read group collection {search_result}")
+    app.logger.debug(f"Read group collection {search_result}")
 
     delete_result = current_communities.service.delete_community(
         system_identity, existing_collection["slug"]
@@ -701,7 +700,7 @@ def test_update_group_from_remote_with_deleted_community(
     # deleted_community = current_communities.service.search(
     #     system_identity, q=f'+slug:{existing_collection["slug"]}'
     # )
-    # logger.debug(f"Deleted and searched community: {deleted_community}")
+    # app.logger.debug(f"Deleted and searched community: {deleted_community}")
     query_params = (
         f"+custom_fields.kcr\:commons_instance:{idp} "  # noqa
         f"+custom_fields.kcr\:commons_group_id:"  # noqa
@@ -710,14 +709,14 @@ def test_update_group_from_remote_with_deleted_community(
     community_list = current_communities.service.search(
         system_identity, q=query_params
     )
-    logger.debug(
+    app.logger.debug(
         f"Community list: {[c for c in community_list.to_dict()['hits']['hits']]}"
     )
 
     actual = group_service.update_group_from_remote(
         system_identity, idp, remote_group_id
     )
-    logger.debug(f"Actual: {actual.keys()}")
+    app.logger.debug(f"Actual: {actual.keys()}")
 
     actual_md = actual[existing_collection["slug"]]["metadata_updated"]
     expected_md = group_role_changes[existing_collection["slug"]][
@@ -1038,7 +1037,7 @@ def test_delete_group_from_remote_with_community(
     user_memberships = current_communities.service.members.read_memberships(
         myuser
     )
-    logger.debug(f"User memberships: {user_memberships}")
+    app.logger.debug(f"User memberships: {user_memberships}")
     assert existing_collection["id"] in [
         m[0] for m in user_memberships["memberships"]
     ]
@@ -1180,7 +1179,7 @@ def test_update_user_from_remote_live(
 """
 
 
-def test_on_identity_changed(
+def test_on_user_logged_in(
     client, app, db, user_factory, requests_mock, myuser
 ):
     """Test service initialization and signal triggers."""

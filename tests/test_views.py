@@ -14,7 +14,6 @@ import os
 
 from invenio_remote_user_data.components.groups import GroupRolesComponent
 from invenio_remote_user_data.service import RemoteUserDataService
-from invenio_remote_user_data.utils import logger
 
 
 def test_webhook_get(client, app, search_clear):
@@ -161,7 +160,7 @@ def test_webhook_post(
                     new_user, "knowledgeCommons", v["username"]
                 )
 
-        logger.debug(f"admin roles: {admin.user.roles}")
+        app.logger.debug(f"admin roles: {admin.user.roles}")
         response = client.post(
             url_for(
                 "invenio_remote_user_data.remote_user_data_webhook",
@@ -170,7 +169,7 @@ def test_webhook_post(
             headers=headers,
         )
 
-        logger.debug(json.loads(response.data))
+        app.logger.debug(json.loads(response.data))
         assert response.status_code == resp_code
         assert json.loads(response.data) == resp_data
 
@@ -183,7 +182,7 @@ def test_webhook_post(
                     myuser = current_accounts.datastore.find_user(
                         email=v["email"]
                     )
-                    logger.debug(f"myuser: {myuser}")
+                    app.logger.debug(f"myuser: {myuser}")
                     assert myuser.email == v["email"]
                     assert myuser.user_profile["full_name"] == v["name"]
                     assert myuser.user_profile["affiliations"] == (

@@ -537,7 +537,7 @@ class RemoteUserDataService(Service):
             "email": user.email,
             "active": user.active,
         }
-        new_data = {"active": True}
+        new_data: dict = {"active": True}
 
         local_groups = [r.name for r in user.roles]
         group_changes = {
@@ -592,6 +592,9 @@ class RemoteUserDataService(Service):
                 new_data["user_profile"].setdefault("identifiers", []).append(
                     {"identifier": users["orcid"], "scheme": "orcid"}
                 )
+            new_data["user_profile"].setdefault("identifiers", []).append(
+                {"identifier": users["username"], "scheme": f"{idp}_username"}
+            )
             new_data["username"] = f'{idp}-{users["username"]}'
             new_data["email"] = users["email"]
             new_data["preferences"] = user.preferences
@@ -628,9 +631,15 @@ class RemoteUserDataService(Service):
         """
         updated_data = {}
         if user_changes:
+            # if email changes, keep teh old email as an identifier
+            # of "email" scheme in the user_profile.identifiers list
             user.username = new_data["username"]
             user.user_profile = new_data["user_profile"]
             user.preferences = new_data["preferences"]
+            if user.email != new_data["email"]:
+                user.user_profile.setdefault("identifiers", []).append(
+                    {"identifier": user.email, "scheme": "email"}
+                )
             user.email = new_data["email"]
             current_accounts.datastore.commit()
             # updated_data["user"] = current_users_service.update(

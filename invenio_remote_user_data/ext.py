@@ -88,8 +88,6 @@ class InvenioRemoteUserData(object):
         self.init_services(app)
         self.init_listeners(app)
         app.extensions["invenio-remote-user-data"] = self
-        with app.app_context():
-            app.logger.info("invenio-remote-user-data initialized")
 
     def init_config(self, app) -> None:
         """Initialize configuration for the extention.

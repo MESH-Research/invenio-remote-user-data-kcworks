@@ -575,6 +575,7 @@ class RemoteUserDataService(Service):
                         if r not in group_changes["dropped_groups"]
                     ]
             new_data["user_profile"] = user.user_profile
+            self.logger.debug(f"users data: {pformat(users)}")
             new_data["user_profile"].update(
                 {
                     "full_name": users["name"],
@@ -600,12 +601,14 @@ class RemoteUserDataService(Service):
             new_data["preferences"] = user.preferences
             new_data["preferences"].update(
                 {
-                    "visibility": "restricted",
-                    "email_visibility": "restricted",
+                    "visibility": "public",
+                    "email_visibility": "public",
                 }
             )
             if users.get("preferred_language"):
                 new_data["preferences"]["locale"] = users["preferred_language"]
+        self.logger.debug(f"initial: {pformat(initial_user_data)}")
+        self.logger.debug(f"new: {pformat(new_data)}")
         user_changes = diff_between_nested_dicts(initial_user_data, new_data)
         return new_data, user_changes, group_changes
 
@@ -656,6 +659,7 @@ class RemoteUserDataService(Service):
             )
         else:
             updated_data["groups"] = group_changes["unchanged_groups"] or []
+
         return updated_data
 
     def update_invenio_group_memberships(

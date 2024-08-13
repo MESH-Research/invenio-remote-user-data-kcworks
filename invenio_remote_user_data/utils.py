@@ -44,7 +44,11 @@ def update_nested_dict(original, update):
 
 
 def diff_between_nested_dicts(original, update):
-    """Return the difference between two nested dictionaries."""  # noqa
+    """Return the difference between two nested dictionaries.
+
+    At present doesn't distinguish between additions and removals
+    from lists
+    """  # noqa
     diff = {}
     if not original:
         return update
@@ -55,7 +59,12 @@ def diff_between_nested_dicts(original, update):
                     original.get(key, {}), value
                 )
             elif isinstance(value, list):
-                diff[key] = list(set(value) - set(original.get(key, [])))
+                print("comparing")
+                print(value)
+                print(original.get(key, []))
+                diff[key] = [
+                    i for i in value if i not in original.get(key, [])
+                ] + [x for x in original.get(key, []) if x not in value]
             else:
                 if original.get(key) != value:
                     diff[key] = value

@@ -99,8 +99,8 @@ class RemoteGroupDataService(Service):
             new_data["id"]
             == starting_dict["custom_fields"]["kcr:commons_group_id"]
         )
-        self.logger.debug("Starting dict: " + pformat(starting_dict))
-        self.logger.debug("New data: " + pformat(new_data))
+        # self.logger.debug("Starting dict: " + pformat(starting_dict))
+        # self.logger.debug("New data: " + pformat(new_data))
 
         metadata_updates = starting_dict["metadata"]
         custom_fields_updates = starting_dict["custom_fields"]
@@ -607,8 +607,6 @@ class RemoteUserDataService(Service):
             )
             if users.get("preferred_language"):
                 new_data["preferences"]["locale"] = users["preferred_language"]
-        self.logger.debug(f"initial: {pformat(initial_user_data)}")
-        self.logger.debug(f"new: {pformat(new_data)}")
         user_changes = diff_between_nested_dicts(initial_user_data, new_data)
         return new_data, user_changes, group_changes
 
@@ -677,9 +675,9 @@ class RemoteUserDataService(Service):
         """
         grouper = GroupRolesComponent(self)
         updated_local_groups = [r.name for r in user.roles]
-        self.logger.debug(
-            "Got changed groups: " + pformat(changed_memberships)
-        )
+        # self.logger.debug(
+        #     "Got changed groups: " + pformat(changed_memberships)
+        # )
         for group_name in changed_memberships["added_groups"]:
             group_role = grouper.find_or_create_group(group_name)
             if (

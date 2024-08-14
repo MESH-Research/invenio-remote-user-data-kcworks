@@ -4,6 +4,7 @@ from invenio_access.permissions import system_identity
 from invenio_accounts.models import User
 from invenio_accounts.proxies import current_datastore
 from invenio_oauthclient.models import UserIdentity
+from invenio_users_resources.proxies import current_users_service
 from pprint import pprint
 from .proxies import (
     current_remote_user_data_service as user_data_service,
@@ -46,14 +47,19 @@ def update_user_data(
     print(
         f"Updating {'all ' if len(ids) == 0 else ''}{'users' if not groups else 'groups'} {','.join(ids)}"
     )
+    counter = 0
+    successes = []
+    failures = []
+    not_found = []
     if len(ids) > 0:
         if not groups:
             for i in ids:
+                counter += 1
                 if by_email:
                     user = current_datastore.get_user_by_email(i)
                     user_ident = UserIdentity.query.filter_by(
                         id_user=user.id, method=source
-                    )
+                    ).one_or_none()
                 elif by_username:
                     user_ident = UserIdentity.query.filter_by(
                         id=i, method=source
@@ -64,12 +70,38 @@ def update_user_data(
                     ).one_or_none()
                 if not user_ident:
                     print(f"No remote registration found for {i}")
+                    not_found.append(i)
                     break
 
                 update_result = user_data_service.update_user_from_remote(
                     system_identity, user_ident.id_user, source, user_ident.id
                 )
                 pprint(update_result)
+                successes.append(i)
+    else:
+        users = current_users_service.scan(identity=system_identity)
+        for u in users.hits:
+            counter += 1
+            user_ident = UserIdentity.query.filter_by(
+                id_user=u.id, method=source
+            ).one_or_none()
+            if not user_ident:
+                print(f"No remote registration found for {u.id}")
+                not_found.append(i)
+                break
+
+            update_result = user_data_service.update_user_from_remote(
+                system_identity, user_ident.id_user, source, user_ident.id
+            )
+            pprint(update_result)
+            successes.append(u.id)
+    print(f"All done updating {counter} {'users' if not groups else 'groups'}")
+    if len(not_found):
+        print(f"No remote registration found for {len(not_found)} records")
+    if len(failures):
+        print(
+            f"{len(failures)} updates failed for the following records: {failures}"
+        )
 
 
 if __name__ == "__main__":

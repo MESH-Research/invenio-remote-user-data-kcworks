@@ -54,6 +54,9 @@ testpaths = [ "tests", "invenio_remote_user_data" ]
 [project.scripts]
 user-data = "invenio_remote_user_data.cli:cli"
 
+[project.entry-points."flask.commands"]
+user-data = "invenio_remote_user_data.cli:cli"
+
 [project.entry-points."invenio_base.apps"]
 invenio_remote_user_data = "invenio_remote_user_data.ext:InvenioRemoteUserData"
 

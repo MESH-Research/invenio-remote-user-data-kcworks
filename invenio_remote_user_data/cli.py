@@ -13,7 +13,7 @@ from .proxies import (
 
 @click.group()
 def cli():
-    pass
+    """User and group data updates from remote source."""
 
 
 @cli.command(name="update")

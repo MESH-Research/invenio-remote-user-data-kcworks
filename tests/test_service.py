@@ -19,8 +19,8 @@ from invenio_remote_user_data.components.groups import (
     GroupRolesComponent,
 )
 from invenio_remote_user_data.proxies import (
-    current_remote_user_data_service as user_service,
-    current_remote_group_data_service as group_service,
+    current_remote_user_data_service as user_data_service,
+    current_remote_group_data_service as group_data_service,
 )
 from pprint import pprint
 import time
@@ -119,7 +119,7 @@ def test_compare_remote_with_local(
     db,
 ):
     """Test comparison of remote and local user data."""
-    grouper = GroupRolesComponent(user_service)
+    grouper = GroupRolesComponent(user_data_service)
     myuser = user_factory(**starting_data["user"])
     grouper.create_new_group(group_name="admin")
     grouper.add_user_to_group(group_name="admin", user=myuser)
@@ -136,7 +136,7 @@ def test_compare_remote_with_local(
         actual_new,
         actual_user_changes,
         actual_group_changes,
-    ) = user_service.compare_remote_with_local(
+    ) = user_data_service.compare_remote_with_local(
         user=myuser, remote_data=remote_data, idp="knowledgeCommons"
     )
     assert actual_new == new_data
@@ -155,14 +155,16 @@ def test_update_invenio_group_memberships(app, user_factory, db):
     my_identity = get_identity_for_user(myuser.email)
 
     # set up starting roles and memberships
-    grouper = GroupRolesComponent(user_service)
+    grouper = GroupRolesComponent(user_data_service)
     grouper.create_new_group(group_name="cool-group")
     grouper.create_new_group(group_name="admin")
     grouper.add_user_to_group("cool-group", myuser)
     grouper.add_user_to_group("admin", myuser)
 
-    actual_updated_memberships = user_service.update_invenio_group_memberships(
-        myuser, test_changed_memberships
+    actual_updated_memberships = (
+        user_data_service.update_invenio_group_memberships(
+            myuser, test_changed_memberships
+        )
     )
 
     assert actual_updated_memberships == expected_updated_memberships
@@ -299,7 +301,7 @@ def test_update_user_from_remote_mock(
         assert current_accounts.datastore.activate_user(myuser)
     UserIdentity.create(myuser, "knowledgeCommons", remote_id)
 
-    actual = user_service.update_user_from_remote(
+    actual = user_data_service.update_user_from_remote(
         system_identity, myuser.id, "knowledgeCommons", remote_id
     )
     assert {
@@ -368,7 +370,7 @@ def test_update_group_from_remote_mock_new(
         json=return_payload,
     )
 
-    actual = group_service.update_group_from_remote(
+    actual = group_data_service.update_group_from_remote(
         system_identity, idp, remote_group_id
     )
 
@@ -506,7 +508,7 @@ def test_update_group_from_remote_with_community(
     )
 
     # create the group collection/community in the database
-    GroupRolesComponent(user_service).create_new_group(
+    GroupRolesComponent(user_data_service).create_new_group(
         group_name="administrator"
     )
     existing_collection = current_communities.service.create(
@@ -527,7 +529,7 @@ def test_update_group_from_remote_with_community(
     )
     app.logger.debug(f"Read group collection {search_result}")
 
-    actual = group_service.update_group_from_remote(
+    actual = group_data_service.update_group_from_remote(
         system_identity, idp, remote_group_id
     )
     expected = group_role_changes[existing_collection["slug"]]
@@ -663,7 +665,7 @@ def test_update_group_from_remote_with_deleted_community(
         json=return_payload,
     )
 
-    GroupRolesComponent(user_service).create_new_group(
+    GroupRolesComponent(user_data_service).create_new_group(
         group_name="administrator"
     )
 
@@ -713,7 +715,7 @@ def test_update_group_from_remote_with_deleted_community(
         f"Community list: {[c for c in community_list.to_dict()['hits']['hits']]}"
     )
 
-    actual = group_service.update_group_from_remote(
+    actual = group_data_service.update_group_from_remote(
         system_identity, idp, remote_group_id
     )
     app.logger.debug(f"Actual: {actual.keys()}")
@@ -761,7 +763,7 @@ def test_delete_group_from_remote(
     db,
     search_clear,
 ):
-    grouper = GroupRolesComponent(user_service)
+    grouper = GroupRolesComponent(user_data_service)
     grouper.create_new_group(group_name="knowledgeCommons---1004290|admin")
     grouper.create_new_group(group_name="knowledgeCommons---1004290|member")
 
@@ -777,7 +779,7 @@ def test_delete_group_from_remote(
         "knowledgeCommons---1004290|admin"
     ]
 
-    actual = group_service.delete_group_from_remote(
+    actual = group_data_service.delete_group_from_remote(
         "knowledgeCommons", "1004290", "The Inklings"
     )
 
@@ -961,7 +963,7 @@ def test_delete_group_from_remote_with_community(
     )
 
     # create the group collection/community
-    grouper = GroupRolesComponent(user_service)
+    grouper = GroupRolesComponent(user_data_service)
     grouper.create_new_group(group_name="administrator")
     existing_collection = current_group_collections_service.create(
         system_identity, remote_group_id, idp
@@ -1009,7 +1011,7 @@ def test_delete_group_from_remote_with_community(
     assert len(myuser2.roles)
 
     # ****** perform the delete operation ******
-    actual = group_service.delete_group_from_remote(
+    actual = group_data_service.delete_group_from_remote(
         "knowledgeCommons", "1004290", "The Inklings"
     )
 
@@ -1214,7 +1216,7 @@ def test_on_user_logged_in(
     myuser1 = user_factory(confirmed_at=arrow.utcnow().datetime)
     UserIdentity.create(myuser1, "knowledgeCommons", "testuser")
     db.session.commit()
-    grouper = GroupRolesComponent(user_service)
+    grouper = GroupRolesComponent(user_data_service)
     grouper.create_new_group(group_name="knowledgeCommons---222222|admin")
     grouper.create_new_group(group_name="admin")
     grouper.add_user_to_group(

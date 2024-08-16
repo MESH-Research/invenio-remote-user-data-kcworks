@@ -188,13 +188,13 @@ def test_webhook_post(
                     assert myuser.user_profile["affiliations"] == (
                         v["institutional_affiliation"]
                     )
-                    assert myuser.user_profile["name_parts"] == {
+                    assert json.dumps(myuser.user_profile["name_parts"]) == {
                         "first": v["first_name"],
                         "last": v["last_name"],
                     }
-                    assert myuser.user_profile["identifiers"] == [
-                        {"scheme": "orcid", "identifier": v["orcid"]}
-                    ]
+                    assert myuser.user_profile["identifier_orcid"] == (
+                        v["orcid"]
+                    )
 
                     user_roles = [r.name for r in myuser.roles]
                     for g in user_roles:

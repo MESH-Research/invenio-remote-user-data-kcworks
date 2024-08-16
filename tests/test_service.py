@@ -22,6 +22,7 @@ from invenio_remote_user_data.proxies import (
     current_remote_user_data_service as user_data_service,
     current_remote_group_data_service as group_data_service,
 )
+import json
 from pprint import pprint
 import time
 from werkzeug.exceptions import NotFound
@@ -68,13 +69,8 @@ from werkzeug.exceptions import NotFound
                 "user_profile": {
                     "affiliations": "Michigan State University",
                     "full_name": "My User",
-                    "identifiers": [
-                        {
-                            "identifier": "0000-0002-1825-0097",
-                            "scheme": "orcid",
-                        }
-                    ],
-                    "name_parts": {"first": "My", "last": "User"},
+                    "identifier_orcid": "0000-0002-1825-0097",
+                    "name_parts": '{"first": "My", "last": "User"}',
                 },
                 "preferences": {
                     "email_visibility": "restricted",
@@ -88,13 +84,8 @@ from werkzeug.exceptions import NotFound
                 "user_profile": {
                     "affiliations": "Michigan State University",
                     "full_name": "My User",
-                    "identifiers": [
-                        {
-                            "identifier": "0000-0002-1825-0097",
-                            "scheme": "orcid",
-                        }
-                    ],
-                    "name_parts": {"first": "My", "last": "User"},
+                    "identifier_orcid": "0000-0002-1825-0097",
+                    "name_parts": '{"first": "My", "last": "User"}',
                 },
             },
             {
@@ -206,17 +197,9 @@ def test_update_invenio_group_memberships(app, user_factory, db):
                 "email": "myaddress@hcommons.org",
                 "user_profile": {
                     "full_name": "My User",
-                    "name_parts": {
-                        "first": "My",
-                        "last": "User",
-                    },
+                    "name_parts": '{"first": "My", "last": "User",}',
                     "affiliations": "Michigan State University",
-                    "identifiers": [
-                        {
-                            "identifier": "0000-0002-1825-0097",
-                            "scheme": "orcid",
-                        }
-                    ],
+                    "identifier_orcid": "0000-0002-1825-0097",
                 },
                 "preferences": {
                     "email_visibility": "restricted",
@@ -228,13 +211,8 @@ def test_update_invenio_group_memberships(app, user_factory, db):
             {
                 "user_profile": {
                     "full_name": "My User",
-                    "name_parts": {"first": "My", "last": "User"},
-                    "identifiers": [
-                        {
-                            "identifier": "0000-0002-1825-0097",
-                            "scheme": "orcid",
-                        }
-                    ],
+                    "name_parts": '{"first": "My", "last": "User"}',
+                    "identifier_orcid": "0000-0002-1825-0097"
                     "affiliations": "Michigan State University",
                 },
                 "username": "knowledgeCommons-myuser",
@@ -1098,10 +1076,7 @@ def test_delete_group_from_remote_with_community(
                 "email": "scottianw@signgmail.com",
                 "user_profile": {
                     "full_name": "Ian Scott",
-                    "name_parts": {
-                        "first": "Ian",
-                        "last": "Scott",
-                    },
+                    "name_parts": '{"first": "Ian", "last": "Scott",}',
                     "affiliations": "MESH Research, Michigan State University",
                 },
                 "preferences": {
@@ -1115,10 +1090,7 @@ def test_delete_group_from_remote_with_community(
                 "user_profile": {
                     "affiliations": "MESH Research, Michigan State University",
                     "full_name": "Ian Scott",
-                    "name_parts": {
-                        "first": "Ian",
-                        "last": "Scott",
-                    },
+                    "name_parts": '{"first": "Ian", "last": "Scott", }',
                 },
                 "username": "knowledgeCommons-ianscott",
             },
@@ -1277,13 +1249,8 @@ def test_on_user_logged_in(
     assert myuser1["email"] == "info@inveniosoftware.org"
     assert myuser1["profile"]["full_name"] == "Jane User"
     assert myuser1["profile"]["affiliations"] == "Michigan State University"
-    assert myuser1["profile"]["identifiers"] == [
-        {
-            "identifier": "123-456-7891",
-            "scheme": "orcid",
-        }
-    ]
-    assert myuser1["profile"]["name_parts"] == {
+    assert myuser1["profile"]["identifier_orcid"] == "123-456-7891"
+    assert json.dumps(myuser1["profile"]["name_parts"]) == {
         "first": "Jane",
         "last": "User",
     }

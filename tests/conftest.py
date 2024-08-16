@@ -370,40 +370,15 @@ test_config["SSO_SAML_IDPS"] = {
 }
 
 
-class CustomAffiliationSchema(Schema):
-    """The default affiliations schema."""
-
-    name = fields.String()
-    id = fields.String()
-
-
-class CustomNamePartsSchema(Schema):
-    """The default name parts schema."""
-
-    first = fields.String()
-    middle = fields.String()
-    last = fields.String()
-    last_prefix_for_alphabetizing = fields.String()
-    last_prefix = fields.String()
-    patronymic = fields.String()
-    undivided = fields.String()
-
-
-class CustomUserIdentifierSchema(Schema):
-    """The default user identifier schema."""
-
-    identifier = fields.String()
-    scheme = fields.String()
-
-
 class CustomUserProfileSchema(Schema):
     """The default user profile schema."""
 
     full_name = fields.String()
-    # affiliations = fields.List(fields.Nested(CustomAffiliationSchema))
     affiliations = fields.String()
-    name_parts = fields.Nested(CustomNamePartsSchema)
-    identifiers = fields.List(fields.Nested(CustomUserIdentifierSchema))
+    name_parts = fields.String()
+    identifier_email = fields.String()
+    identifier_orcid = fields.String()
+    identifier_kc_username = fields.String()
 
 
 test_config["ACCOUNTS_USER_PROFILE_SCHEMA"] = CustomUserProfileSchema

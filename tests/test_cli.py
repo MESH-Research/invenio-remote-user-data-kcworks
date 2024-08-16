@@ -37,17 +37,9 @@ import pytest
                 "email": "myaddress@hcommons.org",
                 "user_profile": {
                     "full_name": "My User",
-                    "name_parts": {
-                        "first": "My",
-                        "last": "User",
-                    },
+                    "name_parts": '{"first": "My", "last": "User", }',
                     "affiliations": "Michigan State University",
-                    "identifiers": [
-                        {
-                            "identifier": "0000-0002-1825-0097",
-                            "scheme": "orcid",
-                        }
-                    ],
+                    "identifier_orcid": "0000-0002-1825-0097",
                 },
                 "preferences": {
                     "email_visibility": "restricted",
@@ -59,13 +51,8 @@ import pytest
             {
                 "user_profile": {
                     "full_name": "My User",
-                    "name_parts": {"first": "My", "last": "User"},
-                    "identifiers": [
-                        {
-                            "identifier": "0000-0002-1825-0097",
-                            "scheme": "orcid",
-                        }
-                    ],
+                    "name_parts": '{"first": "My", "last": "User"}',
+                    "identifier_orcid": "0000-0002-1825-0097",
                     "affiliations": "Michigan State University",
                 },
                 "username": "knowledgeCommons-myuser",

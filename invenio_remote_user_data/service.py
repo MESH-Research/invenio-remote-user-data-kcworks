@@ -15,28 +15,24 @@ from invenio_access.permissions import system_identity
 from invenio_accounts.models import User, UserIdentity, Role
 from invenio_accounts.proxies import current_accounts
 from invenio_communities.communities.services.results import CommunityItem
-
-# from invenio_accounts.utils import jwt_create_token
 from invenio_group_collections.utils import make_base_group_slug  # noqa
 from invenio_group_collections.proxies import (
     current_group_collections_service,
 )  # noqa
 from invenio_queues.proxies import current_queues
 from invenio_records_resources.services import Service
-
 from invenio_users_resources.proxies import current_groups_service
-from .tasks import do_group_data_update, do_user_data_update
+import json
 import os
 
 # from pprint import pprint
 import requests
 import traceback
 from typing import Optional
-
-# from typing import Optional
 from werkzeug.local import LocalProxy
 from .components.groups import GroupRolesComponent
 from .signals import remote_data_updated
+from .tasks import do_group_data_update, do_user_data_update
 from .utils import (
     diff_between_nested_dicts,
 )
@@ -579,10 +575,12 @@ class RemoteUserDataService(Service):
             new_data["user_profile"].update(
                 {
                     "full_name": users["name"],
-                    "name_parts": {
-                        "first": users["first_name"],
-                        "last": users["last_name"],
-                    },
+                    "name_parts": json.dumps(
+                        {
+                            "first": users["first_name"],
+                            "last": users["last_name"],
+                        }
+                    ),
                 }
             )
             if users.get("institutional_affiliation"):
@@ -590,12 +588,11 @@ class RemoteUserDataService(Service):
                     "institutional_affiliation"
                 ]
             if users.get("orcid"):
-                new_data["user_profile"].setdefault("identifiers", []).append(
-                    {"identifier": users["orcid"], "scheme": "orcid"}
-                )
-            new_data["user_profile"].setdefault("identifiers", []).append(
-                {"identifier": users["username"], "scheme": f"{idp}_username"}
-            )
+                new_data["user_profile"]["identifier_orcid"] = users["orcid"]
+            idp_slug = "kc" if idp == "knowledgeCommons" else idp
+            new_data["user_profile"][f"{idp_slug}_username"] = users[
+                "username"
+            ]
             new_data["username"] = f'{idp}-{users["username"]}'
             new_data["email"] = users["email"]
             new_data["preferences"] = user.preferences
@@ -632,20 +629,15 @@ class RemoteUserDataService(Service):
         """
         updated_data = {}
         if user_changes:
-            # if email changes, keep teh old email as an identifier
-            # of "email" scheme in the user_profile.identifiers list
+            # if email changes, keep teh old email as an
+            # `identifier_email` in the user_profile
             user.username = new_data["username"]
             user.user_profile = new_data["user_profile"]
             user.preferences = new_data["preferences"]
             if user.email != new_data["email"]:
-                user.user_profile.setdefault("identifiers", []).append(
-                    {"identifier": user.email, "scheme": "email"}
-                )
+                user.user_profile["identifier_email"] = user.email
             user.email = new_data["email"]
             current_accounts.datastore.commit()
-            # updated_data["user"] = current_users_service.update(
-            #     system_identity, user.id, new_data
-            # ).data
             updated_data["user"] = user_changes
         else:
             updated_data["user"] = []

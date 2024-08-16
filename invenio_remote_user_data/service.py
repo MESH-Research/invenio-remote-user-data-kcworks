@@ -590,9 +590,9 @@ class RemoteUserDataService(Service):
             if users.get("orcid"):
                 new_data["user_profile"]["identifier_orcid"] = users["orcid"]
             idp_slug = "kc" if idp == "knowledgeCommons" else idp
-            new_data["user_profile"][f"{idp_slug}_username"] = users[
-                "username"
-            ]
+            new_data["user_profile"][f"identifier_{idp_slug}_username"] = (
+                users["username"]
+            )
             new_data["username"] = f'{idp}-{users["username"]}'
             new_data["email"] = users["email"]
             new_data["preferences"] = user.preferences

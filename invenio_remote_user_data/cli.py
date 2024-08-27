@@ -97,6 +97,7 @@ def update_user_data(
     )
     counter = 0
     successes = []
+    unchanged = []
     failures = []
     not_found_remote = []
     not_found_local = []
@@ -111,7 +112,7 @@ def update_user_data(
             for j in range(int(start), int(end) + 1):
                 expanded_ids.append(j)
         else:
-            expanded_ids.append(int(i))
+            expanded_ids.append(i)
     ids = expanded_ids
 
     # eliminate duplicates
@@ -132,12 +133,12 @@ def update_user_data(
                     ).one_or_none()
                 else:
                     user_ident = UserIdentity.query.filter_by(
-                        id_user=i, method=source
+                        id_user=int(i), method=source
                     ).one_or_none()
                 if not user_ident:
                     print(f"No remote registration found for {i}")
                     not_found_local.append(i)
-                    break
+                    continue
 
                 update_result = user_data_service.update_user_from_remote(
                     system_identity, user_ident.id_user, source, user_ident.id
@@ -154,7 +155,7 @@ def update_user_data(
             if not user_ident:
                 print(f"No remote registration found for {u.id}")
                 not_found_local.append(i)
-                break
+                continue
 
             try:
                 update_result = user_data_service.update_user_from_remote(
@@ -171,6 +172,12 @@ def update_user_data(
                 elif update_result[1].get("error", "") == "invalid_response":
                     print(f"Invalid response updating {u.id}")
                     invalid_responses.append(u.id)
+                elif (
+                    len(update_result[1].keys()) == 0
+                    and len(update_result[2]) == 0
+                ) and "error" not in update_result[1].keys():
+                    print(f"No new data on remote server for {u.id}")
+                    unchanged.append(u.id)
                 elif update_result:
                     print(f"Updated user {u.id}")
                     pprint(update_result)
@@ -179,6 +186,12 @@ def update_user_data(
                 print(f"Failed to update {u.id}")
                 failures.append(u.id)
     print(f"All done updating {counter} {'users' if not groups else 'groups'}")
+    if len(successes):
+        print(f"Successfully updated {len(successes)} records.")
+    if len(unchanged):
+        print(
+            f"No updates necessary for {len(unchanged)} records: {unchanged}"
+        )
     if len(not_found_local):
         print(
             f"No remote registration found in Invenio for "

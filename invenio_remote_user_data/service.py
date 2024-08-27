@@ -585,13 +585,21 @@ class RemoteUserDataService(Service):
                    group memberships.
         """
         initial_user_data = {
-            "user_profile": user.user_profile,
             "username": user.username,
             "preferences": user.preferences,
             "roles": user.roles,
             "email": user.email,
             "active": user.active,
         }
+        try:
+            initial_user_data["user_profile"] = user.user_profile
+        except ValueError:
+            self.logger.error(
+                f"Error fetching initial user profile data for user {user.id}. "
+                f"Some data in db was invalid. Starting fresh with incoming "
+                "data."
+            )
+
         new_data: dict = {"active": True}
 
         local_groups = [r.name for r in user.roles]
@@ -630,7 +638,7 @@ class RemoteUserDataService(Service):
                         for r in local_groups
                         if r not in group_changes["dropped_groups"]
                     ]
-            new_data["user_profile"] = user.user_profile
+            new_data["user_profile"] = initial_user_data["user_profile"]
             self.logger.debug(f"users data: {pformat(users)}")
             new_data["user_profile"].update(
                 {

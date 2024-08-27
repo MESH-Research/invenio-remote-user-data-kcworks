@@ -12,16 +12,13 @@ from pprint import pformat
 
 # frm pprint import pformat
 from invenio_access.permissions import system_identity
-from invenio_accounts.models import User, UserIdentity, Role
+from invenio_accounts.models import User, UserIdentity
 from invenio_accounts.proxies import current_accounts
-from invenio_communities.communities.services.results import CommunityItem
-from invenio_group_collections.utils import make_base_group_slug  # noqa
 from invenio_group_collections.proxies import (
     current_group_collections_service,
 )  # noqa
 from invenio_queues.proxies import current_queues
 from invenio_records_resources.services import Service
-from invenio_users_resources.proxies import current_groups_service
 import json
 import os
 
@@ -136,13 +133,15 @@ class RemoteGroupDataService(Service):
         """Update group data from remote server.
 
         If Invenio group roles for the remote group do not exist,
-        they will not be created. If the group's collection exists, its metadata
-        will be updated. If the group's collection does not exist, it will NOT
-        be created. Creation of group collections is handled by the
-        `invenio_group_collections` service.
+        they will not be created. If the group's collection exists,
+        its metadata will be updated. If the group's collection
+        does not exist, it will NOT be created. Creation of group
+        collections is handled by the `invenio_group_collections` service.
 
         If the update uncovers deleted group collections, the method will
-        not update them. Instead, it will return a value of "deleted" for the "metadata_updated" key for that collection's slug in the return dictionary.
+        not update them. Instead, it will return a value of "deleted" for
+        the "metadata_updated" key for that collection's slug in the
+        return dictionary.
 
         This method is triggered by the
         :class:`invenio_remote_user_data.views.RemoteUserDataUpdateWebhook`
@@ -155,7 +154,12 @@ class RemoteGroupDataService(Service):
             **kwargs: Additional keyword arguments to pass to the method.
 
         Returns:
-            dict: A dictionary of the updated group data. The keys are the slugs of the updated group collections. The values are dictionaries with the key "metadata_updated" and a value of "deleted" if the group collection was deleted, or the result of the update operation if the group collection was updated.
+            dict: A dictionary of the updated group data. The keys are
+            the slugs of the updated group collections. The values are
+            dictionaries with the key "metadata_updated" and a value of
+            "deleted" if the group collection was deleted, or the
+            result of the update operation if the group collection was
+            updated.
         """
         self.require_permission(identity, "trigger_update")
         results_dict = {}
@@ -404,7 +408,6 @@ class RemoteUserDataService(Service):
             remote_data = self.fetch_from_remote_api(
                 user, idp, remote_id, **kwargs
             )
-            self.logger.debug("Remote data: " + pformat(remote_data))
             new_data, user_changes, groups_changes = [{}, {}, {}]
             if "users" in remote_data.keys():
                 new_data, user_changes, groups_changes = (
@@ -412,9 +415,6 @@ class RemoteUserDataService(Service):
                         user, remote_data, idp, **kwargs
                     )
                 )
-                self.logger.debug("New data: " + pformat(new_data))
-                self.logger.debug("User changes: " + pformat(user_changes))
-                self.logger.debug("Group changes: " + pformat(groups_changes))
             elif "error" in remote_data.keys():
                 if remote_data["error"]["reason"] == "not_found":
                     self.logger.error(
@@ -428,7 +428,8 @@ class RemoteUserDataService(Service):
                     return user, remote_data, [], {}
                 elif remote_data["error"]["reason"] == "invalid_response":
                     self.logger.error(
-                        "Invalid response fetching user data from remote server."
+                        "Invalid response fetching user data from remote "
+                        "server."
                     )
                     return user, remote_data, [], {}
                 else:
@@ -560,6 +561,7 @@ class RemoteUserDataService(Service):
                     "status_code": 408,
                     "text": "Request timed out",
                 }
+        return remote_data
 
     def compare_remote_with_local(
         self, user: User, remote_data: dict, idp: str, **kwargs

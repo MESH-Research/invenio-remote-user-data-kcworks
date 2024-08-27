@@ -1,7 +1,6 @@
 import click
 from flask.cli import with_appcontext
 from invenio_access.permissions import system_identity
-from invenio_accounts.models import User
 from invenio_accounts.proxies import current_datastore
 from invenio_oauthclient.models import UserIdentity
 from invenio_users_resources.proxies import current_users_service
@@ -9,7 +8,6 @@ from pprint import pprint
 import re
 from .proxies import (
     current_remote_user_data_service as user_data_service,
-    current_remote_group_data_service as group_data_service,
 )
 
 
@@ -25,11 +23,40 @@ def cli():
     "--groups",
     is_flag=True,
     default=False,
-    help=("If true, update groups rather than users."),
+    help=(
+        "If true, update groups rather than users. The provided "
+        "IDs should be group IDs. (Not yet implemented)"
+    ),
 )
-@click.option("-s", "--source", default="knowledgeCommons")
-@click.option("-e", "--by-email", is_flag=True, default=False)
-@click.option("-n", "--by-username", is_flag=True, default=False)
+@click.option(
+    "-s",
+    "--source",
+    default="knowledgeCommons",
+    help=(
+        "Remote source name. Should be the same as the saml IDP listed in "
+        "the UserIdentity table."
+    ),
+)
+@click.option(
+    "-e",
+    "--by-email",
+    is_flag=True,
+    default=False,
+    help=(
+        "Update by email address. If true, the provided ID(s) should be "
+        "email addresses."
+    ),
+)
+@click.option(
+    "-n",
+    "--by-username",
+    is_flag=True,
+    default=False,
+    help=(
+        "Update by username. If true, the provided ID(s) should be "
+        "usernames from the remote service."
+    ),
+)
 @with_appcontext
 def update_user_data(
     ids: list,
@@ -44,9 +71,29 @@ def update_user_data(
     If IDS are not specified, all records (either users or groups)
     will be updated from the specified remote service.
 
+    IDS can be a list of user or group IDs, or a range of IDs
+    separated by a hyphen, e.g. 1-10.
+
+    Parameters:
+
+    ids (list): List of user or group IDs, or ranges of IDs.
+    groups (bool): Flag to indicate if groups should be updated.
+    source (str): The source of the remote data service. This should
+        match the SAML IDP listed in the UserIdentity table.
+    by_email (bool): Flag to update by email. If true, the ID(s) should
+        be one or more email addresses.
+    by_username (bool): Flag to update by remote username. If true,
+        the ID(s) should be one or more usernames from the remote
+        service.
+
+    Returns:
+
+    None
     """
     print(
-        f"Updating {'all ' if len(ids) == 0 else ''}{'users' if not groups else 'groups'} {','.join(ids)}"
+        f"Updating {'all ' if len(ids) == 0 else ''}"
+        f"{'users' if not groups else 'groups'} "
+        f"{','.join(ids)}"
     )
     counter = 0
     successes = []
@@ -146,7 +193,8 @@ def update_user_data(
         print(f"Timeouts occurred for {len(timed_out)} records: {timed_out}")
     if len(invalid_responses):
         print(
-            f"Invalid responses returned for {len(invalid_responses)} records: "
+            f"Invalid responses returned for "
+            f"{len(invalid_responses)} records: "
             f"{invalid_responses}"
         )
     if len(failures):

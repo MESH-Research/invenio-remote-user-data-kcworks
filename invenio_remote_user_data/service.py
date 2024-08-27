@@ -168,6 +168,7 @@ class RemoteGroupDataService(Service):
         response = requests.get(
             f"{idp_config['groups']['remote_endpoint']}{remote_group_id}",
             headers=headers,
+            timeout=30,
         )
         group_metadata = response.json()
 
@@ -366,10 +367,8 @@ class RemoteUserDataService(Service):
 
     def update_user_from_remote(
         self, identity, user_id: int, idp: str, remote_id: str, **kwargs
-    ) -> tuple[User, dict, list[str], dict]:
+    ) -> tuple[Optional[User], dict, list[str], dict]:
         """Main method to update user data from remote server.
-
-        This method is triggered by the
 
         Parameters:
             user_id (int): The user's id in the Invenio database.
@@ -380,7 +379,8 @@ class RemoteUserDataService(Service):
 
         Returns:
             tuple: A tuple containing
-                1. The updated user object from the Invenio database.
+                1. The updated user object from the Invenio database. If an
+                error is encountered, this will be None.
                 2. A dictionary of the updated user data (including only
                 the changed keys and values).
                 3. A list of the updated user's group memberships.
@@ -404,14 +404,48 @@ class RemoteUserDataService(Service):
             remote_data = self.fetch_from_remote_api(
                 user, idp, remote_id, **kwargs
             )
+            self.logger.debug("Remote data: " + pformat(remote_data))
             new_data, user_changes, groups_changes = [{}, {}, {}]
-            if remote_data:
+            if "users" in remote_data.keys():
                 new_data, user_changes, groups_changes = (
                     self.compare_remote_with_local(
                         user, remote_data, idp, **kwargs
                     )
                 )
-            if new_data:
+                self.logger.debug("New data: " + pformat(new_data))
+                self.logger.debug("User changes: " + pformat(user_changes))
+                self.logger.debug("Group changes: " + pformat(groups_changes))
+            elif "error" in remote_data.keys():
+                if remote_data["error"]["reason"] == "not_found":
+                    self.logger.error(
+                        f"User {remote_id} not found on remote server."
+                    )
+                    return user, remote_data, [], {}
+                elif remote_data["error"]["reason"] == "timeout":
+                    self.logger.error(
+                        "Timeout fetching user data from remote server."
+                    )
+                    return user, remote_data, [], {}
+                elif remote_data["error"]["reason"] == "invalid_response":
+                    self.logger.error(
+                        "Invalid response fetching user data from remote server."
+                    )
+                    return user, remote_data, [], {}
+                else:
+                    self.logger.error(
+                        "Error fetching user data from remote server."
+                    )
+                    return (
+                        user,
+                        {"error": "Unknown error fetching user data"},
+                        [],
+                        {},
+                    )
+            if new_data and (
+                len(user_changes.keys()) > 0
+                or len(groups_changes.get("added_groups", [])) > 0
+                or len(groups_changes.get("dropped_groups", [])) > 0
+            ):
                 updated_data = self.update_local_user_data(
                     user, new_data, user_changes, groups_changes, **kwargs
                 )
@@ -421,22 +455,30 @@ class RemoteUserDataService(Service):
                         *groups_changes["unchanged_groups"],
                     ]
                 )
-            self.logger.info(
-                "User data successfully updated from remote "
-                f"server: {updated_data}"
-            )
-            return (
-                user,
-                updated_data["user"],
-                updated_data["groups"],
-                groups_changes,
-            )
+                self.logger.info(
+                    "User data successfully updated from remote "
+                    f"server: {updated_data}"
+                )
+                return (
+                    user,
+                    updated_data["user"],
+                    updated_data["groups"],
+                    groups_changes,
+                )
+            else:
+                self.logger.info("No remote changes to user data.")
+                return (
+                    user,
+                    user_changes,
+                    [],
+                    groups_changes,
+                )
         except Exception as e:
             self.logger.error(
                 f"Error updating user data from remote server: {repr(e)}"
             )
             self.logger.error(traceback.format_exc())
-            return None, None, None, None
+            return None, {"error": e}, [], {}
 
     def fetch_from_remote_api(
         self, user: User, idp: str, remote_id: str, tokens=None, **kwargs
@@ -479,30 +521,45 @@ class RemoteUserDataService(Service):
             if remote_api_token:
                 headers = {"Authorization": f"Bearer {remote_api_token}"}
             self.logger.debug(f"API URL: {api_url}")
-            response = callfunc(
-                api_url, headers=headers, verify=False, timeout=10
-            )
-            if response.status_code != 200:
-                self.logger.error(
-                    f"Error fetching user data from remote API: {api_url}"
-                )
-                self.logger.error(
-                    "Response status code: " + str(response.status_code)
-                )
             try:
-                # remote_data['groups'] = {'status_code': response.status_code,
-                #                          'headers': response.headers,
-                #                          'json': response.json(),
-                #                          'text': response.text}
-                remote_data["users"] = response.json()
-            except requests.exceptions.JSONDecodeError:
-                self.logger.error(
-                    "JSONDecodeError: User group data API response was not"
-                    " JSON:"
+                response = callfunc(
+                    api_url, headers=headers, verify=False, timeout=30
                 )
-                # self.logger.debug(f'{response.text}')
+                if response.status_code != 200:
+                    self.logger.error(
+                        f"Error fetching user data from remote API: {api_url}"
+                    )
+                    self.logger.error(
+                        "Response status code: " + str(response.status_code)
+                    )
+                    if response.status_code == 404:
+                        return {
+                            "error": {"reason": "not_found"},
+                            "status_code": response.status_code,
+                            "text": response.text,
+                        }
+                try:
+                    remote_data["users"] = response.json()
+                except requests.exceptions.JSONDecodeError:
+                    self.logger.error(
+                        "JSONDecodeError: User data API response was not"
+                        " JSON:"
+                    )
+                    self.logger.error(response.text)
+                    return {
+                        "error": {"reason": "invalid_response"},
+                        "status_code": response.status_code,
+                        "text": response.text if response.text else "No text",
+                    }
 
-        return remote_data
+                return remote_data
+
+            except requests.exceptions.ReadTimeout:
+                return {
+                    "error": {"reason": "timeout"},
+                    "status_code": 408,
+                    "text": "Request timed out",
+                }
 
     def compare_remote_with_local(
         self, user: User, remote_data: dict, idp: str, **kwargs
@@ -547,9 +604,10 @@ class RemoteUserDataService(Service):
             groups = users.get("groups")
             if groups:
                 remote_groups = []
+                groups = [g for g in groups if g["name"]]
                 for g in groups:
                     # Fetch group metadata from remote service
-                    slug = make_base_group_slug(g["name"])
+                    # slug = make_base_group_slug(g["name"])
                     role_string = f"{idp}---{g['id']}|{g['role']}"
                     remote_groups.append(role_string)
                 if remote_groups != local_groups:

@@ -51,7 +51,10 @@ def update_user_data(
     counter = 0
     successes = []
     failures = []
-    not_found = []
+    not_found_remote = []
+    not_found_local = []
+    timed_out = []
+    invalid_responses = []
 
     # handle ranges
     expanded_ids = []
@@ -86,7 +89,7 @@ def update_user_data(
                     ).one_or_none()
                 if not user_ident:
                     print(f"No remote registration found for {i}")
-                    not_found.append(i)
+                    not_found_local.append(i)
                     break
 
                 update_result = user_data_service.update_user_from_remote(
@@ -103,20 +106,53 @@ def update_user_data(
             ).one_or_none()
             if not user_ident:
                 print(f"No remote registration found for {u.id}")
-                not_found.append(i)
+                not_found_local.append(i)
                 break
 
-            update_result = user_data_service.update_user_from_remote(
-                system_identity, user_ident.id_user, source, user_ident.id
-            )
-            pprint(update_result)
-            successes.append(u.id)
+            try:
+                update_result = user_data_service.update_user_from_remote(
+                    system_identity, user_ident.id_user, source, user_ident.id
+                )
+                if not update_result:
+                    print(f"Failed to update {u.id}")
+                    failures.append(u.id)
+                if update_result[1].get("error", "") == "not_found":
+                    not_found_remote.append(u.id)
+                elif update_result[1].get("error", "") == "timeout":
+                    print(f"Timeout updating {u.id}")
+                    timed_out.append(u.id)
+                elif update_result[1].get("error", "") == "invalid_response":
+                    print(f"Invalid response updating {u.id}")
+                    invalid_responses.append(u.id)
+                elif update_result:
+                    print(f"Updated user {u.id}")
+                    pprint(update_result)
+                    successes.append(u.id)
+            except Exception:
+                print(f"Failed to update {u.id}")
+                failures.append(u.id)
     print(f"All done updating {counter} {'users' if not groups else 'groups'}")
-    if len(not_found):
-        print(f"No remote registration found for {len(not_found)} records")
+    if len(not_found_local):
+        print(
+            f"No remote registration found in Invenio for "
+            f"{len(not_found_local)} records: {not_found_local}"
+        )
+    if len(not_found_remote):
+        print(
+            f"No user found on remote service for {len(not_found_remote)}"
+            f"records: {not_found_remote}"
+        )
+    if len(timed_out):
+        print(f"Timeouts occurred for {len(timed_out)} records: {timed_out}")
+    if len(invalid_responses):
+        print(
+            f"Invalid responses returned for {len(invalid_responses)} records: "
+            f"{invalid_responses}"
+        )
     if len(failures):
         print(
-            f"{len(failures)} updates failed for the following records: {failures}"
+            f"{len(failures)} updates failed for the following records: "
+            f"{failures}"
         )
 
 

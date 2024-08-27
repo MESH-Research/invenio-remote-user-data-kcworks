@@ -599,6 +599,7 @@ class RemoteUserDataService(Service):
                 f"Some data in db was invalid. Starting fresh with incoming "
                 "data."
             )
+            initial_user_data["user_profile"] = {}
 
         new_data: dict = {"active": True}
 

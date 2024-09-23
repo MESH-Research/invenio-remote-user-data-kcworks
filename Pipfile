@@ -14,7 +14,7 @@ invenio-queues = "*"
 requests-mock = "*"
 deepdiff = "*"
 celery = "*"
-invenio-groups = {file = "./dependencies/invenio-group-collections", editable = true}
+invenio-group-collections = {file = "./invenio_remote_user_data_kcworks/dependencies/invenio-group-collections", editable = true}
 invenio-remote-user-data-kcworks = {file = ".", editable = true}
 
 [dev-packages]

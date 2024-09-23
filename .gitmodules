@@ -1,4 +1,4 @@
-[submodule "dependencies/invenio-group-collections"]
-	path = dependencies/invenio-group-collections
+[submodule "invenio_remote_user_data_kcworks/dependencies/invenio-group-collections"]
+	path = invenio_remote_user_data_kcworks/dependencies/invenio-group-collections
 	url = https://github.com/MESH-Research/invenio-group-collections.git
 	branch = main

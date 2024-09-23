@@ -1,6 +1,6 @@
 [project]
 name = "invenio-remote-user-data-kcworks"
-version = "0.5.2-beta1"
+version = "0.5.3-beta0"
 description = "An extension to draw user data from remote sources into the Knowledge Commons Works InvenioRDM instance"
 readme = "README.md"
 authors = [{ name = "Mesh Research", email = "scottia4@msu.edu" }]
@@ -105,7 +105,7 @@ requires = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.bumpver]
-current_version = "0.5.2-beta1"
+current_version = "0.5.3-beta0"
 version_pattern = "MAJOR.MINOR.PATCH[-TAGNUM]"
 commit_message = "Bumping version {old_version} -> {new_version}."
 tag_message = "{new_version}"
@@ -118,18 +118,16 @@ push = true
 
 [tool.bumpver.file_patterns]
 "pyproject.toml" = [
-    'current_version = "{version}"',
-    'version = "{version}"',
+    '^version = "{version}"',
 ]
 "README.md" = [
-    '{version}"',
-    "{pep440_version}"
+    '^Version {version}"',
 ]
 VERSION = [
-    "{version}",
+    '^"{version}"',
 ]
 "invenio_remote_user_data_kcworks/__init__.py" = [
-    '__version__ = "{version}"',
+    '^__version__ = "{version}"',
 ]
 
 [tool.pydocstyle]

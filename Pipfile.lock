@@ -1354,7 +1354,7 @@
             ],
             "version": "==1.2.0"
         },
-        "invenio-remote-user-data": {
+        "invenio-remote-user-data-kcworks": {
             "editable": true,
             "path": "."
         },

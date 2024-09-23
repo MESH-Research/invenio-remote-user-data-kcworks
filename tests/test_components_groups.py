@@ -1,11 +1,11 @@
 # from invenio_utilities_tuw.utils import get_user_by_identifier
-from invenio_remote_user_data.components.groups import (
+from invenio_remote_user_data_kcworks.components.groups import (
     GroupRolesComponent,
 )
 
 # from pprint import pprint
 
-from invenio_remote_user_data.proxies import (
+from invenio_remote_user_data_kcworks.proxies import (
     current_remote_user_data_service,
 )
 

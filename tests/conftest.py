@@ -2,7 +2,7 @@
 #
 # Copyright (C) 2023-4 Mesh Research
 #
-# invenio-remote-user-data is free software; you can redistribute
+# invenio-remote-user-data-kcworks is free software; you can redistribute
 # it and/or modify it under the terms of the MIT License; see LICENSE file
 # for more details.
 
@@ -64,7 +64,7 @@ def _(x):
 
 
 test_config = {
-    # "THEME_FRONTPAGE_TEMPLATE": "invenio_remote_user_data/base.html",
+    # "THEME_FRONTPAGE_TEMPLATE": "invenio_remote_user_data_kcworks/base.html",
     "SQLALCHEMY_DATABASE_URI": (
         "postgresql+psycopg2://invenio:invenio@localhost/invenio"
     ),

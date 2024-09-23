@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 #
-# This file is part of the invenio-remote-user-data package.
+# This file is part of the invenio-remote-user-data-kcworks package.
 # Copyright (C) 2023, MESH Research.
 #
-# invenio-remote-user-data is free software; you can redistribute it
+# invenio-remote-user-data-kcworks is free software; you can redistribute it
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
-"""View for an invenio-remote-user-data webhook receiver.
+"""View for an invenio-remote-user-data-kcworks webhook receiver.
 
 This view is used to receive webhook notifications from a remote IDP when
 user or group data has been updated on the remote server. The view is
@@ -123,11 +123,11 @@ from .signals import remote_data_updated
 
 class RemoteUserDataUpdateWebhook(MethodView):
     """
-    View class providing methods for the remote-user-data webhook api endpoint.
+    View class for the remote-user-data-kcworks webhook api endpoint.
     """
 
     # init_every_request = False  # FIXME: is this right?
-    view_name = "remote_user_data_webhook"
+    view_name = "remote_user_data_kcworks_webhook"
 
     def __init__(self):
         # self.webhook_token = os.getenv("REMOTE_USER_DATA_WEBHOOK_TOKEN")
@@ -292,7 +292,7 @@ def create_api_blueprint(app):
 
     with app.app_context():
         blueprint = Blueprint(
-            "invenio_remote_user_data",
+            "invenio_remote_user_data_kcworks",
             __name__,
             url_prefix="/webhooks/user_data_update",
         )

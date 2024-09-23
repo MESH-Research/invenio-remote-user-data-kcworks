@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 #
-# This file is part of the invenio-remote-user-data package.
+# This file is part of the invenio-remote-user-data-kcworks package.
 # Copyright (C) 2023, MESH Research.
 #
-# invenio-remote-user-data is free software; you can redistribute it
+# invenio-remote-user-data-kcworks is free software; you can redistribute it
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
@@ -28,7 +28,8 @@ def on_user_logged_in(_, user: User) -> None:
 
     with current_app.app_context():
         current_app.logger.info(
-            "invenio_remote_user_data.ext: user_logged_in signal received "
+            "invenio_remote_user_data_kcworks.ext: user_logged_in "
+            "signal received "
             f"for user {user.id}"
         )
         current_app.logger.debug(f"current_user: {current_user}")
@@ -66,7 +67,7 @@ def on_user_logged_in(_, user: User) -> None:
 
 
 class InvenioRemoteUserData(object):
-    """Flask extension for Invenio-remote-user-data.
+    """Flask extension for Invenio-remote-user-data-kcworks.
 
     Args:
         object (_type_): _description_
@@ -87,7 +88,7 @@ class InvenioRemoteUserData(object):
         self.init_config(app)
         self.init_services(app)
         self.init_listeners(app)
-        app.extensions["invenio-remote-user-data"] = self
+        app.extensions["invenio-remote-user-data-kcworks"] = self
 
     def init_config(self, app) -> None:
         """Initialize configuration for the extention.

@@ -15,12 +15,12 @@ from invenio_search.engine import dsl
 from invenio_search.utils import build_alias_name
 from invenio_users_resources.proxies import current_users_service
 from invenio_utilities_tuw.utils import get_identity_for_user
-from invenio_remote_user_data.components.groups import (
+from invenio_remote_user_data_kcworks.components.groups import (
     GroupRolesComponent,
 )
-from invenio_remote_user_data.proxies import (
+from invenio_remote_user_data_kcworks.proxies import (
     current_remote_user_data_service as user_data_service,
-    current_remote_group_data_service as group_data_service,
+    current_remote_group_service as group_data_service,
 )
 import json
 from pprint import pprint
@@ -1157,8 +1157,8 @@ def test_on_user_logged_in(
     client, app, db, user_factory, requests_mock, myuser
 ):
     """Test service initialization and signal triggers."""
-    assert "invenio-remote-user-data" in app.extensions
-    assert app.extensions["invenio-remote-user-data"].service
+    assert "invenio-remote-user-data-kcworks" in app.extensions
+    assert app.extensions["invenio-remote-user-data-kcworks"].service
 
     # mock the remote api endpoint
     # base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][

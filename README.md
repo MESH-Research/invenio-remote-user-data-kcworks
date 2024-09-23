@@ -1,6 +1,12 @@
-# Invenio extension for drawing user and groups data from a Remote API.
+# Invenio Remote User Data Service for Knowledge Commons Works
 
-This extension provides a service to draw user and groups data from a remote service associated with a SAML login ID provider. This is user data that cannot be derived from the SAML response itself at login, but must be pulled separately from an API endpoint exposed by the same service. This extension assumes the existence of two API endpoints exposed by the remote service: one for user data and one for group data.
+Version 0.5.2-beta1
+
+* Beta release *
+
+This extension for the Knowledge Commons Works installation of InvenioRDM provides a service to draw user and groups data from a remote service associated with a SAML login ID provider. This is user data that cannot be derived from the SAML response itself at login, but must be pulled separately from an API endpoint exposed by the same service. This extension assumes the existence of two API endpoints exposed by the remote service: one for user data and one for group data.
+
+Although this extension was developed for the Knowledge Commons Works installation of InvenioRDM, it could be adapted to other installations of InvenioRDM or other remote services. Most of the changes needed would be in the integration of group collection memberships via the `invenio_group_collections_kcworks` extension.
 
 ## Linking Invenio roles and collections with remote service groups
 
@@ -20,7 +26,7 @@ The service's update operations are triggered in two ways: automatically when a 
 
 ### Automatic update at login
 
-When a user logs in, the `invenio_remote_user_data` extension checks to see whether the current user logged in with a SAML provider. If so, it sends an API request to the appropriate remote API associated with that remote service (configured via a variable in the instance's `invenio.cfg` file) and stores or updates the user's data from the remote service in the user's Invenio account metadata.
+When a user logs in, the `invenio_remote_user_data_kcworks` extension checks to see whether the current user logged in with a SAML provider. If so, it sends an API request to the appropriate remote API associated with that remote service (configured via a variable in the instance's `invenio.cfg` file) and stores or updates the user's data from the remote service in the user's Invenio account metadata.
 
 Only user metadata updates take place automatically at login. These include updates to the user's group memberships on the remote service, but this user update operation does not update any of the metadata for the groups themselves. Group metadata updates are only triggered by the webhook signal.
 

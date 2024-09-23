@@ -7,20 +7,23 @@ from invenio_users_resources.proxies import (
     current_groups_service as current_groups,
     current_users_service as current_users,
 )
-from py import log
 import pytest
 import json
 import os
 
-from invenio_remote_user_data.components.groups import GroupRolesComponent
-from invenio_remote_user_data.service import RemoteUserDataService
+from invenio_remote_user_data_kcworks.components.groups import (
+    GroupRolesComponent,
+)
+from invenio_remote_user_data_kcworks.service import (
+    RemoteUserDataService,
+)
 
 
 def test_webhook_get(client, app, search_clear):
     """Test webhook."""
     response = client.get(
         url_for(
-            "invenio_remote_user_data.remote_user_data_webhook",
+            "invenio_remote_user_data_kcworks.remote_user_data_kcworks_webhook",
         )
     )
 
@@ -68,7 +71,9 @@ def test_webhook_get(client, app, search_clear):
                         "name": "Joe User",
                         "first_name": "Joe",
                         "last_name": "User",
-                        "institutional_affiliation": "Michigan State University",
+                        "institutional_affiliation": (
+                            "Michigan State University"
+                        ),
                         "orcid": "0000-0002-1825-0097",
                         "groups": [
                             {
@@ -163,7 +168,8 @@ def test_webhook_post(
         app.logger.debug(f"admin roles: {admin.user.roles}")
         response = client.post(
             url_for(
-                "invenio_remote_user_data.remote_user_data_webhook",
+                "invenio_remote_user_data_kcworks."
+                "remote_user_data_kcworks_webhook",
             ),
             data=json.dumps(payload),
             headers=headers,

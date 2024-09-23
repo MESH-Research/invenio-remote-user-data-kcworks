@@ -1,11 +1,7 @@
-[build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "invenio-remote-user-data"
-version = "0.0.1"
-description = "An extension to draw user data from remote sources into InvenioRDM"
+name = "invenio-remote-user-data-kcworks"
+version = "0.5.2-beta1"
+description = "An extension to draw user data from remote sources into the Knowledge Commons Works InvenioRDM instance"
 readme = "README.md"
 authors = [{ name = "Mesh Research", email = "scottia4@msu.edu" }]
 license = { file = "LICENSE" }
@@ -21,14 +17,21 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules"
 ]
 keywords = ["invenio", "inveniordm", "users", "research"]
-dependencies = [
-    "click>=7.0",
-    "invenio-app-rdm",
-    "invenio-search",
-    "opensearch-dsl",
-    "invenio-utilities-tuw",
-]
+
 requires-python = ">=3.9"
+dependencies = [
+    "celery",
+    "click",
+    "deepdiff",
+    "invenio-app-rdm[opensearch2]<13.0.0",
+    "invenio-groups",
+    "invenio-queues",
+    "invenio-search",
+    "invenio-utilities-tuw",
+    "opensearch-dsl",
+    "requests-mock",
+]
+
 
 [project.optional-dependencies]
 dev = [
@@ -40,34 +43,90 @@ dev = [
     "pytest-runner",
     "requests-mock",
 ]
-
+test = ["coverage"]
 
 [project.urls]
-Homepage = "https://github.com/MESH-Research/invenio-remote-user-data"
+Homepage = "https://github.com/MESH-Research/invenio-remote-user-data-kcworks"
 
+[project.scripts]
+user-data = "invenio_remote_user_data_kcworks.cli:cli"
+
+[project.entry-points."flask.commands"]
+user-data = "invenio_remote_user_data_kcworks.cli:cli"
+
+[project.entry-points."invenio_base.apps"]
+invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:InvenioRemoteUserData"
+
+[project.entry-points."invenio_base.api_apps"]
+invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:InvenioRemoteUserData"
+
+[project.entry-points."invenio_base.api_blueprints"]
+invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.views:create_api_blueprint"
+
+[project.entry-points."invenio_queues.queues"]
+invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.queues:declare_queues"
+
+[project.entry-points."invenio_celery.tasks"]
+invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.tasks"
 
 [tool.pytest.ini_options]
 addopts = "--doctest-glob='*.rst' --doctest-modules"
-testpaths = [ "tests", "invenio_remote_user_data" ]
+testpaths = [ "tests", "invenio_remote_user_data_kcworks" ]
+
+[tool.check-manifest]
+ignore = [
+  "* .mo",
+  "*.bin",
+  "*.gitkeep",
+  ".*-requirements.txt",
+  ".bzrignore",
+  ".DS_Store",
+  ".egg-info",
+  ".egg-info/*",
+  ".gitattributes",
+  ".github/*",
+  ".gitignore",
+  ".hgsigs",
+  ".hgtags",
+  ".hgignore",
+  ".travis.yml",
+  "Jenkinsfile",
+  "PKG-INFO",
+  "setup.cfg"
+]
 
 
-[project.scripts]
-user-data = "invenio_remote_user_data.cli:cli"
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
-[project.entry-points."flask.commands"]
-user-data = "invenio_remote_user_data.cli:cli"
+[tool.bumpver]
+current_version = "0.5.2-beta1"
+version_pattern = "MAJOR.MINOR.PATCH[-TAGNUM]"
+commit_message = "Bumping version {old_version} -> {new_version}."
+tag_message = "{new_version}"
+tag_scope = "default"
+pre_commit_hook = ""
+post_commit_hook = ""
+commit = true
+tag = true
+push = true
 
-[project.entry-points."invenio_base.apps"]
-invenio_remote_user_data = "invenio_remote_user_data.ext:InvenioRemoteUserData"
+[tool.bumpver.file_patterns]
+pyproject.toml = [
+    'current_version = "{version}"',
+    'version = "{version}"',
+]
+README.md = [
+    '{version}"',
+    "{pep440_version}"
+]
+VERSION = [
+    "{version}",
+]
+"invenio_remote_user_data_kcworks/__init__.py" = [
+    '__version__ = "{version}"',
+]
 
-[project.entry-points."invenio_base.api_apps"]
-invenio_remote_user_data = "invenio_remote_user_data.ext:InvenioRemoteUserData"
-
-[project.entry-points."invenio_base.api_blueprints"]
-invenio_remote_user_data = "invenio_remote_user_data.views:create_api_blueprint"
-
-[project.entry-points."invenio_queues.queues"]
-invenio_remote_user_data = "invenio_remote_user_data.queues:declare_queues"
-
-[project.entry-points."invenio_celery.tasks"]
-invenio_remote_user_data = "invenio_remote_user_data.tasks"
+[tool.pydocstyle]
+add_ignore = "D401"

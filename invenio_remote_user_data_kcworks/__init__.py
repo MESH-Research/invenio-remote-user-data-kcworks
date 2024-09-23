@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 #
-# This file is part of the invenio-remote-user-data package.
+# This file is part of the invenio-remote-user-data-kcworks package.
 # Copyright (C) 2023, MESH Research.
 #
-# invenio-remote-user-data is free software; you can redistribute it
+# invenio-remote-user-data-kcworks is free software; you can redistribute it
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
@@ -34,7 +34,7 @@ on the Invenio server via the `groups` service. If a group does not exist
 on the Invenio server, the `groups` service will handle creation of the
 group. If a user is the last member of a group and is removed, the
 `groups` service deletes the group (i.e., the invenio-accounts role).
-The `remote-user-data` service, though, only sends the signal for the
+The `remote-user-data-kcworks` service, though, only sends the signal for the
 `groups` service to add or remove the user from the group.
 
 Note that the group membership updates are one-directional. If a user is
@@ -106,7 +106,7 @@ E.g.,
 Logging
 -------
 
-The `remote-user-data` extension will log each POST request to the webhook
+The `remote-user-data-kcworks` extension will log each POST request to the webhook
 endpoint, each signal received, and each task initiated to update the data.
 These logs will be written to a dedicated log file,
 `logs/remote_data_updates.log`.
@@ -229,6 +229,6 @@ Other environment variables
 from __future__ import absolute_import, print_function
 from .ext import InvenioRemoteUserData
 
-__version__ = "1.0.0a"
+__version__ = "0.5.2-beta1"
 
 __all__ = ("__version__", "InvenioRemoteUserData")

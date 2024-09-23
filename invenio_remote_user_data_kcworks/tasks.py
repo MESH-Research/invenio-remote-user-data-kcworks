@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 #
-# This file is part of the invenio-remote-user-data package.
+# This file is part of the invenio-remote-user-data-kcworks package.
 # Copyright (C) 2023, MESH Research.
 #
-# invenio-remote-user-data is free software; you can redistribute it
+# invenio-remote-user-data-kcworks is free software; you can redistribute it
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
@@ -17,7 +17,7 @@ from invenio_access.permissions import system_identity
 from invenio_accounts.models import UserIdentity  # Role,
 from .proxies import (
     current_remote_user_data_service,
-    current_remote_group_data_service,
+    current_remote_group_service,
 )
 
 task_logger = get_task_logger(__name__)
@@ -60,6 +60,6 @@ def do_group_data_update(idp, remote_id, **kwargs):
         task_logger.info(dir(task_logger))
         task_logger.info(task_logger.handlers)
         app.logger.info(task_logger.handlers)
-        service = current_remote_group_data_service
+        service = current_remote_group_service
         service.update_group_from_remote(system_identity, idp, remote_id)
         return True

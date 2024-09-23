@@ -4,22 +4,27 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-invenio-app-rdm = "<13.0.0"
-pytest = "*"
-pytest-invenio = "*"
-invenio-search = "*"
-opensearch-dsl = "*"
-invenio-utilities-tuw = "*"
-invenio-queues = "*"
-requests-mock = "*"
-deepdiff = "*"
 celery = "*"
+deepdiff = "*"
+invenio-app-rdm = "<13.0.0"
 invenio-group-collections = {file = "./invenio_remote_user_data_kcworks/dependencies/invenio-group-collections", editable = true}
+invenio-queues = "*"
 invenio-remote-user-data-kcworks = {file = ".", editable = true}
-build = "*"
-twine = "*"
+invenio-search = "*"
+invenio-utilities-tuw = "*"
+opensearch-dsl = "*"
 
 [dev-packages]
+build = "*"
+bumpver = "*"
+check-manifest = "*"
+pip-tools = "*"
+pipenv = "*"
+pytest = "*"
+pytest-invenio = "*"
+pytest-runner = "*"
+requests-mock = "*"
+twine = "*"
 
 [requires]
 python_version = ">=3.9"

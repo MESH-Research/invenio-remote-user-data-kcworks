@@ -7,6 +7,7 @@ authors = [{ name = "Mesh Research", email = "scottia4@msu.edu" }]
 license = { file = "LICENSE" }
 classifiers = [
     "License :: OSI Approved :: MIT License",
+    "Development Status :: 4 - Beta",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
@@ -95,7 +96,7 @@ ignore = [
   "*.lock",
   "Pipfile",
   ".vscode/*",
-  "invenio_remote_user_data_kcworks/dependencies/*"
+  "invenio_remote_user_data_kcworks/dependencies/invenio-group-collections/*"
 ]
 
 
@@ -116,11 +117,11 @@ tag = true
 push = true
 
 [tool.bumpver.file_patterns]
-pyproject.toml = [
+"pyproject.toml" = [
     'current_version = "{version}"',
     'version = "{version}"',
 ]
-README.md = [
+"README.md" = [
     '{version}"',
     "{pep440_version}"
 ]

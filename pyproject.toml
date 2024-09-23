@@ -91,7 +91,10 @@ ignore = [
   ".travis.yml",
   "Jenkinsfile",
   "PKG-INFO",
-  "setup.cfg"
+  "setup.cfg",
+  "*.lock",
+  "Pipfile",
+  ".vscode/*"
 ]
 
 

@@ -16,6 +16,8 @@ deepdiff = "*"
 celery = "*"
 invenio-group-collections = {file = "./invenio_remote_user_data_kcworks/dependencies/invenio-group-collections", editable = true}
 invenio-remote-user-data-kcworks = {file = ".", editable = true}
+build = "*"
+twine = "*"
 
 [dev-packages]
 

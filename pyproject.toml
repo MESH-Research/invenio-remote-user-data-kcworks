@@ -94,7 +94,8 @@ ignore = [
   "setup.cfg",
   "*.lock",
   "Pipfile",
-  ".vscode/*"
+  ".vscode/*",
+  "invenio_remote_user_data_kcworks/dependencies/*"
 ]
 
 

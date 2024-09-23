@@ -3,6 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Virtual environment
+.venv/
+.python-version
+
 # Mac files
 .DS_Store
 

@@ -1,0 +1,4 @@
+[submodule "dependencies/invenio-group-collections"]
+	path = dependencies/invenio-group-collections
+	url = https://github.com/MESH-Research/invenio-group-collections.git
+	branch = main

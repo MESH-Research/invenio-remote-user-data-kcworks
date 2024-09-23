@@ -11,11 +11,11 @@ invenio-search = "*"
 opensearch-dsl = "*"
 invenio-utilities-tuw = "*"
 invenio-queues = "*"
-invenio-remote-user-data-kcworks = {editable = true, path = "."}
 requests-mock = "*"
 deepdiff = "*"
 celery = "*"
-invenio-groups = {file = "../invenio-groups", editable = true}
+invenio-groups = {file = "./dependencies/invenio-group-collections", editable = true}
+invenio-remote-user-data-kcworks = {file = ".", editable = true}
 
 [dev-packages]
 

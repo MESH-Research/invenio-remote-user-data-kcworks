@@ -24,12 +24,11 @@ dependencies = [
     "click",
     "deepdiff",
     "invenio-app-rdm[opensearch2]<13.0.0",
-    "invenio-groups",
+    "invenio-group-collections",
     "invenio-queues",
     "invenio-search",
     "invenio-utilities-tuw",
     "opensearch-dsl",
-    "requests-mock",
 ]
 
 

@@ -85,7 +85,6 @@ ignore = [
   "*.lock",
   "Pipfile",
   ".vscode/*",
-  "invenio_remote_user_data_kcworks/dependencies/invenio-group-collections/*"
 ]
 
 
@@ -108,6 +107,7 @@ push = true
 [tool.bumpver.file_patterns]
 "pyproject.toml" = [
     '^version = "{version}"',
+    '^current_version = "{version}"',
 ]
 "README.md" = [
     '^Version {version}',

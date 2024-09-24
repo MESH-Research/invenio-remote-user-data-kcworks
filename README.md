@@ -175,3 +175,35 @@ REMOTE_USER_DATA_WEBHOOK_TOKEN (SECRET!! DO NOT place in config file!!)
 Other environment variables
 
     The names of the environment variables for the security tokens for API requests to each remote ID provider should be set in the REMOTE_USER_DATA_API_ENDPOINTS configuration variable. The values of these variables should be set in the .env file in the root directory of the Invenio instance or set in the server system environment.
+
+## Developing this Extension
+
+### Versioning
+
+This project uses semantic versioning with a pre-release tag where appropriate. (For an explanation of semantic versioning, see [semver.org](https://semver.org/) and [this Medium article](https://medium.com/@jteodoro/gently-introduction-to-semantic-versioning-f4e015956c8c).) Alpha and beta releases are indicated by the presence of an "-alpha1" or "-beta1" suffix to the version number.
+
+#### Updating the version number
+
+The version number is managed by the bumpver tool, which is configured in the pyproject.toml file. To update to a new major version (a breaking change, not backwards compatible), run
+
+```shell
+pipenv run bumpver update --major
+```
+
+To update to a new minor version (a new feature, backwards compatible), run
+
+```shell
+pipenv run bumpver update --minor
+```
+
+To update to a new patch version (a bug fix, backwards compatible), run
+
+```shell
+pipenv run bumpver update --patch
+```
+
+To update to a new alpha or beta version, run
+
+```shell
+pipenv run bumpver update --tag
+```

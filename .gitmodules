@@ -2,3 +2,11 @@
 	path = invenio_remote_user_data_kcworks/dependencies/invenio-group-collections
 	url = https://github.com/MESH-Research/invenio-group-collections.git
 	branch = main
+[submodule "invenio_remote_user_data_kcworks/dependencies/invenio-records-resources"]
+	path = invenio_remote_user_data_kcworks/dependencies/invenio-records-resources
+	url = https://github.com/MESH-Research/invenio-records-resources.git
+	branch = local-working
+[submodule "invenio_remote_user_data_kcworks/dependencies/invenio-communities"]
+	path = invenio_remote_user_data_kcworks/dependencies/invenio-communities
+	url = https://github.com/MESH-Research/invenio-communities.git
+	branch = local-working

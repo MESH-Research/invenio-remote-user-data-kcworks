@@ -20,15 +20,21 @@ from invenio_access.permissions import superuser_access, system_identity
 from invenio_accounts.testutils import login_user_via_session
 from invenio_administration.permissions import administration_access_action
 from invenio_app.factory import create_api  # create_app as create_ui_api
-from invenio_communities.proxies import current_communities
+from invenio_communities.proxies import (
+    current_communities,
+)
 from invenio_oauthclient.models import UserIdentity
 from invenio_oauth2server.models import Token
 from invenio_queues.proxies import current_queues
-from invenio_records_resources.services.custom_fields import TextCF
+from invenio_records_resources.services.custom_fields import (
+    TextCF,
+)
 from invenio_records_resources.services.custom_fields.errors import (
     CustomFieldsException,
 )
-from invenio_records_resources.services.custom_fields.mappings import Mapping
+from invenio_records_resources.services.custom_fields.mappings import (
+    Mapping,
+)
 from invenio_records_resources.services.custom_fields.validate import (
     validate_custom_fields,
 )

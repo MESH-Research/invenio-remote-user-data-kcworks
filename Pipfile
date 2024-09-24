@@ -7,12 +7,11 @@ name = "pypi"
 celery = "*"
 deepdiff = "*"
 invenio-app-rdm = "<13.0.0"
-invenio-group-collections = {file = "./invenio_remote_user_data_kcworks/dependencies/invenio-group-collections", editable = true}
 invenio-queues = "*"
-invenio-remote-user-data-kcworks = {file = ".", editable = true}
 invenio-search = "*"
 invenio-utilities-tuw = "*"
 opensearch-dsl = "*"
+invenio-remote-user-data-kcworks = {file = ".", editable = true}
 
 [dev-packages]
 build = "*"

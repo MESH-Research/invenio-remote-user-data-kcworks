@@ -4,7 +4,9 @@ from invenio_access import action_factory, Permission
 from invenio_administration.generators import Administration
 
 # from invenio_administration.permissions import administration_access_action
-from invenio_communities.permissions import CommunityPermissionPolicy
+from invenio_communities.permissions import (
+    CommunityPermissionPolicy,
+)
 from invenio_communities.generators import (
     AllowedMemberTypes,
     CommunityCurators,
@@ -16,7 +18,9 @@ from invenio_communities.generators import (
 # FIXME: This is a temporary hack since the GroupsEnabled generator
 # has moved
 try:
-    from invenio_users_resources.services.generators import GroupsEnabled
+    from invenio_users_resources.services.generators import (
+        GroupsEnabled,
+    )
 except ImportError:
     from invenio_communities.generators import GroupsEnabled
 from invenio_records_permissions import BasePermissionPolicy

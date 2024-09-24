@@ -14,7 +14,7 @@ from pprint import pformat
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import User, UserIdentity
 from invenio_accounts.proxies import current_accounts
-from invenio_group_collections.proxies import (
+from invenio_group_collections_kcworks.proxies import (
     current_group_collections_service,
 )  # noqa
 from invenio_queues.proxies import current_queues
@@ -136,7 +136,7 @@ class RemoteGroupDataService(Service):
         they will not be created. If the group's collection exists,
         its metadata will be updated. If the group's collection
         does not exist, it will NOT be created. Creation of group
-        collections is handled by the `invenio_group_collections` service.
+        collections is handled by the `invenio_group_collections_kcworks` service.
 
         If the update uncovers deleted group collections, the method will
         not update them. Instead, it will return a value of "deleted" for
@@ -241,7 +241,7 @@ class RemoteGroupDataService(Service):
         """Delete roles for a remote group if there is no corresponding group.
 
         If a group collection exists for the remote group, it will be
-        disowned using the invenio_group_collections module. Its metadata
+        disowned using the invenio_group_collections_kcworks module. Its metadata
         will be updated to remove the link to the remote collection.
         Its role-based memberships will be replaced by individual memberships
         for each currently-assigned user.

@@ -20,7 +20,20 @@ classifiers = [
 keywords = ["invenio", "inveniordm", "users", "research"]
 
 requires-python = ">=3.9"
-dynamic = ["dependencies"]
+
+dependencies = [
+    "invenio-records-resources",
+    "invenio-communities",
+    "invenio-group-collections-kcworks",
+    "celery",
+    "click",
+    "deepdiff",
+    "invenio-app-rdm",
+    "invenio-queues",
+    "invenio-search",
+    "invenio-utilities-tuw",
+    "opensearch-dsl",
+]
 
 [project.optional-dependencies]
 dev = [

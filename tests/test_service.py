@@ -8,8 +8,8 @@ from invenio_accounts.proxies import current_accounts
 from invenio_accounts.testutils import login_user_via_session
 from invenio_communities.proxies import current_communities
 from invenio_communities.communities.records.api import Community
-from invenio_group_collections.proxies import current_group_collections_service
-from invenio_group_collections.utils import add_user_to_community
+from invenio_group_collections_kcworks.proxies import current_group_collections_service
+from invenio_group_collections_kcworks.utils import add_user_to_community
 from invenio_search import current_search_client
 from invenio_search.engine import dsl
 from invenio_search.utils import build_alias_name

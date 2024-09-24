@@ -1,6 +1,6 @@
 [project]
 name = "invenio-remote-user-data-kcworks"
-version = "0.5.6-beta0"
+version = "0.5.7-beta0"
 description = "An extension to draw user data from remote sources into the Knowledge Commons Works InvenioRDM instance"
 readme = "README.md"
 authors = [{ name = "Mesh Research", email = "scottia4@msu.edu" }]

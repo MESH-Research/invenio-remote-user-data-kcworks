@@ -8,5 +8,13 @@ setup(
         "invenio-records-resources @ file://./invenio_remote_user_data_kcworks/dependencies/invenio-records-resources",
         "invenio-communities @ file://./invenio_remote_user_data_kcworks/dependencies/invenio-communities",
         "invenio-group-collections @ file://./invenio_remote_user_data_kcworks/dependencies/invenio-group-collections",
+        "celery",
+        "click",
+        "deepdiff",
+        "invenio-app-rdm[opensearch2]<13.0.0",
+        "invenio-queues",
+        "invenio-search",
+        "invenio-utilities-tuw",
+        "opensearch-dsl",
     ],
 )

@@ -8,24 +8,12 @@
 # LICENSE file for more details.
 
 from flask import current_app as app
-from invenio_access.permissions import system_identity
 from invenio_accounts.models import Role, User
 from invenio_accounts.proxies import current_accounts
-from invenio_pidstore.errors import PIDDoesNotExistError
-from invenio_users_resources.proxies import (
-    current_groups_service,
-)
-from invenio_users_resources.resources.errors import (
-    PermissionDeniedError,
-)
-from invenio_users_resources.services.groups.results import (
-    GroupItem,
-    GroupList,
-)
 
 # from invenio_records_resources.services.uow import unit_of_work
 # , RecordCommitOp
-from invenio_records_resources.services.records.components import (
+from invenio_records_resources.services.records.components.base import (
     ServiceComponent,
 )
 from pprint import pformat

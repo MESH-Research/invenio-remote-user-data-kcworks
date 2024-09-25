@@ -22,13 +22,11 @@ keywords = ["invenio", "inveniordm", "users", "research"]
 requires-python = ">=3.9"
 
 dependencies = [
-    "invenio-records-resources",
-    "invenio-communities",
     "invenio-group-collections-kcworks",
     "celery",
     "click",
     "deepdiff",
-    "invenio-app-rdm",
+    "invenio-app-rdm<13.0.0",
     "invenio-queues",
     "invenio-search",
     "invenio-utilities-tuw",

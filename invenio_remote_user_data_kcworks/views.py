@@ -132,9 +132,6 @@ class RemoteUserDataUpdateWebhook(MethodView):
     def __init__(self):
         # self.webhook_token = os.getenv("REMOTE_USER_DATA_WEBHOOK_TOKEN")
         self.logger = app.logger
-        # self.logger = logger
-
-        self.logger.debug(f"decorators {self.decorators}")
 
     def post(self):
         """
@@ -143,13 +140,9 @@ class RemoteUserDataUpdateWebhook(MethodView):
         These are requests from a remote IDP indicating that user or group
         data has been updated on the remote server.
         """
-        self.logger.debug("****Received POST request to webhook endpoint")
-        # headers = request.headers
-        # bearer = headers.get("Authorization")
-        # token = bearer.split()[1]
-        # if token != self.webhook_token:
-        #     print("Unauthorized")
-        #     raise Unauthorized
+        self.logger.debug(
+            "****Received POST request to webhook endpoint again"
+        )
 
         try:
             data = request.get_json()
@@ -240,17 +233,19 @@ class RemoteUserDataUpdateWebhook(MethodView):
                         " do not exist"
                     )
                     self.logger.error(data["updates"])
-                    raise NotFound
+                    raise NotFound(
+                        "Updates attempted for unknown users or groups"
+                    )
                 elif not groups and bad_groups:
                     self.logger.error(
                         f"{idp} requested updates for groups that do not exist"
                     )
                     self.logger.error(data["updates"])
-                    raise NotFound
+                    raise NotFound("Updates attempted for unknown groups")
                 else:
                     self.logger.error(f"{idp} No valid events received")
                     self.logger.error(data["updates"])
-                    raise BadRequest
+                    raise BadRequest("No valid events received")
 
             # return error message after handling signals that are
             # properly formed
@@ -259,8 +254,10 @@ class RemoteUserDataUpdateWebhook(MethodView):
                 # completely rejected
                 raise BadRequest
         except KeyError:  # request is missing 'idp' or 'updates' keys
-            self.logger.error(f"Received malformed signal: {data}")
-            raise BadRequest
+            self.logger.error(f"Received malformed signal: {request.data}")
+            raise BadRequest(
+                "Received malformed signal. Missing 'idp' or 'updates' keys."
+            )
 
         return (
             jsonify(
@@ -294,16 +291,18 @@ def create_api_blueprint(app):
         blueprint = Blueprint(
             "invenio_remote_user_data_kcworks",
             __name__,
-            url_prefix="/webhooks/user_data_update",
+            # /api prefix already added because blueprint is registered
+            # on the api app
         )
 
         # routes = app.config.get("APP_RDM_ROUTES")
 
         blueprint.add_url_rule(
-            "",
+            "/webhooks/user_data_update",
             view_func=RemoteUserDataUpdateWebhook.as_view(
                 RemoteUserDataUpdateWebhook.view_name
             ),
+            methods=["GET", "POST"],
         )
 
         # Register error handlers
@@ -311,6 +310,12 @@ def create_api_blueprint(app):
             Forbidden,
             lambda e: make_response(
                 jsonify({"error": "Forbidden", "status": 403}), 403
+            ),
+        )
+        blueprint.register_error_handler(
+            BadRequest,
+            lambda e: make_response(
+                jsonify({"error": "Bad Request", "status": 400}), 400
             ),
         )
         blueprint.register_error_handler(

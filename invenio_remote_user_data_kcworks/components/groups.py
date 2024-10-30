@@ -49,7 +49,7 @@ class GroupRolesComponent(ServiceComponent):
     def get_current_members_of_group(group_name: str) -> list[User]:
         """fetch a list of the users assigned the given group role"""
         my_group_role = current_accounts.datastore.find_role(group_name)
-        app.logger.debug(f"got group role {my_group_role}")
+        # app.logger.debug(f"got group role {my_group_role}")
         return [user for user in my_group_role.users]
 
     def get_current_user_roles(self, user: Union[str, User]) -> list:
@@ -171,8 +171,8 @@ class GroupRolesComponent(ServiceComponent):
         group_name = (
             group_name if isinstance(group_name, str) else group_name.id
         )
-        app.logger.debug(f"removing from user {user.email}")
-        app.logger.debug(user.roles)
+        # app.logger.debug(f"removing from user {user.email}")
+        # app.logger.debug(user.roles)
         removed_user = current_accounts.datastore.remove_role_from_user(
             user, group_name
         )

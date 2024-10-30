@@ -159,10 +159,10 @@ class RemoteUserDataUpdateWebhook(MethodView):
 
             for e in data["updates"].keys():
                 if e in entity_types.keys():
-                    self.logger.debug(
-                        f"In POST view: Received {e} update signal from "
-                        f"{idp}: {data['updates'][e]}"
-                    )
+                    # self.logger.debug(
+                    #     f"In POST view: Received {e} update signal from "
+                    #     f"{idp}: {data['updates'][e]}"
+                    # )
                     for u in data["updates"][e]:
                         if u["event"] in entity_types[e]["events"]:
                             if e == "users":
@@ -218,7 +218,7 @@ class RemoteUserDataUpdateWebhook(MethodView):
                     f"Published {len(events)} events to queue and emitted"
                     " remote_data_updated signal"
                 )
-                self.logger.debug(events)
+                # self.logger.debug(events)
             else:
                 if not users and bad_users or not groups and bad_groups:
                     entity_string = ""

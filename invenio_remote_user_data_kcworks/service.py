@@ -640,7 +640,7 @@ class RemoteUserDataService(Service):
                         if r not in group_changes["dropped_groups"]
                     ]
             new_data["user_profile"] = initial_user_data["user_profile"]
-            self.logger.debug(f"users data: {pformat(users)}")
+            # self.logger.debug(f"users data: {pformat(users)}")
             new_data["user_profile"].update(
                 {
                     "full_name": users["name"],

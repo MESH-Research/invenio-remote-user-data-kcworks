@@ -32,7 +32,7 @@ def on_user_logged_in(_, user: User) -> None:
             "signal received "
             f"for user {user.id}"
         )
-        current_app.logger.debug(f"current_user: {current_user}")
+        # current_app.logger.debug(f"current_user: {current_user}")
         # if self._data_is_stale(identity.id) and not self.update_in_progress:
         # my_user_identity = UserIdentity.query.filter_by(
         #     id_user=identity.id

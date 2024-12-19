@@ -63,9 +63,7 @@ class RemoteGroupDataService(Service):
             when webhook is triggered.
             """
 
-            self.logger.debug(
-                "RemoteGroupDataService: webhook update signal received"
-            )
+            self.logger.debug("RemoteGroupDataService: webhook update signal received")
 
             for event in current_queues.queues["user-data-updates"].consume():
                 if event["entity_type"] == "groups" and event["event"] in [
@@ -75,10 +73,7 @@ class RemoteGroupDataService(Service):
                     celery_result = do_group_data_update.delay(  # noqa:F841
                         event["idp"], event["id"]
                     )  # type: ignore
-                elif (
-                    event["entity_type"] == "groups"
-                    and event["event"] == "deleted"
-                ):
+                elif event["entity_type"] == "groups" and event["event"] == "deleted":
                     raise NotImplementedError(
                         "Group role deletion from remote signal is not "
                         "yet implemented."
@@ -88,12 +83,7 @@ class RemoteGroupDataService(Service):
         self, starting_dict: dict, new_data: dict
     ) -> dict:
         """Update a dictionary of community metadata with new data."""
-        assert (
-            new_data["id"]
-            == starting_dict["custom_fields"]["kcr:commons_group_id"]
-        )
-        # self.logger.debug("Starting dict: " + pformat(starting_dict))
-        # self.logger.debug("New data: " + pformat(new_data))
+        assert new_data["id"] == starting_dict["custom_fields"]["kcr:commons_group_id"]
 
         metadata_updates = starting_dict["metadata"]
         custom_fields_updates = starting_dict["custom_fields"]
@@ -104,9 +94,7 @@ class RemoteGroupDataService(Service):
                     starting_dict["id"], new_data["avatar"]
                 )
             except AssertionError:
-                self.logger.error(
-                    f"Error uploading avatar for {new_data['id']} group."
-                )
+                self.logger.error(f"Error uploading avatar for {new_data['id']} group.")
 
         if "url" in new_data.keys():
             metadata_updates["website"] = new_data["url"]
@@ -164,9 +152,7 @@ class RemoteGroupDataService(Service):
         self.require_permission(identity, "trigger_update")
         results_dict = {}
         idp_config = self.endpoints_config[idp]
-        remote_api_token = os.environ[
-            idp_config["groups"]["token_env_variable_label"]
-        ]
+        remote_api_token = os.environ[idp_config["groups"]["token_env_variable_label"]]
 
         headers = {"Authorization": f"Bearer {remote_api_token}"}
         response = requests.get(
@@ -324,10 +310,7 @@ class RemoteUserDataService(Service):
             self.logger.info("%%%%% webhook signal received")
 
             for event in current_queues.queues["user-data-updates"].consume():
-                if (
-                    event["entity_type"] == "users"
-                    and event["event"] == "updated"
-                ):
+                if event["entity_type"] == "users" and event["event"] == "updated":
                     try:
                         # confirm that user exists in Invenio
                         my_user_identity = UserIdentity.query.filter_by(
@@ -343,10 +326,7 @@ class RemoteUserDataService(Service):
                             f'Cannot update: user {event["id"]} does not exist'
                             " in Invenio."
                         )
-                elif (
-                    event["entity_type"] == "groups"
-                    and event["event"] == "updated"
-                ):
+                elif event["entity_type"] == "groups" and event["event"] == "updated":
                     # TODO: implement group updates and group/user creation
                     pass
 
@@ -405,37 +385,26 @@ class RemoteUserDataService(Service):
         updated_data = {}
         try:
             user = current_accounts.datastore.get_user_by_id(user_id)
-            remote_data = self.fetch_from_remote_api(
-                user, idp, remote_id, **kwargs
-            )
+            remote_data = self.fetch_from_remote_api(user, idp, remote_id, **kwargs)
             new_data, user_changes, groups_changes = [{}, {}, {}]
             if "users" in remote_data.keys():
-                new_data, user_changes, groups_changes = (
-                    self.compare_remote_with_local(
-                        user, remote_data, idp, **kwargs
-                    )
+                new_data, user_changes, groups_changes = self.compare_remote_with_local(
+                    user, remote_data, idp, **kwargs
                 )
             elif "error" in remote_data.keys():
                 if remote_data["error"]["reason"] == "not_found":
-                    self.logger.error(
-                        f"User {remote_id} not found on remote server."
-                    )
+                    self.logger.error(f"User {remote_id} not found on remote server.")
                     return user, remote_data, [], {}
                 elif remote_data["error"]["reason"] == "timeout":
-                    self.logger.error(
-                        "Timeout fetching user data from remote server."
-                    )
+                    self.logger.error("Timeout fetching user data from remote server.")
                     return user, remote_data, [], {}
                 elif remote_data["error"]["reason"] == "invalid_response":
                     self.logger.error(
-                        "Invalid response fetching user data from remote "
-                        "server."
+                        "Invalid response fetching user data from remote " "server."
                     )
                     return user, remote_data, [], {}
                 else:
-                    self.logger.error(
-                        "Error fetching user data from remote server."
-                    )
+                    self.logger.error("Error fetching user data from remote server.")
                     return (
                         user,
                         {"error": "Unknown error fetching user data"},
@@ -475,9 +444,7 @@ class RemoteUserDataService(Service):
                     groups_changes,
                 )
         except Exception as e:
-            self.logger.error(
-                f"Error updating user data from remote server: {repr(e)}"
-            )
+            self.logger.error(f"Error updating user data from remote server: {repr(e)}")
             self.logger.error(traceback.format_exc())
             return None, {"error": e}, [], {}
 
@@ -503,14 +470,10 @@ class RemoteUserDataService(Service):
             users_config = self.endpoints_config[idp]["users"]
 
             remote_api_token = None
-            if (
-                tokens and "users" in tokens.keys()
-            ):  # allows injection for testing
+            if tokens and "users" in tokens.keys():  # allows injection for testing
                 remote_api_token = tokens["users"]
             else:
-                remote_api_token = os.environ[
-                    users_config["token_env_variable_label"]
-                ]
+                remote_api_token = os.environ[users_config["token_env_variable_label"]]
             if users_config["remote_identifier"] != "id":
                 remote_id = getattr(user, users_config["remote_identifier"])
             api_url = f'{users_config["remote_endpoint"]}{remote_id}'
@@ -523,9 +486,7 @@ class RemoteUserDataService(Service):
                 headers = {"Authorization": f"Bearer {remote_api_token}"}
             self.logger.debug(f"API URL: {api_url}")
             try:
-                response = callfunc(
-                    api_url, headers=headers, verify=False, timeout=30
-                )
+                response = callfunc(api_url, headers=headers, verify=False, timeout=30)
                 if response.status_code != 200:
                     self.logger.error(
                         f"Error fetching user data from remote API: {api_url}"
@@ -543,8 +504,7 @@ class RemoteUserDataService(Service):
                     remote_data["users"] = response.json()
                 except requests.exceptions.JSONDecodeError:
                     self.logger.error(
-                        "JSONDecodeError: User data API response was not"
-                        " JSON:"
+                        "JSONDecodeError: User data API response was not" " JSON:"
                     )
                     self.logger.error(response.text)
                     return {
@@ -593,6 +553,7 @@ class RemoteUserDataService(Service):
         }
         try:
             initial_user_data["user_profile"] = user.user_profile
+            self.logger.debug(f"Initial user profile: {user.user_profile}")
         except ValueError:
             self.logger.error(
                 f"Error fetching initial user profile data for user {user.id}. "
@@ -626,8 +587,7 @@ class RemoteUserDataService(Service):
                         "dropped_groups": [
                             g
                             for g in local_groups
-                            if g.split("---")[0] == idp
-                            and g not in remote_groups
+                            if g.split("---")[0] == idp and g not in remote_groups
                         ],
                         "added_groups": [
                             g for g in remote_groups if g not in local_groups
@@ -639,8 +599,7 @@ class RemoteUserDataService(Service):
                         for r in local_groups
                         if r not in group_changes["dropped_groups"]
                     ]
-            new_data["user_profile"] = initial_user_data["user_profile"]
-            # self.logger.debug(f"users data: {pformat(users)}")
+            new_data["user_profile"] = {**initial_user_data["user_profile"]}
             new_data["user_profile"].update(
                 {
                     "full_name": users["name"],
@@ -659,9 +618,9 @@ class RemoteUserDataService(Service):
             if users.get("orcid"):
                 new_data["user_profile"]["identifier_orcid"] = users["orcid"]
             idp_slug = "kc" if idp == "knowledgeCommons" else idp
-            new_data["user_profile"][f"identifier_{idp_slug}_username"] = (
-                users["username"]
-            )
+            new_data["user_profile"][f"identifier_{idp_slug}_username"] = users[
+                "username"
+            ]
             new_data["username"] = f'{idp}-{users["username"]}'
             new_data["email"] = users["email"]
             new_data["preferences"] = user.preferences
@@ -710,9 +669,7 @@ class RemoteUserDataService(Service):
             updated_data["user"] = user_changes
         else:
             updated_data["user"] = []
-        if group_changes.get("added_groups") or group_changes.get(
-            "dropped_groups"
-        ):
+        if group_changes.get("added_groups") or group_changes.get("dropped_groups"):
             updated_data["groups"] = self.update_invenio_group_memberships(
                 user, group_changes, **kwargs
             )
@@ -736,22 +693,15 @@ class RemoteUserDataService(Service):
         """
         grouper = GroupRolesComponent(self)
         updated_local_groups = [r.name for r in user.roles]
-        # self.logger.debug(
-        #     "Got changed groups: " + pformat(changed_memberships)
-        # )
         for group_name in changed_memberships["added_groups"]:
             group_role = grouper.find_or_create_group(group_name)
-            if (
-                group_role
-                and grouper.add_user_to_group(group_role, user) is not None
-            ):
+            if group_role and grouper.add_user_to_group(group_role, user) is not None:
                 updated_local_groups.append(group_role.name)
         for group_name in changed_memberships["dropped_groups"]:
             group_role = grouper.find_group(group_name)
             if (
                 group_role
-                and grouper.remove_user_from_group(group_role, user)
-                is not None
+                and grouper.remove_user_from_group(group_role, user) is not None
             ):
                 updated_local_groups.remove(group_role.name)
                 # NOTE: We don't delete the group role because that would

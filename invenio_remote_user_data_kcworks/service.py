@@ -377,7 +377,7 @@ class RemoteUserDataService(Service):
 
         # TODO: Can we refresh the user's identity if they're currently
         # logged in?
-        self.logger.info(
+        self.logger.warning(
             f"Updating data from remote server -- user: {user_id}; "
             f"idp: {idp};"
             f" remote_id: {remote_id}."
@@ -385,7 +385,7 @@ class RemoteUserDataService(Service):
         updated_data = {}
         try:
             user = current_accounts.datastore.get_user_by_id(user_id)
-            remote_data = self.fetch_from_remote_api(user, idp, remote_id, **kwargs)
+            remote_data = self.fetch_from_remote_api(idp, remote_id, **kwargs)
             new_data, user_changes, groups_changes = [{}, {}, {}]
             if "users" in remote_data.keys():
                 new_data, user_changes, groups_changes = self.compare_remote_with_local(
@@ -449,12 +449,11 @@ class RemoteUserDataService(Service):
             return None, {"error": e}, [], {}
 
     def fetch_from_remote_api(
-        self, user: User, idp: str, remote_id: str, tokens=None, **kwargs
+        self, idp: str, remote_id: str, tokens=None, **kwargs
     ) -> dict:
         """Fetch user data for the supplied user from the remote API.
 
         Parameters:
-            user (User): The user to be updated.
             idp (str): The SAML identity provider name.
             remote_id (str): The identifier for the user on the remote idp
                 service.
@@ -474,8 +473,6 @@ class RemoteUserDataService(Service):
                 remote_api_token = tokens["users"]
             else:
                 remote_api_token = os.environ[users_config["token_env_variable_label"]]
-            if users_config["remote_identifier"] != "id":
-                remote_id = getattr(user, users_config["remote_identifier"])
             api_url = f'{users_config["remote_endpoint"]}{remote_id}'
 
             callfuncs = {"GET": requests.get, "POST": requests.post}
@@ -513,6 +510,7 @@ class RemoteUserDataService(Service):
                         "text": response.text if response.text else "No text",
                     }
 
+                self.logger.debug(f"Remote data: {remote_data}")
                 return remote_data
 
             except requests.exceptions.ReadTimeout:
@@ -615,7 +613,7 @@ class RemoteUserDataService(Service):
                 new_data["user_profile"]["affiliations"] = users[
                     "institutional_affiliation"
                 ]
-            if users.get("orcid"):
+            if users.get("orcid") and users["orcid"] != "":
                 new_data["user_profile"]["identifier_orcid"] = users["orcid"]
             idp_slug = "kc" if idp == "knowledgeCommons" else idp
             new_data["user_profile"][f"identifier_{idp_slug}_username"] = users[

@@ -14,18 +14,37 @@ from celery import shared_task
 from celery.utils.log import get_task_logger
 from flask import current_app as app  # , session
 from invenio_access.permissions import system_identity
-from invenio_accounts.models import UserIdentity  # Role,
+from invenio_accounts.models import UserIdentity, User  # Role,
 from .proxies import (
     current_remote_user_data_service,
     current_remote_group_service,
 )
+from .errors import NoIDPFoundError
+from typing import Optional
 
 task_logger = get_task_logger(__name__)
 
 
 @shared_task(ignore_result=False)
-def do_user_data_update(user_id, idp=None, remote_id=None, **kwargs):
-    """Perform a user metadata update."""
+def do_user_data_update(
+    user_id: int, idp: Optional[str] = None, remote_id: Optional[str] = None, **kwargs
+) -> tuple[User, dict, list[str], dict]:
+    """Perform a user metadata update.
+
+    Args:
+        user_id: The local ID of the user to update.
+        idp: The remote service configuration to use for the update.
+        remote_id: The ID of the user on the remote system.
+
+    Returns:
+        A tuple containing
+        - the updated User object
+        - a dictionary of the updated user data (including only the changed
+          keys and values).
+        - A list of the updated user's group memberships.
+        - A dictionary of the changes to the user's group memberships (with
+          the keys "added_groups", "dropped_groups", and "unchanged_groups").
+    """
 
     with app.app_context():
         if not idp:
@@ -44,10 +63,25 @@ def do_user_data_update(user_id, idp=None, remote_id=None, **kwargs):
         # app.logger.info(task_logger.handlers)
         if idp:
             service = current_remote_user_data_service
-            service.update_user_from_remote(
-                system_identity, user_id, idp, remote_id
+
+            # tuple: A tuple containing
+            #     1. The updated user object from the Invenio database. If an
+            #     error is encountered, this will be None.
+            #     2. A dictionary of the updated user data (including only
+            #     the changed keys and values).
+            #     3. A list of the updated user's group memberships.
+            #     4. A dictionary of the changes to the user's group
+            #     memberships (with the keys "added_groups", "dropped_groups",
+            #     and "unchanged_groups").
+            user, updated_data, groups, groups_changes = (
+                service.update_user_from_remote(
+                    system_identity, user_id, idp, remote_id
+                )
             )
-        return True
+            task_logger.info(f"updated_data: {updated_data}")
+            return user, updated_data, groups, groups_changes
+        else:
+            raise NoIDPFoundError(f"No IDP found for user {user_id}")
 
 
 @shared_task(ignore_result=False)

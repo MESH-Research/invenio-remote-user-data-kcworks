@@ -513,7 +513,10 @@ class RemoteUserDataService(Service):
                 self.logger.debug(f"Remote data: {remote_data}")
                 return remote_data
 
-            except requests.exceptions.ReadTimeout:
+            except (
+                requests.exceptions.ReadTimeout,
+                requests.exceptions.ConnectTimeout,
+            ):
                 return {
                     "error": {"reason": "timeout"},
                     "status_code": 408,

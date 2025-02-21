@@ -707,12 +707,6 @@ class RemoteUserDataService(Service):
                 updated_local_groups.remove(group_role.name)
                 # NOTE: We don't delete the group role because that would
                 # potentially disrupt roles being used for collections
-                #
-                # remaining_members = grouper.get_current_members_of_group(
-                #     group_role.name
-                # )
-                # if not remaining_members:
-                #     grouper.delete_group(group_role.name)
         assert updated_local_groups == user.roles
 
         return updated_local_groups

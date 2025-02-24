@@ -707,6 +707,6 @@ class RemoteUserDataService(Service):
                 updated_local_groups.remove(group_role.name)
                 # NOTE: We don't delete the group role because that would
                 # potentially disrupt roles being used for collections
-        assert updated_local_groups == user.roles
+        assert updated_local_groups == [r.name for r in user.roles]
 
         return updated_local_groups

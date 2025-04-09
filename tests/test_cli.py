@@ -88,10 +88,9 @@ def test_cli_update_one(
     requests_mock,
     search_clear,
 ):
-    base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][
-        "knowledgeCommons"
-    ]["users"]["remote_endpoint"]
-    print(base_url)
+    # base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][
+    #     "knowledgeCommons"
+    # ]["users"]["remote_endpoint"]
 
     # mock the remote api endpoint
     # requests_mock.get(f"{base_url}/{remote_id}", json=return_payload)
@@ -103,8 +102,7 @@ def test_cli_update_one(
     if "groups" in return_payload.keys():
         for group in return_payload["groups"]:
             requests_mock.get(
-                f"https://hcommons-dev.org/wp-json/commons/v1/groups/"
-                f"{group['id']}",
+                f"https://hcommons-dev.org/wp-json/commons/v1/groups/" f"{group['id']}",
                 json={
                     "id": group["id"],
                     "name": group["name"],
@@ -113,9 +111,7 @@ def test_cli_update_one(
                 },
             )
 
-    myuser = user_factory(
-        email=user_email, confirmed_at=arrow.utcnow().datetime
-    )
+    myuser = user_factory(email=user_email, confirmed_at=arrow.utcnow().datetime)
     if not myuser.active:
         assert current_accounts.datastore.activate_user(myuser)
     UserIdentity.create(myuser, "knowledgeCommons", remote_id)
@@ -130,9 +126,7 @@ def test_cli_update_one(
     assert actual[1] == user_changes
     assert sorted(actual[2]) == sorted(new_groups)
     assert actual[3] == group_changes
-    myuser_confirm = current_users_service.read(
-        system_identity, myuser.id
-    ).data
+    myuser_confirm = current_users_service.read(system_identity, myuser.id).data
     pprint(myuser_confirm)
     assert {
         "username": myuser_confirm["username"],

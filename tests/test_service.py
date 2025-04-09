@@ -247,10 +247,9 @@ def test_update_user_from_remote_mock(
     search_clear,
 ):
     """Test updating user data from mocked remote API."""
-    base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][
-        "knowledgeCommons"
-    ]["users"]["remote_endpoint"]
-    print(base_url)
+    # base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][
+    #     "knowledgeCommons"
+    # ]["users"]["remote_endpoint"]
 
     # mock the remote api endpoint
     # requests_mock.get(f"{base_url}/{remote_id}", json=return_payload)

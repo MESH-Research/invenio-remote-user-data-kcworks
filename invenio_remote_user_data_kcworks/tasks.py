@@ -89,8 +89,6 @@ def do_group_data_update(idp, remote_id, **kwargs):
     """Perform a group metadata update."""
 
     with app.app_context():
-        # task_logger.debug("doing task&&&&&&&")
-        # print("doing task&&&&&&&")
         task_logger.info(dir(task_logger))
         task_logger.info(task_logger.handlers)
         app.logger.info(task_logger.handlers)

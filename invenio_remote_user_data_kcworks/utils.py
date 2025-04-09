@@ -55,16 +55,11 @@ def diff_between_nested_dicts(original, update):
     else:
         for key, value in update.items():
             if isinstance(value, dict):
-                diff[key] = diff_between_nested_dicts(
-                    original.get(key, {}), value
-                )
+                diff[key] = diff_between_nested_dicts(original.get(key, {}), value)
             elif isinstance(value, list):
-                print("comparing")
-                print(value)
-                print(original.get(key, []))
-                diff[key] = [
-                    i for i in value if i not in original.get(key, [])
-                ] + [x for x in original.get(key, []) if x not in value]
+                diff[key] = [i for i in value if i not in original.get(key, [])] + [
+                    x for x in original.get(key, []) if x not in value
+                ]
             else:
                 if original.get(key) != value:
                     diff[key] = value

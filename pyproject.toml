@@ -69,6 +69,12 @@ invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.queues:decl
 [project.entry-points."invenio_celery.tasks"]
 invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.tasks"
 
+[project.entry-points."invenio_base.finalize_app"]
+invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:finalize_app"
+
+[project.entry-points."invenio_base.api_finalize_app"]
+invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:finalize_app"
+
 [tool.pytest.ini_options]
 addopts = "--doctest-glob='*.rst' --doctest-modules"
 testpaths = [ "tests", "invenio_remote_user_data_kcworks" ]

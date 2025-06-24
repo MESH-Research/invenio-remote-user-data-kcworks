@@ -1,0 +1,190 @@
+"""This module provides functions and classes for interacting with the IDMS API."""
+
+import requests
+from flask import current_app, request
+from pydantic import BaseModel, HttpUrl
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class AcademicInterest(BaseModel):
+    """AcademicInterest is a Pydantic model of data associated with a user."""
+
+    id: int
+    text: str
+
+
+class Group(BaseModel):
+    """Group model representing a user's group membership."""
+
+    id: int
+    group_name: str
+    role: str
+    url: HttpUrl
+
+
+class Profile(BaseModel):
+    """Profile is a Pydantic model of a user."""
+
+    username: str
+    name: str
+    email: str
+    first_name: str
+    last_name: str
+    institutional_affiliation: str
+    orcid: str
+    academic_interests: list[AcademicInterest]
+    groups: list[Group]
+    url: HttpUrl | None = None
+
+
+class SubData(BaseModel):
+    """SubData is a Pydantic model for the user profile."""
+
+    sub: str
+    profile: Profile
+
+
+class Meta(BaseModel):
+    """Meta is a Pydantic model that represents the metadata of the response."""
+
+    authorized: bool
+
+
+class APIResponse(BaseModel):
+    """APIResponse is a Pydantic model that represents the API endpoint."""
+
+    data: list[SubData]
+    meta: Meta
+    next: str | None
+    previous: str | None
+
+
+def fetch_user_profile(
+    sub_id: str = None, kc_username: str = None
+) -> APIResponse | Profile:
+    """Fetch user profile data from the API endpoint.
+
+    Args:
+        sub_id: The subject ID to query for (exclusive)
+        kc_username: The username to query for (exclusive)
+
+    Returns:
+        APIResponse: Parsed response data
+
+    Raises:
+        requests.RequestException: If the API request fails
+        ValueError: If the bearer token is not found in environment variables
+    """
+    if not sub_id and not kc_username:
+        raise ValueError("sub_id or kc_username must be provided")
+
+    if sub_id and kc_username:
+        raise ValueError("sub_id and kc_username cannot both be provided")
+
+    # Get bearer token from environment variable
+    bearer_token = current_app.config.get("STATIC_BEARER_TOKEN")
+
+    if not bearer_token:
+        raise ValueError("STATIC_BEARER_TOKEN environment variable not found")
+
+    # Prepare headers
+    headers = {
+        "Authorization": f"Bearer {bearer_token}",
+        "Content-Type": "application/json",
+    }
+
+    # Build the API endpoint URL
+    base_api_url = current_app.config.get("IDMS_BASE_API_URL")
+
+    if sub_id:
+        url = f"{base_api_url}subs/?sub={sub_id}"
+    else:
+        url = f"{base_api_url}users/{kc_username}/"
+
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()  # Raises an HTTPError for bad responses
+
+        # Parse JSON response
+        json_data = response.json()
+
+        # Parse with Pydantic
+        # if we have a sub_id we expect an APIResponse object that has a
+        # sub and profile. If we have a kc_username we expect a Profile object.
+        if sub_id:
+            parsed_response = APIResponse(**json_data)
+        else:
+            parsed_response = Profile(**json_data)
+
+        return parsed_response
+
+    except requests.RequestException:
+        message = "API request failed"
+        logger.exception(message)
+        raise
+    except Exception:
+        message = "Error parsing response"
+        logger.exception(message)
+        raise
+
+
+def update_token_information(
+    access_token: str,
+    refresh_token: str,
+    user_name: str,
+    app: str = "Works",
+    timeout: int = 30,
+) -> requests.Response:
+    """Make a POST API request with token data for storage and revocation.
+
+    Args:
+        access_token: User's access token
+        refresh_token: User's refresh token
+        user_name: Username to send
+        app: Application name (defaults to "Profiles")
+        timeout: Request timeout in seconds
+
+    Returns:
+        requests.Response object
+
+    Raises:
+        requests.RequestException: If the request fails
+    """
+    # Get user agent from current request
+    user_agent = request.headers.get("User-Agent", "Unknown")
+
+    base_api_url = current_app.config.get("IDMS_BASE_API_URL")
+    api_url = f"{base_api_url}tokens/"
+
+    # Get bearer token from environment variable
+    bearer_token = current_app.config.get("STATIC_BEARER_TOKEN")
+
+    if not bearer_token:
+        raise ValueError("STATIC_BEARER_TOKEN environment variable not found")
+
+    headers = {
+        "Authorization": f"Bearer {bearer_token}",
+        "Content-Type": "application/json",
+    }
+
+    # Prepare the payload
+    payload = {
+        "user_agent": user_agent,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "app": app,
+        "user_name": user_name,
+    }
+
+    # Make the POST request
+    response = requests.post(
+        api_url, json=payload, headers=headers, timeout=timeout
+    )
+
+    # Raise an exception if the request fails
+    response.raise_for_status()
+
+    return response

@@ -14,6 +14,7 @@ from pprint import pformat
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import User, UserIdentity
 from invenio_accounts.proxies import current_accounts
+from invenio_db import db
 from invenio_group_collections_kcworks.proxies import (
     current_group_collections_service,
 )  # noqa
@@ -32,7 +33,9 @@ from .signals import remote_data_updated
 from .tasks import do_group_data_update, do_user_data_update
 from .utils import (
     diff_between_nested_dicts,
+    CILogonHelpers,
 )
+from .api import fetch_user_profile, APIResponse, Profile
 
 
 class RemoteGroupDataService(Service):
@@ -63,7 +66,9 @@ class RemoteGroupDataService(Service):
             when webhook is triggered.
             """
 
-            self.logger.debug("RemoteGroupDataService: webhook update signal received")
+            self.logger.debug(
+                "RemoteGroupDataService: webhook update signal received"
+            )
 
             for event in current_queues.queues["user-data-updates"].consume():
                 if event["entity_type"] == "groups" and event["event"] in [
@@ -73,7 +78,10 @@ class RemoteGroupDataService(Service):
                     celery_result = do_group_data_update.delay(  # noqa:F841
                         event["idp"], event["id"]
                     )  # type: ignore
-                elif event["entity_type"] == "groups" and event["event"] == "deleted":
+                elif (
+                    event["entity_type"] == "groups"
+                    and event["event"] == "deleted"
+                ):
                     raise NotImplementedError(
                         "Group role deletion from remote signal is not "
                         "yet implemented."
@@ -83,7 +91,10 @@ class RemoteGroupDataService(Service):
         self, starting_dict: dict, new_data: dict
     ) -> dict:
         """Update a dictionary of community metadata with new data."""
-        assert new_data["id"] == starting_dict["custom_fields"]["kcr:commons_group_id"]
+        assert (
+            new_data["id"]
+            == starting_dict["custom_fields"]["kcr:commons_group_id"]
+        )
 
         metadata_updates = starting_dict["metadata"]
         custom_fields_updates = starting_dict["custom_fields"]
@@ -94,7 +105,9 @@ class RemoteGroupDataService(Service):
                     starting_dict["id"], new_data["avatar"]
                 )
             except AssertionError:
-                self.logger.error(f"Error uploading avatar for {new_data['id']} group.")
+                self.logger.error(
+                    f"Error uploading avatar for {new_data['id']} group."
+                )
 
         if "url" in new_data.keys():
             metadata_updates["website"] = new_data["url"]
@@ -152,7 +165,9 @@ class RemoteGroupDataService(Service):
         self.require_permission(identity, "trigger_update")
         results_dict = {}
         idp_config = self.endpoints_config[idp]
-        remote_api_token = os.environ[idp_config["groups"]["token_env_variable_label"]]
+        remote_api_token = os.environ[
+            idp_config["groups"]["token_env_variable_label"]
+        ]
 
         headers = {"Authorization": f"Bearer {remote_api_token}"}
         response = requests.get(
@@ -310,7 +325,10 @@ class RemoteUserDataService(Service):
             self.logger.info("%%%%% webhook signal received")
 
             for event in current_queues.queues["user-data-updates"].consume():
-                if event["entity_type"] == "users" and event["event"] == "updated":
+                if (
+                    event["entity_type"] == "users"
+                    and event["event"] == "updated"
+                ):
                     try:
                         # confirm that user exists in Invenio
                         my_user_identity = UserIdentity.query.filter_by(
@@ -326,32 +344,16 @@ class RemoteUserDataService(Service):
                             f'Cannot update: user {event["id"]} does not exist'
                             " in Invenio."
                         )
-                elif event["entity_type"] == "groups" and event["event"] == "updated":
+                elif (
+                    event["entity_type"] == "groups"
+                    and event["event"] == "updated"
+                ):
                     # TODO: implement group updates and group/user creation
                     pass
 
-    # TODO: decide whether to reimplement now that we're using webhooks
-    # def _data_is_stale(self, user_id) -> bool:
-    #     """Check whether user data is stale."""
-    #     user_data_stale = True
-    #     if (
-    #         user_id
-    #         and "user-data-updated" in session.keys()
-    #         and type(session["user-data-updated"]) is not str
-    #         and user_id in session["user-data-updated"].keys()
-    #     ):
-    #         if session["user-data-updated"][user_id]:
-    #             last_update_dt = datetime.datetime.fromisoformat(
-    #                 session["user-data-updated"][user_id]
-    #             )
-    #             interval = datetime.datetime.utcnow() - last_update_dt
-    #             if interval <= self.update_interval:
-    #                 user_data_stale = False
-    #     return user_data_stale
-
     def update_user_from_remote(
         self, identity, user_id: int, idp: str, remote_id: str, **kwargs
-    ) -> tuple[Optional[User], dict, list[str], dict]:
+    ) -> tuple[Optional[User], APIResponse | Profile | None, list[str], dict]:
         """Main method to update user data from remote server.
 
         Parameters:
@@ -383,330 +385,86 @@ class RemoteUserDataService(Service):
             f" remote_id: {remote_id}."
         )
         updated_data = {}
+
         try:
-            user = current_accounts.datastore.get_user_by_id(user_id)
-            remote_data = self.fetch_from_remote_api(idp, remote_id, **kwargs)
-            new_data, user_changes, groups_changes = [{}, {}, {}]
-            if "users" in remote_data.keys():
-                new_data, user_changes, groups_changes = self.compare_remote_with_local(
-                    user, remote_data, idp, **kwargs
-                )
-            elif "error" in remote_data.keys():
-                if remote_data["error"]["reason"] == "not_found":
-                    self.logger.error(f"User {remote_id} not found on remote server.")
+            user: User = current_accounts.datastore.get_user_by_id(user_id)
+            remote_data: APIResponse = fetch_user_profile(sub_id=remote_id)
+
+            for external_id in user.external_identifiers:
+                self.logger.debug(f"External ID: {external_id}")
+                if external_id.method == "knowledgeCommons":
+                    self.logger.debug(f"Found KC ID: {external_id['id']}")
+                    break
+
+            # TODO: if we don't have a remote id using this, we need to use
+            # the KC username to fetch the user, which is not a problem
+            if not remote_data.data or len(remote_data.data) == 0:
+                for external_id in user.external_ids:
+                    if external_id["method"] == "knowledgeCommons":
+                        remote_id = external_id["id"]
+                        remote_data: Profile = fetch_user_profile(remote_id)
+                        break
+                pass
+            else:
+                if not remote_data.meta.authorized:
+                    self.logger.error("Problem with static bearer key")
                     return user, remote_data, [], {}
-                elif remote_data["error"]["reason"] == "timeout":
-                    self.logger.error("Timeout fetching user data from remote server.")
-                    return user, remote_data, [], {}
-                elif remote_data["error"]["reason"] == "invalid_response":
-                    self.logger.error(
-                        "Invalid response fetching user data from remote " "server."
-                    )
-                    return user, remote_data, [], {}
-                else:
-                    self.logger.error("Error fetching user data from remote server.")
-                    return (
-                        user,
-                        {"error": "Unknown error fetching user data"},
-                        [],
-                        {},
-                    )
-            if new_data and (
-                len(user_changes.keys()) > 0
-                or len(groups_changes.get("added_groups", [])) > 0
-                or len(groups_changes.get("dropped_groups", [])) > 0
+
+            if (
+                hasattr(remote_data, "data")
+                and remote_data.data
+                and len(remote_data.data) > 0
+            ) or (
+                hasattr(remote_data, "results")
+                and remote_data.results
+                and len(remote_data.results) > 0
             ):
-                updated_data = self.update_local_user_data(
-                    user, new_data, user_changes, groups_changes, **kwargs
+                try:
+                    profile = remote_data.data[0].profile
+                except AttributeError:
+                    profile = remote_data.results[0].profile
+
+                # update the user profile
+                user.username = profile.username
+                user.full_name = profile.name
+                user.email = profile.email
+
+                group_changes = CILogonHelpers.calculate_group_changes(
+                    profile, user
                 )
-                assert sorted(updated_data["groups"]) == sorted(
-                    [
-                        *groups_changes["added_groups"],
-                        *groups_changes["unchanged_groups"],
-                    ]
+                user_changes, new_data = CILogonHelpers.calculate_user_changes(
+                    profile, user
                 )
-                self.logger.info(
-                    "User data successfully updated from remote "
-                    f"server: {updated_data}"
+
+                updated_data = CILogonHelpers.update_local_user_data(
+                    user,
+                    new_data,
+                    user_changes,
+                    group_changes,
+                    **kwargs,
                 )
+
+                self.logger.debug(f"User changes: {user_changes}")
+                self.logger.debug(f"Group changes: {group_changes}")
+                db.session.commit()
+
                 return (
                     user,
                     updated_data["user"],
                     updated_data["groups"],
-                    groups_changes,
+                    group_changes,
                 )
+
             else:
-                self.logger.info("No remote changes to user data.")
-                return (
-                    user,
-                    user_changes,
-                    [],
-                    groups_changes,
+                # no record found on remote server
+                self.logger.error(
+                    f"User {remote_id} not found on remote server."
                 )
+                return user, remote_data, [], {}
+
         except Exception as e:
-            self.logger.error(f"Error updating user data from remote server: {repr(e)}")
-            self.logger.error(traceback.format_exc())
-            return None, {"error": e}, [], {}
-
-    def fetch_from_remote_api(
-        self, idp: str, remote_id: str, tokens=None, **kwargs
-    ) -> dict:
-        """Fetch user data for the supplied user from the remote API.
-
-        Parameters:
-            idp (str): The SAML identity provider name.
-            remote_id (str): The identifier for the user on the remote idp
-                service.
-            tokens (dict): A dictionary of API tokens for the remote
-                API. Optional.
-
-        Returns:
-            dict: A dictionary of the user data returned by the remote api
-                  endpoint.
-        """
-        remote_data = {}
-        if "users" in self.endpoints_config[idp].keys():
-            users_config = self.endpoints_config[idp]["users"]
-
-            remote_api_token = None
-            if tokens and "users" in tokens.keys():  # allows injection for testing
-                remote_api_token = tokens["users"]
-            else:
-                remote_api_token = os.environ[users_config["token_env_variable_label"]]
-            api_url = f'{users_config["remote_endpoint"]}{remote_id}'
-
-            callfuncs = {"GET": requests.get, "POST": requests.post}
-            callfunc = callfuncs[users_config["remote_method"]]
-
-            headers = {}
-            if remote_api_token:
-                headers = {"Authorization": f"Bearer {remote_api_token}"}
-            self.logger.debug(f"API URL: {api_url}")
-            try:
-                response = callfunc(api_url, headers=headers, verify=False, timeout=30)
-                if response.status_code != 200:
-                    self.logger.error(
-                        f"Error fetching user data from remote API: {api_url}"
-                    )
-                    self.logger.error(
-                        "Response status code: " + str(response.status_code)
-                    )
-                    if response.status_code == 404:
-                        return {
-                            "error": {"reason": "not_found"},
-                            "status_code": response.status_code,
-                            "text": response.text,
-                        }
-                try:
-                    remote_data["users"] = response.json()
-                except requests.exceptions.JSONDecodeError:
-                    self.logger.error(
-                        "JSONDecodeError: User data API response was not" " JSON:"
-                    )
-                    self.logger.error(response.text)
-                    return {
-                        "error": {"reason": "invalid_response"},
-                        "status_code": response.status_code,
-                        "text": response.text if response.text else "No text",
-                    }
-
-                self.logger.debug(f"Remote data: {remote_data}")
-                return remote_data
-
-            except (
-                requests.exceptions.ReadTimeout,
-                requests.exceptions.ConnectTimeout,
-            ):
-                return {
-                    "error": {"reason": "timeout"},
-                    "status_code": 408,
-                    "text": "Request timed out",
-                }
-        return remote_data
-
-    def compare_remote_with_local(
-        self, user: User, remote_data: dict, idp: str, **kwargs
-    ) -> tuple[dict, dict, dict]:
-        """Compare remote data with local data and return changed data.
-
-        No changes are made to the user object or db data in this method.
-        The first return value includes the data that should be present in
-        the updated user object. The second return value includes the
-        change to make to the user object. The third return value includes
-        the changes to make to the user's group memberships.
-
-        Parameters:
-            user (User): The user to be updated.
-            remote_data (dict): The data fetched from the remote API.
-            idp (str): The identity provider name.
-
-        Returns:
-            tuple: A tuple of dictionaries containing the new user data,
-                   the changes to the user data, and the changes to the user's
-                   group memberships.
-        """
-        initial_user_data = {
-            "username": user.username,
-            "preferences": user.preferences,
-            "roles": user.roles,
-            "email": user.email,
-            "active": user.active,
-        }
-        try:
-            initial_user_data["user_profile"] = user.user_profile
-            self.logger.debug(f"Initial user profile: {user.user_profile}")
-        except ValueError:
             self.logger.error(
-                f"Error fetching initial user profile data for user {user.id}. "
-                f"Some data in db was invalid. Starting fresh with incoming "
-                "data."
+                f"Error updating user data from remote server: {repr(e)}"
             )
-            initial_user_data["user_profile"] = {}
-
-        new_data: dict = {"active": True}
-
-        local_groups = [r.name for r in user.roles]
-        group_changes = {
-            "dropped_groups": [],
-            "added_groups": [],
-            "unchanged_groups": local_groups,
-        }
-
-        users = remote_data.get("users")
-        if users:
-            groups = users.get("groups")
-            if groups:
-                remote_groups = []
-                groups = [g for g in groups if g["name"]]
-                for g in groups:
-                    # Fetch group metadata from remote service
-                    # slug = make_base_group_slug(g["name"])
-                    role_string = f"{idp}---{g['id']}|{g['role']}"
-                    remote_groups.append(role_string)
-                if remote_groups != local_groups:
-                    group_changes = {
-                        "dropped_groups": [
-                            g
-                            for g in local_groups
-                            if g.split("---")[0] == idp and g not in remote_groups
-                        ],
-                        "added_groups": [
-                            g for g in remote_groups if g not in local_groups
-                        ],
-                    }
-
-                    group_changes["unchanged_groups"] = [
-                        r
-                        for r in local_groups
-                        if r not in group_changes["dropped_groups"]
-                    ]
-            new_data["user_profile"] = {**initial_user_data["user_profile"]}
-            new_data["user_profile"].update(
-                {
-                    "full_name": users["name"],
-                    "name_parts": json.dumps(
-                        {
-                            "first": users["first_name"],
-                            "last": users["last_name"],
-                        }
-                    ),
-                }
-            )
-            if users.get("institutional_affiliation"):
-                new_data["user_profile"]["affiliations"] = users[
-                    "institutional_affiliation"
-                ]
-            if users.get("orcid") and users["orcid"] != "":
-                new_data["user_profile"]["identifier_orcid"] = users["orcid"]
-            idp_slug = "kc" if idp == "knowledgeCommons" else idp
-            new_data["user_profile"][f"identifier_{idp_slug}_username"] = users[
-                "username"
-            ]
-            new_data["username"] = f'{idp}-{users["username"]}'
-            new_data["email"] = users["email"]
-            new_data["preferences"] = user.preferences
-            new_data["preferences"].update(
-                {
-                    "visibility": "public",
-                    "email_visibility": "public",
-                }
-            )
-            if users.get("preferred_language"):
-                new_data["preferences"]["locale"] = users["preferred_language"]
-        user_changes = diff_between_nested_dicts(initial_user_data, new_data)
-        return new_data, user_changes, group_changes
-
-    def update_local_user_data(
-        self,
-        user: User,
-        new_data: dict,
-        user_changes: dict,
-        group_changes: dict,
-        **kwargs,
-    ) -> dict:
-        """Update Invenio user data for the supplied identity.
-
-        Parameters:
-            user (User): The user to be updated.
-            new_data (dict): The new user data.
-            user_changes (dict): The changes to the user data.
-            group_changes (dict): The changes to the user's group memberships.
-
-        Returns:
-            dict: A dictionary of the updated user data with the keys "user"
-                  and "groups".
-        """
-        updated_data = {}
-        if user_changes:
-            # if email changes, keep teh old email as an
-            # `identifier_email` in the user_profile
-            user.username = new_data["username"]
-            user.user_profile = new_data["user_profile"]
-            user.preferences = new_data["preferences"]
-            if user.email != new_data["email"]:
-                user.user_profile["identifier_email"] = user.email
-            user.email = new_data["email"]
-            current_accounts.datastore.commit()
-            updated_data["user"] = user_changes
-        else:
-            updated_data["user"] = []
-        if group_changes.get("added_groups") or group_changes.get("dropped_groups"):
-            updated_data["groups"] = self.update_invenio_group_memberships(
-                user, group_changes, **kwargs
-            )
-        else:
-            updated_data["groups"] = group_changes["unchanged_groups"] or []
-
-        return updated_data
-
-    def update_invenio_group_memberships(
-        self, user: User, changed_memberships: dict, **kwargs
-    ) -> list[str]:
-        """Update the user's group role memberships.
-
-        If an added group role does not exist, it will be created. If a
-        dropped group role does not exist, it will be ignored. If a
-        dropped group role is left with no members, it will be deleted
-        from the system roles.
-
-        Returns:
-            list: The updated list of group role names.
-        """
-        grouper = GroupRolesComponent(self)
-        updated_local_groups = [r.name for r in user.roles]
-        for group_name in changed_memberships["added_groups"]:
-            group_role = grouper.find_or_create_group(group_name)
-            if group_role and grouper.add_user_to_group(group_role, user) is not None:
-                updated_local_groups.append(group_role.name)
-        for group_name in changed_memberships["dropped_groups"]:
-            group_role = grouper.find_group(group_name)
-            if (
-                group_role
-                and grouper.remove_user_from_group(group_role, user) is not None
-            ):
-                updated_local_groups.remove(group_role.name)
-                # NOTE: We don't delete the group role because that would
-                # potentially disrupt roles being used for collections
-        assert updated_local_groups == [r.name for r in user.roles]
-
-        return updated_local_groups
+            self.logger.error(traceback.format_exc())
+            return None, None, [], {}

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # This file is part of the invenio-remote-user-data-kcworks package.
 # Copyright (C) 2023, MESH Research.
@@ -12,11 +11,17 @@ from flask import current_app, session  # after_this_request, request,
 from flask_login import user_logged_in
 
 # from flask_principal import  identity_changed, Identity
-from flask_security import current_user
 from invenio_accounts.models import User
+
 from . import config
 from .service import RemoteGroupDataService, RemoteUserDataService
 from .tasks import do_user_data_update
+from .views import login, authorized
+
+OAUTH_ROUTE_REWRITES = {
+    "/oauth/login/<remote_app>/": login,
+    "/oauth/authorized/<remote_app>/": authorized,
+}
 
 
 def on_user_logged_in(_, user: User) -> None:
@@ -66,7 +71,7 @@ def on_user_logged_in(_, user: User) -> None:
                 do_user_data_update.delay(user.id)  # noqa
 
 
-class InvenioRemoteUserData(object):
+class InvenioRemoteUserData:
     """Flask extension for Invenio-remote-user-data-kcworks.
 
     Args:
@@ -74,7 +79,7 @@ class InvenioRemoteUserData(object):
     """
 
     def __init__(self, app=None) -> None:
-        """Extention initialization."""
+        """Extension initialization."""
         if app:
             self.init_app(app)
 
@@ -118,3 +123,29 @@ class InvenioRemoteUserData(object):
             app (_type_): _description_
         """
         user_logged_in.connect(on_user_logged_in, app)
+
+
+def finalize_app(app):
+    """Finalize app."""
+
+    app.logger.debug(
+        "invenio_remote_user_data_kcworks.ext:finalize_app: Rewriting routes"
+    )
+
+    for rule in app.url_map.iter_rules():
+        route_str = str(rule)
+
+        if route_str in OAUTH_ROUTE_REWRITES:
+            if rule.endpoint in app.view_functions:
+                app.view_functions[rule.endpoint] = OAUTH_ROUTE_REWRITES[
+                    route_str
+                ]
+                app.logger.debug(
+                    f"Rewrote route '{route_str}' to endpoint "
+                    f"'{rule.endpoint}'"
+                )
+            else:
+                app.logger.debug(
+                    f"Warning: Endpoint '{rule.endpoint}' not "
+                    f"found for route '{route_str}'"
+                )

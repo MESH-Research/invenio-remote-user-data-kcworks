@@ -9,6 +9,7 @@ import re
 from .proxies import (
     current_remote_user_data_service as user_data_service,
 )
+from .utils import CILogonHelpers
 
 
 @click.group()
@@ -104,6 +105,8 @@ def update_user_data(
     timed_out = []
     invalid_responses = []
 
+    sources = ["cilogon", source]
+
     # handle ranges
     expanded_ids = []
     for i in ids:
@@ -124,17 +127,32 @@ def update_user_data(
                 counter += 1
                 if by_email:
                     user = current_datastore.get_user_by_email(i)
-                    user_ident = UserIdentity.query.filter_by(
-                        id_user=user.id, method=source
-                    ).one_or_none()
+
+                    for source in sources:
+                        user_ident = UserIdentity.query.filter_by(
+                            id_user=user.id, method=source
+                        ).one_or_none()
+
+                        if user_ident:
+                            break
+
                 elif by_username:
-                    user_ident = UserIdentity.query.filter_by(
-                        id=i, method=source
-                    ).one_or_none()
+                    for source in sources:
+                        user_ident = UserIdentity.query.filter_by(
+                            id=i, method=source
+                        ).one_or_none()
+
+                        if user_ident:
+                            break
                 else:
-                    user_ident = UserIdentity.query.filter_by(
-                        id_user=int(i), method=source
-                    ).one_or_none()
+                    for source in sources:
+                        user_ident = UserIdentity.query.filter_by(
+                            id_user=int(i), method=source
+                        ).one_or_none()
+
+                        if user_ident:
+                            break
+
                 if not user_ident:
                     print(f"No remote registration found for {i}")
                     not_found_local.append(i)
@@ -149,9 +167,15 @@ def update_user_data(
         users = current_users_service.scan(identity=system_identity)
         for u in users.hits:
             counter += 1
-            user_ident = UserIdentity.query.filter_by(
-                id_user=u.id, method=source
-            ).one_or_none()
+
+            for source in sources:
+                user_ident = UserIdentity.query.filter_by(
+                    id_user=u.id, method=source
+                ).one_or_none()
+
+                if user_ident:
+                    break
+
             if not user_ident:
                 print(f"No remote registration found for {u.id}")
                 not_found_local.append(i)

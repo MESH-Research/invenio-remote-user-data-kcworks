@@ -18,6 +18,7 @@ from .service import RemoteGroupDataService, RemoteUserDataService
 from .tasks import do_user_data_update
 from .views import login, authorized
 
+
 OAUTH_ROUTE_REWRITES = {
     "/oauth/login/<remote_app>/": login,
     "/oauth/authorized/<remote_app>/": authorized,

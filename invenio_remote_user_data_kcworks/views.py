@@ -367,11 +367,9 @@ class RemoteUserDataUpdateWebhook(MethodView):
             "****Received POST request to webhook endpoint again"
         )
 
-        """
         current_remote_user_data_service.require_permission(
             g.identity, "trigger_update"
         )
-        """
 
         try:
             data = request.get_json()

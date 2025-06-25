@@ -1,6 +1,9 @@
+from typing import List
+
 import click
 from flask.cli import with_appcontext
 from invenio_access.permissions import system_identity
+from invenio_accounts.models import User
 from invenio_accounts.proxies import current_datastore
 from invenio_oauthclient.models import UserIdentity
 from invenio_users_resources.proxies import current_users_service
@@ -91,6 +94,7 @@ def update_user_data(
 
     None
     """
+
     print(
         f"Updating {'all ' if len(ids) == 0 else ''}"
         f"{'users' if not groups else 'groups'} "

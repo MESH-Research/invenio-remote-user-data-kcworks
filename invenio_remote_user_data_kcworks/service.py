@@ -334,6 +334,7 @@ class RemoteUserDataService(Service):
                         my_user_identity = UserIdentity.query.filter_by(
                             id=event["id"]
                         ).one_or_none()
+
                         assert my_user_identity is not None
 
                         do_user_data_update.delay(  # noqa

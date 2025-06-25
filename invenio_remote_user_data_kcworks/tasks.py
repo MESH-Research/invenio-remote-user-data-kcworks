@@ -27,8 +27,11 @@ task_logger = get_task_logger(__name__)
 
 @shared_task(ignore_result=False)
 def do_user_data_update(
-    user_id: int, idp: Optional[str] = None, remote_id: Optional[str] = None, **kwargs
-) -> tuple[User, dict, list[str], dict]:
+    user_id: int,
+    idp: Optional[str] = None,
+    remote_id: Optional[str] = None,
+    **kwargs,
+) -> tuple[dict, list[str], dict]:
     """Perform a user metadata update.
 
     Args:
@@ -38,7 +41,6 @@ def do_user_data_update(
 
     Returns:
         A tuple containing
-        - the updated User object
         - a dictionary of the updated user data (including only the changed
           keys and values).
         - A list of the updated user's group memberships.
@@ -79,7 +81,7 @@ def do_user_data_update(
                 )
             )
             task_logger.info(f"updated_data: {updated_data}")
-            return user, updated_data, groups, groups_changes
+            return updated_data, groups, groups_changes
         else:
             raise NoIDPFoundError(f"No IDP found for user {user_id}")
 

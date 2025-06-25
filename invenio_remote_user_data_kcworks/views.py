@@ -15,7 +15,8 @@ from flask import (
     g,
 )
 from flask.views import MethodView
-from invenio_accounts.models import UserIdentity
+from flask_principal import PermissionDenied
+from invenio_accounts.models import UserIdentity, User
 from invenio_queues.proxies import current_queues
 from werkzeug.exceptions import (
     BadRequest,
@@ -393,16 +394,45 @@ class RemoteUserDataUpdateWebhook(MethodView):
                     for u in data["updates"][e]:
                         if u["event"] in entity_types[e]["events"]:
                             if e == "users":
-                                user_identity = UserIdentity.query.filter_by(
-                                    id=u["id"], method=idp
-                                ).one_or_none()
-                                if user_identity is None:
+                                user: User = (
+                                    CILogonHelpers._try_get_user_by_kc_username(
+                                        u["id"],
+                                        "cilogon",
+                                    )
+                                )
+
+                                if not user:
+                                    user: User = (
+                                        CILogonHelpers._try_get_user_by_kc_username(
+                                            u["id"],
+                                            "knowledgeCommons",
+                                        )
+                                    )
+
+                                u["display_id"] = u["id"]
+
+                                if user:
+                                    user_id: UserIdentity = (
+                                        UserIdentity.query.filter_by(
+                                            id_user=user.id
+                                        ).one_or_none()
+                                    )
+
+                                    u["id"] = user_id.id
+
+                                if user is None:
                                     bad_users.append(u["id"])
                                     self.logger.error(
                                         f"Received update signal from {idp} "
-                                        f"for unknown user: {u['id']}"
+                                        f"for unknown user: {u['display_id']}"
                                     )
+
                                 else:
+                                    self.logger.info(
+                                        f"Received update signal from {idp} "
+                                        f"for known user: {u['display_id']}"
+                                    )
+
                                     users.append(u["id"])
                                     events.append(
                                         {
@@ -445,7 +475,7 @@ class RemoteUserDataUpdateWebhook(MethodView):
                     f"Published {len(events)} events to queue and emitted"
                     " remote_data_updated signal"
                 )
-                # self.logger.debug(events)
+                self.logger.debug(events)
             else:
                 if not users and bad_users or not groups and bad_groups:
                     entity_string = ""
@@ -535,6 +565,12 @@ def create_api_blueprint(app):
         # Register error handlers
         blueprint.register_error_handler(
             Forbidden,
+            lambda e: make_response(
+                jsonify({"error": "Forbidden", "status": 403}), 403
+            ),
+        )
+        blueprint.register_error_handler(
+            PermissionDenied,
             lambda e: make_response(
                 jsonify({"error": "Forbidden", "status": 403}), 403
             ),

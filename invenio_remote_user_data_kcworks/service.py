@@ -8,15 +8,14 @@
 # LICENSE file for more details.
 
 import datetime
-from pprint import pformat
 
-# frm pprint import pformat
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import User, UserIdentity
 from invenio_accounts.proxies import current_accounts
 from invenio_group_collections_kcworks.proxies import (
     current_group_collections_service,
 )  # noqa
+from invenio_group_collections_kcworks.utils import format_group_role_name
 from invenio_queues.proxies import current_queues
 from invenio_records_resources.services import Service
 import json
@@ -579,10 +578,8 @@ class RemoteUserDataService(Service):
                 remote_groups = []
                 groups = [g for g in groups if g["name"]]
                 for g in groups:
-                    # Fetch group metadata from remote service
-                    # slug = make_base_group_slug(g["name"])
-                    role_string = f"{idp}---{g['id']}|{g['role']}"
-                    remote_groups.append(role_string)
+                    community_roles = format_group_role_name(g["role"], idp, g["id"])
+                    remote_groups.extend(community_roles)
                 if remote_groups != local_groups:
                     group_changes = {
                         "dropped_groups": [

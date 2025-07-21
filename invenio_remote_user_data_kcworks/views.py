@@ -385,55 +385,66 @@ class RemoteUserDataUpdateWebhook(MethodView):
             groups = []
             bad_groups = []
 
-            for e in data["updates"].keys():
-                if e in entity_types.keys():
-                    # self.logger.debug(
-                    #     f"In POST view: Received {e} update signal from "
-                    #     f"{idp}: {data['updates'][e]}"
-                    # )
-                    for u in data["updates"][e]:
-                        if u["event"] in entity_types[e]["events"]:
-                            if e == "users":
-                                user: User = (
-                                    CILogonHelpers._try_get_user_by_kc_username(
-                                        u["id"],
-                                        "cilogon",
-                                    )
-                                )
-
-                                if not user:
+            if "updates" in data:
+                for e in data["updates"].keys():
+                    if e in entity_types.keys():
+                        # self.logger.debug(
+                        #     f"In POST view: Received {e} update signal from "
+                        #     f"{idp}: {data['updates'][e]}"
+                        # )
+                        for u in data["updates"][e]:
+                            if u["event"] in entity_types[e]["events"]:
+                                if e == "users":
                                     user: User = (
-                                        CILogonHelpers._try_get_user_by_kc_username(
+                                        CILogonHelpers.try_get_user_by_kc_username(
                                             u["id"],
-                                            "knowledgeCommons",
+                                            "cilogon",
                                         )
                                     )
 
-                                u["display_id"] = u["id"]
+                                    if not user:
+                                        user: User = (
+                                            CILogonHelpers.try_get_user_by_kc_username(
+                                                u["id"],
+                                                "knowledgeCommons",
+                                            )
+                                        )
 
-                                if user:
-                                    user_id: UserIdentity = (
-                                        UserIdentity.query.filter_by(
-                                            id_user=user.id
-                                        ).one_or_none()
-                                    )
+                                    u["display_id"] = u["id"]
 
-                                    u["id"] = user_id.id
+                                    if user:
+                                        user_id: UserIdentity = (
+                                            UserIdentity.query.filter_by(
+                                                id_user=user.id
+                                            ).one_or_none()
+                                        )
 
-                                if user is None:
-                                    bad_users.append(u["id"])
-                                    self.logger.error(
-                                        f"Received update signal from {idp} "
-                                        f"for unknown user: {u['display_id']}"
-                                    )
+                                        u["id"] = user_id.id
 
-                                else:
-                                    self.logger.info(
-                                        f"Received update signal from {idp} "
-                                        f"for known user: {u['display_id']}"
-                                    )
+                                    if user is None:
+                                        bad_users.append(u["id"])
+                                        self.logger.error(
+                                            f"Received update signal from {idp} "
+                                            f"for unknown user: {u['display_id']}"
+                                        )
 
-                                    users.append(u["id"])
+                                    else:
+                                        self.logger.info(
+                                            f"Received update signal from {idp} "
+                                            f"for known user: {u['display_id']}"
+                                        )
+
+                                        users.append(u["id"])
+                                        events.append(
+                                            {
+                                                "idp": idp,
+                                                "entity_type": e,
+                                                "event": u["event"],
+                                                "id": u["id"],
+                                            }
+                                        )
+                                elif e == "groups":
+                                    groups.append(u["id"])
                                     events.append(
                                         {
                                             "idp": idp,
@@ -442,29 +453,38 @@ class RemoteUserDataUpdateWebhook(MethodView):
                                             "id": u["id"],
                                         }
                                     )
-                            elif e == "groups":
-                                groups.append(u["id"])
-                                events.append(
-                                    {
-                                        "idp": idp,
-                                        "entity_type": e,
-                                        "event": u["event"],
-                                        "id": u["id"],
-                                    }
+                            else:
+                                bad_events.append(u)
+                                self.logger.error(
+                                    f"{idp} Received update signal for "
+                                    f"unknown event: {u}"
                                 )
-                        else:
-                            bad_events.append(u)
-                            self.logger.error(
-                                f"{idp} Received update signal for "
-                                f"unknown event: {u}"
+                    else:
+                        bad_entity_types.append(e)
+                        self.logger.error(
+                            f"{idp} Received update signal for unknown "
+                            f"entity type: {e}"
+                        )
+                        self.logger.error(data)
+
+            if "associations" in data:
+                for e in data["associations"].keys():
+                    for u in data["associations"][e]:
+                        print(u)
+                        if u["event"] == "associated":
+                            events.append(
+                                {
+                                    "idp": idp,
+                                    "entity_type": e,
+                                    "event": u["event"],
+                                    "id": u["id"],
+                                    "kc_id": u["kc_id"],
+                                }
                             )
-                else:
-                    bad_entity_types.append(e)
-                    self.logger.error(
-                        f"{idp} Received update signal for unknown "
-                        f"entity type: {e}"
-                    )
-                    self.logger.error(data)
+                            self.logger.info(
+                                f"Received update signal from {idp} for "
+                                f"association of: {u}"
+                            )
 
             if len(events) > 0:
                 current_queues.queues["user-data-updates"].publish(events)
@@ -521,7 +541,15 @@ class RemoteUserDataUpdateWebhook(MethodView):
                 {
                     "message": "Webhook notification accepted",
                     "status": 202,
-                    "updates": data["updates"],
+                    "updates": (
+                        data["updates"]
+                        if "updates" in data
+                        else (
+                            data["associations"]
+                            if "associations" in data
+                            else None
+                        )
+                    ),
                 }
             ),
             202,

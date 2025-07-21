@@ -10,6 +10,8 @@
 import datetime
 from pprint import pformat
 
+from flask import current_app
+
 # frm pprint import pformat
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import User, UserIdentity
@@ -351,6 +353,71 @@ class RemoteUserDataService(Service):
                 ):
                     # TODO: implement group updates and group/user creation
                     pass
+                elif (
+                    event["entity_type"] == "associations"
+                    and event["event"] == "associated"
+                ):
+                    # This code handles association events: when a user
+                    # links their cilogon sub with their kc username/account.
+                    # If the user is already associated, we don't need to do
+                    # anything. If the user is not associated, we need to
+                    # find the user by kc username and link their cilogon sub
+                    # to their kc username. We try with the cilogon method
+                    # first, then the knowledgecommons fallback method. We
+                    # do not use a task for this because it's a one-time
+                    # fairly trivial database operation.
+                    current_app.logger.debug(f"Event: {event}")
+
+                    # Step 1; See if the sub is already assigned -> exit
+                    account_info = {
+                        "external_id": event["id"],
+                        "external_method": "cilogon",
+                    }
+                    user = CILogonHelpers.try_get_user_by_external_id(
+                        account_info
+                    )
+
+                    if user:
+                        current_app.logger.debug(
+                            "User found by external ID (CILogon)"
+                        )
+                        # if here, the user has already been associated
+                        # we don't actually need to do anything
+                        pass
+                    else:
+                        # Step 2: find the user by KC username -> associate
+                        user = CILogonHelpers.try_get_user_by_kc_username(
+                            event["kc_id"], "cilogon"
+                        )
+
+                        if user:
+                            current_app.logger.debug(
+                                "User found by KC username (cilogon)"
+                            )
+
+                            CILogonHelpers.link_user_to_oauth_identifier(
+                                user, "cilogon", account_info["external_id"]
+                            )
+                        else:
+                            user = CILogonHelpers.try_get_user_by_kc_username(
+                                event["kc_id"], "knowledgeCommons"
+                            )
+
+                            if user:
+                                current_app.logger.debug(
+                                    "User found by KC username "
+                                    "(knowledgeCommons)"
+                                )
+                                CILogonHelpers.link_user_to_oauth_identifier(
+                                    user,
+                                    "cilogon",
+                                    account_info["external_id"],
+                                )
+                            else:
+                                # Step 3: no user found. No sync required.
+                                current_app.logger.debug(
+                                    "No user found. No sync required."
+                                )
 
     def update_user_from_remote(
         self, identity, user_id: int, idp: str, remote_id: str, **kwargs

@@ -232,7 +232,7 @@ class CILogonHelpers:
             return None
 
         # Try external ID first
-        user = CILogonHelpers._try_get_user_by_external_id(account_info)
+        user = CILogonHelpers.try_get_user_by_external_id(account_info)
         if user:
             current_app.logger.debug("User found by external ID (CILogon)")
             return user
@@ -249,7 +249,7 @@ class CILogonHelpers:
             return user
 
         # Try KC username lookup
-        user = CILogonHelpers._try_get_user_by_kc_username(
+        user = CILogonHelpers.try_get_user_by_kc_username(
             user_profile.get("identifier_kc_username"),
             account_info.get("external_method"),
         )
@@ -267,7 +267,7 @@ class CILogonHelpers:
         return None
 
     @staticmethod
-    def _try_get_user_by_external_id(account_info: dict) -> User | None:
+    def try_get_user_by_external_id(account_info: dict) -> User | None:
         """Try to get user by external ID."""
         try:
             external_id = CILogonHelpers._get_external_id(account_info)
@@ -295,10 +295,11 @@ class CILogonHelpers:
         return None
 
     @staticmethod
-    def _try_get_user_by_kc_username(
+    def try_get_user_by_kc_username(
         kc_username: str | None, external_method: str | None
     ) -> User | None:
         """Try to get user by KC username."""
+        print("QUERY")
         if not kc_username:
             return None
 
@@ -306,7 +307,7 @@ class CILogonHelpers:
         user = User.query.filter_by(username=f"{kc_username}").one_or_none()
         if user:
             return user
-
+        print("TRY")
         try:
             # First try with external method prefix
             if external_method:

@@ -512,41 +512,48 @@ class CILogonHelpers:
     def calculate_group_changes(profile, user):
         """Calculate the changes between the existing user and the data."""
         local_groups = [r.name for r in user.roles]
+
         group_changes = {
             "dropped_groups": [],
             "added_groups": [],
             "unchanged_groups": local_groups,
         }
 
-        if profile:
-            groups = profile.groups
-            if groups:
-                remote_groups = []
-                groups = [g for g in groups if g.group_name]
-                for g in groups:
-                    # Fetch group metadata from remote service
-                    # slug = make_base_group_slug(g["name"])
-                    role_string = f"knowledgeCommons---{g.id}|{g.role}"
-                    remote_groups.append(role_string)
+        if profile and profile.groups:
+            groups = [g for g in profile.groups]
+            remote_groups = []
 
-                if remote_groups != local_groups:
-                    group_changes = {
-                        "dropped_groups": [
-                            g
-                            for g in local_groups
-                            if g.split("---")[0] == "knowledgeCommons"
-                            and g not in remote_groups
-                        ],
-                        "added_groups": [
-                            g for g in remote_groups if g not in local_groups
-                        ],
-                    }
+            for g in groups:
+                role_string = f"knowledgeCommons---{g.id}|{g.role}"
+                remote_groups.append(role_string)
 
-                    group_changes["unchanged_groups"] = [
+            if remote_groups != local_groups:
+                # Filter local groups to only knowledge commons groups for comparison
+                local_kc_groups = [
+                    g
+                    for g in local_groups
+                    if g.split("---")[0] == "knowledgeCommons"
+                ]
+
+                group_changes = {
+                    "dropped_groups": [
+                        g for g in local_kc_groups if g not in remote_groups
+                    ],
+                    "added_groups": [
+                        g for g in remote_groups if g not in local_kc_groups
+                    ],
+                    "unchanged_groups": [
                         r
                         for r in local_groups
-                        if r not in group_changes["dropped_groups"]
-                    ]
+                        if r
+                        not in [
+                            g
+                            for g in local_kc_groups
+                            if g not in remote_groups
+                        ]
+                    ],
+                }
+
         return group_changes
 
     @staticmethod

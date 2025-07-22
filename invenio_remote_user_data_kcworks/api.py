@@ -20,9 +20,9 @@ class Group(BaseModel):
     """Group model representing a user's group membership."""
 
     id: int
-    group_name: str
+    group_name: str | None = None
     role: str
-    url: HttpUrl
+    url: HttpUrl | None = None
 
 
 class Profile(BaseModel):
@@ -35,7 +35,7 @@ class Profile(BaseModel):
     last_name: str
     institutional_affiliation: str
     orcid: str
-    academic_interests: list[AcademicInterest]
+    academic_interests: list[AcademicInterest] | None = None
     groups: list[Group]
     url: HttpUrl | None = None
 

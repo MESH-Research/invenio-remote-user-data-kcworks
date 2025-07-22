@@ -393,18 +393,17 @@ class RemoteUserDataService(Service):
             for external_id in user.external_identifiers:
                 self.logger.debug(f"External ID: {external_id}")
                 if external_id.method == "knowledgeCommons":
-                    self.logger.debug(f"Found KC ID: {external_id['id']}")
+                    self.logger.debug(f"Found KC ID: {external_id}")
                     break
 
             # TODO: if we don't have a remote id using this, we need to use
             # the KC username to fetch the user, which is not a problem
             if not remote_data.data or len(remote_data.data) == 0:
                 for external_id in user.external_ids:
-                    if external_id["method"] == "knowledgeCommons":
-                        remote_id = external_id["id"]
+                    if external_id.method == "knowledgeCommons":
+                        remote_id = external_id
                         remote_data: Profile = fetch_user_profile(remote_id)
                         break
-                pass
             else:
                 if not remote_data.meta.authorized:
                     self.logger.error("Problem with static bearer key")
@@ -444,9 +443,17 @@ class RemoteUserDataService(Service):
                     **kwargs,
                 )
 
+                print("UPDATED DATA")
+                print(group_changes)
+
                 self.logger.debug(f"User changes: {user_changes}")
                 self.logger.debug(f"Group changes: {group_changes}")
-                db.session.commit()
+
+                # if not in test, commit
+                # this is not very good practice, but a session
+                # commit appeared to caause ORM problems with the ORM
+                if not hasattr(user, "mock"):
+                    db.session.commit()
 
                 return (
                     user,

@@ -318,10 +318,7 @@ class RemoteUserDataService(Service):
 
         @remote_data_updated.connect_via(app)
         def on_webhook_update_signal(_, events: list) -> None:
-            """Update user data from remote server when webhook is triggered.
-
-            ...
-            """
+            """Update user data from remote when webhook is triggered."""
             self.logger.info("%%%%% webhook signal received")
 
             for event in current_queues.queues["user-data-updates"].consume():
@@ -424,7 +421,7 @@ class RemoteUserDataService(Service):
                     profile = remote_data.results[0].profile
 
                 # update the user profile
-                user.username = profile.username
+                user.username = "knowledgeCommons-" + profile.username
                 user.full_name = profile.name
                 user.email = profile.email
 
@@ -442,9 +439,6 @@ class RemoteUserDataService(Service):
                     group_changes,
                     **kwargs,
                 )
-
-                print("UPDATED DATA")
-                print(group_changes)
 
                 self.logger.debug(f"User changes: {user_changes}")
                 self.logger.debug(f"Group changes: {group_changes}")

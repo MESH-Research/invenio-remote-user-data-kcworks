@@ -425,9 +425,9 @@ class CILogonHelpers:
         """
         updated_data = {}
         if user_changes:
-            # if email changes, keep teh old email as an
+            # if email changes, keep the old email as an
             # `identifier_email` in the user_profile
-            user.username = new_data["username"]
+            user.username = "knowledgeCommons-" + new_data["username"]
             user.user_profile = new_data["user_profile"]
             user.preferences = new_data["preferences"]
             if user.email != new_data["email"]:

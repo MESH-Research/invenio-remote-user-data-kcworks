@@ -14,6 +14,7 @@ import datetime
 import hashlib
 import json
 import os
+
 from urllib.parse import urlencode, urlunparse, urlparse
 
 import invenio_oauthclient
@@ -27,7 +28,7 @@ from invenio_accounts.models import User, UserIdentity
 from invenio_db import db
 from jwt.algorithms import RSAAlgorithm
 
-from .api import update_token_information
+from .api import update_token_information, APIResponse, Profile
 from .groups import GroupRolesComponent
 
 
@@ -342,6 +343,7 @@ class CILogonHelpers:
         user: User, external_method: str, external_id: str
     ) -> None:
         """Ensure that a user has a linked identity with the  external ID."""
+        # TODO: deduplicate this function
         existing_identity = UserIdentity.query.filter_by(
             method=external_method, id=external_id
         ).first()
@@ -451,7 +453,7 @@ class CILogonHelpers:
         return updated_data
 
     @staticmethod
-    def calculate_user_changes(profile, user):
+    def calculate_user_changes(profile: APIResponse, user):
         """Calculate the changes between the existing user and remote data."""
         initial_user_data = {
             "username": user.username,
@@ -476,6 +478,11 @@ class CILogonHelpers:
 
         new_data: dict = {"active": True}
         new_data["user_profile"] = {**initial_user_data["user_profile"]}
+
+        # reassign profile
+        if isinstance(profile, APIResponse):
+            profile = profile.data[0].profile
+
         new_data["user_profile"].update(
             {
                 "full_name": profile.name,
@@ -509,7 +516,7 @@ class CILogonHelpers:
         return user_changes, new_data
 
     @staticmethod
-    def calculate_group_changes(profile, user):
+    def calculate_group_changes(profile: APIResponse | Profile, user):
         """Calculate the changes between the existing user and the data."""
         local_groups = [r.name for r in user.roles]
 
@@ -518,6 +525,9 @@ class CILogonHelpers:
             "added_groups": [],
             "unchanged_groups": local_groups,
         }
+
+        if isinstance(profile, APIResponse):
+            profile = profile.data[0].profile
 
         if profile and profile.groups:
             groups = [g for g in profile.groups]

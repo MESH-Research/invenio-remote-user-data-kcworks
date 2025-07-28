@@ -6,6 +6,7 @@
 # invenio-remote-user-data-kcworks is free software; you can redistribute it
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
+import contextlib
 
 # from flask import render_template
 from flask import (
@@ -15,6 +16,7 @@ from flask import (
     g,
 )
 from flask.views import MethodView
+from invenio_accounts.errors import AlreadyLinkedError
 from invenio_accounts.models import UserIdentity
 from invenio_queues.proxies import current_queues
 from werkzeug.exceptions import (
@@ -188,7 +190,8 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs):
             user = CILogonHelpers.create_new_user(result)
 
         # link the user to the external id from cilogon
-        CILogonHelpers.link_user_to_oauth_identifier(user, "cilogon", sub)
+        with contextlib.suppress(AlreadyLinkedError):
+            CILogonHelpers.link_user_to_oauth_identifier(user, "cilogon", sub)
 
         # send the tokens to the storage API so that on logout they can be
         # revoked

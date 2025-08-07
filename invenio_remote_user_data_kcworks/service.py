@@ -8,24 +8,24 @@
 # LICENSE file for more details.
 
 import datetime
-
-from invenio_access.permissions import system_identity
-from invenio_accounts.models import User, UserIdentity
-from invenio_accounts.proxies import current_accounts
-from invenio_group_collections_kcworks.proxies import (
-    current_group_collections_service,
-)  # noqa
-from invenio_group_collections_kcworks.utils import format_group_role_name
-from invenio_queues.proxies import current_queues
-from invenio_records_resources.services import Service
 import json
 import os
+import traceback
+from typing import Optional
 
 # from pprint import pprint
 import requests
-import traceback
-from typing import Optional
+from invenio_access.permissions import system_identity
+from invenio_accounts.models import User, UserIdentity
+from invenio_accounts.proxies import current_accounts
+from invenio_group_collections_kcworks.proxies import (  # noqa
+    current_group_collections_service,
+)
+from invenio_group_collections_kcworks.utils import format_group_role_name
+from invenio_queues.proxies import current_queues
+from invenio_records_resources.services import Service
 from werkzeug.local import LocalProxy
+
 from .components.groups import GroupRolesComponent
 from .signals import remote_data_updated
 from .tasks import do_group_data_update, do_user_data_update

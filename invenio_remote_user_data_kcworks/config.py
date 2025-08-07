@@ -8,11 +8,11 @@
 # LICENSE file for more details.
 
 from kombu import Exchange
+
 from .permissions import (
     CustomCommunitiesPermissionPolicy,
     RemoteUserDataPermissionPolicy,
 )
-
 
 REMOTE_USER_DATA_API_ENDPOINTS = {
     "knowledgeCommons": {

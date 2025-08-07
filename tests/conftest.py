@@ -12,6 +12,8 @@ See https://pytest-invenio.readthedocs.io/ for documentation on which test
 fixtures are available.
 """
 
+import os
+
 import pytest
 from flask_security import login_user
 from flask_security.utils import hash_password
@@ -23,8 +25,8 @@ from invenio_app.factory import create_api  # create_app as create_ui_api
 from invenio_communities.proxies import (
     current_communities,
 )
-from invenio_oauthclient.models import UserIdentity
 from invenio_oauth2server.models import Token
+from invenio_oauthclient.models import UserIdentity
 from invenio_queues.proxies import current_queues
 from invenio_records_resources.services.custom_fields import (
     TextCF,
@@ -45,9 +47,7 @@ from invenio_search.utils import build_alias_name
 from invenio_vocabularies.proxies import current_service as vocabulary_service
 from invenio_vocabularies.records.api import Vocabulary
 from kombu import Exchange
-
 from marshmallow import Schema, fields
-import os
 
 # from pprint import pformat
 

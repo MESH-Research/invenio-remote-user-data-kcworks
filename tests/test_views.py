@@ -1,22 +1,20 @@
+import json
+import os
+
 import arrow
+import pytest
 from flask import url_for
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import UserIdentity
 from invenio_accounts.proxies import current_accounts
-from invenio_users_resources.proxies import (
-    current_groups_service as current_groups,
-    current_users_service as current_users,
-)
-import pytest
-import json
-import os
-
 from invenio_remote_user_data_kcworks.components.groups import (
     GroupRolesComponent,
 )
 from invenio_remote_user_data_kcworks.service import (
     RemoteUserDataService,
 )
+from invenio_users_resources.proxies import current_groups_service as current_groups
+from invenio_users_resources.proxies import current_users_service as current_users
 
 
 def test_webhook_get(client, app, search_clear):

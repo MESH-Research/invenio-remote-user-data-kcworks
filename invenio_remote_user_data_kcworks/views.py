@@ -100,22 +100,24 @@ and included in the request header.
 
 # from flask import render_template
 from crypt import methods
+
 from flask import (
     Blueprint,
+)
+from flask import current_app as app
+from flask import (
     jsonify,
     make_response,
     request,
-    current_app as app,
 )
 from flask.views import MethodView
 from invenio_accounts.models import UserIdentity
 from invenio_queues.proxies import current_queues
-from werkzeug.exceptions import (
+from werkzeug.exceptions import (  # Unauthorized,
     BadRequest,
     Forbidden,
     MethodNotAllowed,
     NotFound,
-    # Unauthorized,
 )
 
 from .signals import remote_data_updated

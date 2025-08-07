@@ -2,12 +2,12 @@
 from invenio_remote_user_data_kcworks.components.groups import (
     GroupRolesComponent,
 )
-
-# from pprint import pprint
-
 from invenio_remote_user_data_kcworks.proxies import (
     current_remote_user_data_service,
 )
+
+# from pprint import pprint
+
 
 
 def test_get_current_user_roles(app, user_factory):

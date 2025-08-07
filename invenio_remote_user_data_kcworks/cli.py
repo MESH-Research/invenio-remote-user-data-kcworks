@@ -1,14 +1,14 @@
+import re
+from pprint import pprint
+
 import click
 from flask.cli import with_appcontext
 from invenio_access.permissions import system_identity
 from invenio_accounts.proxies import current_datastore
 from invenio_oauthclient.models import UserIdentity
 from invenio_users_resources.proxies import current_users_service
-from pprint import pprint
-import re
-from .proxies import (
-    current_remote_user_data_service as user_data_service,
-)
+
+from .proxies import current_remote_user_data_service as user_data_service
 
 
 @click.group()

@@ -9,18 +9,20 @@
 
 """Celery task to update user data from remote API."""
 
+from typing import Optional
+
 # from celery import current_app as current_celery_app
 from celery import shared_task
 from celery.utils.log import get_task_logger
 from flask import current_app as app  # , session
 from invenio_access.permissions import system_identity
-from invenio_accounts.models import UserIdentity, User  # Role,
-from .proxies import (
-    current_remote_user_data_service,
-    current_remote_group_service,
-)
+from invenio_accounts.models import User, UserIdentity  # Role,
+
 from .errors import NoIDPFoundError
-from typing import Optional
+from .proxies import (
+    current_remote_group_service,
+    current_remote_user_data_service,
+)
 
 task_logger = get_task_logger(__name__)
 

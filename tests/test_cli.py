@@ -1,10 +1,11 @@
-import arrow
-from invenio_access.permissions import system_identity
-from invenio_accounts.proxies import current_accounts
-from invenio_accounts.models import UserIdentity
-from invenio_users_resources.proxies import current_users_service
 from pprint import pprint
+
+import arrow
 import pytest
+from invenio_access.permissions import system_identity
+from invenio_accounts.models import UserIdentity
+from invenio_accounts.proxies import current_accounts
+from invenio_users_resources.proxies import current_users_service
 
 
 @pytest.mark.parametrize(

@@ -1,18 +1,18 @@
 """Custom permission policy to allow direct adding of users to communities."""
 
-from invenio_access import action_factory, Permission
+from invenio_access import Permission, action_factory
 from invenio_administration.generators import Administration
-
-# from invenio_administration.permissions import administration_access_action
-from invenio_communities.permissions import (
-    CommunityPermissionPolicy,
-)
 from invenio_communities.generators import (
     AllowedMemberTypes,
     CommunityCurators,
     CommunityManagersForRole,
     CommunityOwners,
     IfPolicyClosed,
+)
+
+# from invenio_administration.permissions import administration_access_action
+from invenio_communities.permissions import (
+    CommunityPermissionPolicy,
 )
 
 # FIXME: This is a temporary hack since the GroupsEnabled generator
@@ -23,6 +23,7 @@ try:
     )
 except ImportError:
     from invenio_communities.generators import GroupsEnabled
+
 from invenio_records_permissions import BasePermissionPolicy
 from invenio_records_permissions.generators import (
     AnyUser,

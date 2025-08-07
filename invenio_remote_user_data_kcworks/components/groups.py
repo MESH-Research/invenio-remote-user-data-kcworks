@@ -7,6 +7,9 @@
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
+from pprint import pformat
+from typing import Optional, Union
+
 from flask import current_app as app
 from invenio_accounts.models import Role, User
 from invenio_accounts.proxies import current_accounts
@@ -16,9 +19,6 @@ from invenio_accounts.proxies import current_accounts
 from invenio_records_resources.services.records.components.base import (
     ServiceComponent,
 )
-from pprint import pformat
-from typing import Union, Optional
-
 
 # TODO: Most of these operations use the invenio_accounts datastore
 # directly. The invenio-users-resources groups service may be appropriate,

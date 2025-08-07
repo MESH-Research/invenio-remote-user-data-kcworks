@@ -227,6 +227,7 @@ Other environment variables
 """
 
 from __future__ import absolute_import, print_function
+
 from .ext import InvenioRemoteUserData
 
 __version__ = "0.6.1-beta3"

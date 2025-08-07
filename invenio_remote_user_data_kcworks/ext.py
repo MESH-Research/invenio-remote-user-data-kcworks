@@ -14,6 +14,7 @@ from flask_login import user_logged_in
 # from flask_principal import  identity_changed, Identity
 from flask_security import current_user
 from invenio_accounts.models import User
+
 from . import config
 from .service import RemoteGroupDataService, RemoteUserDataService
 from .tasks import do_user_data_update

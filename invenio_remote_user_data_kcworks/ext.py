@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # This file is part of the invenio-remote-user-data-kcworks package.
 # Copyright (C) 2023, MESH Research.
@@ -12,7 +11,6 @@ from flask import current_app, session  # after_this_request, request,
 from flask_login import user_logged_in
 
 # from flask_principal import  identity_changed, Identity
-from flask_security import current_user
 from invenio_accounts.models import User
 
 from . import config
@@ -67,7 +65,7 @@ def on_user_logged_in(_, user: User) -> None:
                 do_user_data_update.delay(user.id)  # noqa
 
 
-class InvenioRemoteUserData(object):
+class InvenioRemoteUserData:
     """Flask extension for Invenio-remote-user-data-kcworks.
 
     Args:

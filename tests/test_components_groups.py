@@ -9,7 +9,6 @@ from invenio_remote_user_data_kcworks.proxies import (
 # from pprint import pprint
 
 
-
 def test_get_current_user_roles(app, user_factory):
     """Test fetching of current user's roles.
 

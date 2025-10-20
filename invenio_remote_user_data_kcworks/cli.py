@@ -65,8 +65,7 @@ def update_user_data(
     by_email: bool,
     by_username: bool,
 ):
-    """
-    Update user or group metadata from the remote data service.
+    """Update user or group metadata from the remote data service.
 
     If IDS are not specified, all records (either users or groups)
     will be updated from the specified remote service.

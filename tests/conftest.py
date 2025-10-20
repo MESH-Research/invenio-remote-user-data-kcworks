@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # Copyright (C) 2023-4 Mesh Research
 #
@@ -16,7 +15,6 @@ import os
 
 import pytest
 from flask_security import login_user
-from flask_security.utils import hash_password
 from invenio_access.models import ActionRoles, Role
 from invenio_access.permissions import superuser_access, system_identity
 from invenio_accounts.testutils import login_user_via_session

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # This file is part of the invenio-remote-user-data-kcworks package.
 # Copyright (C) 2023, MESH Research.
@@ -99,17 +98,14 @@ and included in the request header.
 """
 
 # from flask import render_template
-from crypt import methods
 
 from flask import (
     Blueprint,
-)
-from flask import current_app as app
-from flask import (
     jsonify,
     make_response,
     request,
 )
+from flask import current_app as app
 from flask.views import MethodView
 from invenio_accounts.models import UserIdentity
 from invenio_queues.proxies import current_queues
@@ -124,8 +120,7 @@ from .signals import remote_data_updated
 
 
 class RemoteUserDataUpdateWebhook(MethodView):
-    """
-    View class for the remote-user-data-kcworks webhook api endpoint.
+    """View class for the remote-user-data-kcworks webhook api endpoint.
     """
 
     # init_every_request = False  # FIXME: is this right?
@@ -136,8 +131,7 @@ class RemoteUserDataUpdateWebhook(MethodView):
         self.logger = app.logger
 
     def post(self):
-        """
-        Handle POST requests to the user data webhook endpoint.
+        """Handle POST requests to the user data webhook endpoint.
 
         These are requests from a remote IDP indicating that user or group
         data has been updated on the remote server.
@@ -288,7 +282,6 @@ class RemoteUserDataUpdateWebhook(MethodView):
 
 def create_api_blueprint(app):
     """Register blueprint on api app."""
-
     with app.app_context():
         blueprint = Blueprint(
             "invenio_remote_user_data_kcworks",

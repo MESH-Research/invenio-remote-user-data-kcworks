@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # This file is part of the invenio-remote-user-data-kcworks package.
 # Copyright (C) 2023, MESH Research.
@@ -226,7 +225,6 @@ Other environment variables
 
 """
 
-from __future__ import absolute_import, print_function
 
 from .ext import InvenioRemoteUserData
 

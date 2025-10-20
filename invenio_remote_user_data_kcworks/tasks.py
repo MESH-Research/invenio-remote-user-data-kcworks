@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # This file is part of the invenio-remote-user-data-kcworks package.
 # Copyright (C) 2023, MESH Research.
@@ -9,7 +8,6 @@
 
 """Celery task to update user data from remote API."""
 
-from typing import Optional
 
 # from celery import current_app as current_celery_app
 from celery import shared_task
@@ -29,7 +27,7 @@ task_logger = get_task_logger(__name__)
 
 @shared_task(ignore_result=False)
 def do_user_data_update(
-    user_id: int, idp: Optional[str] = None, remote_id: Optional[str] = None, **kwargs
+    user_id: int, idp: str | None = None, remote_id: str | None = None, **kwargs
 ) -> tuple[User, dict, list[str], dict]:
     """Perform a user metadata update.
 
@@ -47,7 +45,6 @@ def do_user_data_update(
         - A dictionary of the changes to the user's group memberships (with
           the keys "added_groups", "dropped_groups", and "unchanged_groups").
     """
-
     with app.app_context():
         if not idp:
             my_user_identity = UserIdentity.query.filter_by(
@@ -89,7 +86,6 @@ def do_user_data_update(
 @shared_task(ignore_result=False)
 def do_group_data_update(idp, remote_id, **kwargs):
     """Perform a group metadata update."""
-
     with app.app_context():
         task_logger.info(dir(task_logger))
         task_logger.info(task_logger.handlers)

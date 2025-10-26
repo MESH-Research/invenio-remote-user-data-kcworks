@@ -8,7 +8,6 @@
 
 """Celery task to update user data from remote API."""
 
-
 # from celery import current_app as current_celery_app
 from celery import shared_task
 from celery.utils.log import get_task_logger
@@ -35,6 +34,7 @@ def do_user_data_update(
         user_id: The local ID of the user to update.
         idp: The remote service configuration to use for the update.
         remote_id: The ID of the user on the remote system.
+        kwargs: Additional keyword arguments
 
     Returns:
         A tuple containing
@@ -55,11 +55,6 @@ def do_user_data_update(
                 idp = my_user_identity.method
                 remote_id = my_user_identity.id
 
-        # task_logger.debug("doing task&&&&&&&")
-        # print("doing task&&&&&&&")
-        # task_logger.info(dir(task_logger))
-        # task_logger.info(task_logger.handlers)
-        # app.logger.info(task_logger.handlers)
         if idp:
             service = current_remote_user_data_service
 
@@ -78,7 +73,7 @@ def do_user_data_update(
                 )
             )
             task_logger.info(f"updated_data: {updated_data}")
-            return user, updated_data, groups, groups_changes
+            return user.id, updated_data, groups, groups_changes
         else:
             raise NoIDPFoundError(f"No IDP found for user {user_id}")
 

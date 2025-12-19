@@ -6,6 +6,7 @@
 # invenio-remote-user-data-kcworks is free software; you can redistribute it
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
+
 import contextlib
 
 # from flask import render_template
@@ -88,15 +89,15 @@ def _login(remote_app, authorized_view_name):
     # Create a JSON Web Token that expires after OAUTHCLIENT_STATE_EXPIRES
     # seconds.
     state_token = base64.urlsafe_b64encode(
-        json.dumps(
-            {
-                "app": remote_app,
-                "next": next_param,
-                "sid": _create_identifier(),
-                "callback_next": callback_url,
-            }
-        ).encode()
+        json.dumps({
+            "app": remote_app,
+            "next": next_param,
+            "sid": _create_identifier(),
+            "callback_next": callback_url,
+        }).encode()
     )
+    current_app.logger.debug("stats_token")
+    current_app.logger.debug(base64.urlsafe_b64encode(state_token).decode())
 
     # the path the user will take, here, will be:
     # here -> cilogon
@@ -126,6 +127,9 @@ def login(remote_app):
 
 def _authorized(remote_app=None):
     """Authorized handler callback."""
+    current_app.logger.debug("oauth handlers")
+    current_app.logger.debug(current_oauthclient.handlers)
+
     if remote_app not in current_oauthclient.handlers:
         return abort(404)
 
@@ -134,13 +138,11 @@ def _authorized(remote_app=None):
     data = json.loads(base64.urlsafe_b64decode(state_token).decode())
 
     # repack the state token in a way that Invenio uses
-    state_token = serializer.dumps(
-        {
-            "next": data["next"],
-            "sid": data["sid"],
-            "app": data["app"],
-        }
-    )
+    state_token = serializer.dumps({
+        "next": data["next"],
+        "sid": data["sid"],
+        "app": data["app"],
+    })
 
     # Verify state parameter
     assert state_token
@@ -166,9 +168,7 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs):
     resp = remote.authorized_response()
 
     # validate the token and extract the data fields
-    decoded_token, id_token, sub = (
-        CILogonHelpers.validate_token_and_extract_sub(resp)
-    )
+    decoded_token, id_token, sub = CILogonHelpers.validate_token_and_extract_sub(resp)
 
     # get user profile
     # contains: data, meta, next, previous
@@ -203,10 +203,14 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs):
         user.full_name = result.data[0].profile.name
         user.email = result.data[0].profile.email
 
+        # TODO: identifier_kc_username
+        # TODO: identifier_orcid
+        # TODO: name_parts
+        # TODO: affiliations as list? ROR?
+        # NOTE: Invenio full_name is generated dynamically
+
         group_changes = CILogonHelpers.calculate_group_changes(result, user)
-        user_changes, new_data = CILogonHelpers.calculate_user_changes(
-            result, user
-        )
+        user_changes, new_data = CILogonHelpers.calculate_user_changes(result, user)
 
         CILogonHelpers.update_local_user_data(
             user,
@@ -356,6 +360,7 @@ class RemoteUserDataUpdateWebhook(MethodView):
     view_name = "remote_user_data_kcworks_webhook"
 
     def __init__(self):
+        # FIXME: Is the webhook token used?
         # self.webhook_token = os.getenv("REMOTE_USER_DATA_WEBHOOK_TOKEN")
         self.logger = app.logger
 
@@ -366,9 +371,7 @@ class RemoteUserDataUpdateWebhook(MethodView):
         These are requests from a remote IDP indicating that user or group
         data has been updated on the remote server.
         """
-        self.logger.debug(
-            "****Received POST request to webhook endpoint again"
-        )
+        self.logger.debug("****Received POST request to webhook endpoint again")
 
         current_remote_user_data_service.require_permission(
             g.identity, "trigger_update"
@@ -403,43 +406,35 @@ class RemoteUserDataUpdateWebhook(MethodView):
                                     )
                                 else:
                                     users.append(u["id"])
-                                    events.append(
-                                        {
-                                            "idp": idp,
-                                            "entity_type": e,
-                                            "event": u["event"],
-                                            "id": u["id"],
-                                        }
-                                    )
-                            elif e == "groups":
-                                groups.append(u["id"])
-                                events.append(
-                                    {
+                                    events.append({
                                         "idp": idp,
                                         "entity_type": e,
                                         "event": u["event"],
                                         "id": u["id"],
-                                    }
-                                )
+                                    })
+                            elif e == "groups":
+                                groups.append(u["id"])
+                                events.append({
+                                    "idp": idp,
+                                    "entity_type": e,
+                                    "event": u["event"],
+                                    "id": u["id"],
+                                })
                         else:
                             bad_events.append(u)
                             self.logger.error(
-                                f"{idp} Received update signal for "
-                                f"unknown event: {u}"
+                                f"{idp} Received update signal for unknown event: {u}"
                             )
                 else:
                     bad_entity_types.append(e)
                     self.logger.error(
-                        f"{idp} Received update signal for unknown "
-                        f"entity type: {e}"
+                        f"{idp} Received update signal for unknown entity type: {e}"
                     )
                     self.logger.error(data)
 
             if len(events) > 0:
                 current_queues.queues["user-data-updates"].publish(events)
-                remote_data_updated.send(
-                    app._get_current_object(), events=events
-                )
+                remote_data_updated.send(app._get_current_object(), events=events)
                 self.logger.debug(
                     f"Published {len(events)} events to queue and emitted"
                     " remote_data_updated signal"
@@ -455,13 +450,10 @@ class RemoteUserDataUpdateWebhook(MethodView):
                             entity_string += " and "
                         entity_string += "groups"
                     self.logger.error(
-                        f"{idp} requested updates for {entity_string} that"
-                        " do not exist"
+                        f"{idp} requested updates for {entity_string} that do not exist"
                     )
                     self.logger.error(data["updates"])
-                    raise NotFound(
-                        "Updates attempted for unknown users or groups"
-                    )
+                    raise NotFound("Updates attempted for unknown users or groups")
                 elif not groups and bad_groups:
                     self.logger.error(
                         f"{idp} requested updates for groups that do not exist"
@@ -486,13 +478,11 @@ class RemoteUserDataUpdateWebhook(MethodView):
             )
 
         return (
-            jsonify(
-                {
-                    "message": "Webhook notification accepted",
-                    "status": 202,
-                    "updates": data["updates"],
-                }
-            ),
+            jsonify({
+                "message": "Webhook notification accepted",
+                "status": 202,
+                "updates": data["updates"],
+            }),
             202,
         )
 

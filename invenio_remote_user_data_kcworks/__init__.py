@@ -10,12 +10,12 @@
 """Invenio extension for drawing user and groups data from a Remote API.
 
 This extension provides a service and event triggers to draws user data
-from a remote API associated with a SAML login ID provider. (This is
-user data that cannot be derived from the SAML response itself at login,
-but must be pulled separately from an API.)
+from a remote API associated with an external authentication provider (OAuth/SAML).
+(This is user data that cannot be derived from the authentication response itself
+at login, but must be pulled separately from an API.)
 
-The service checks to see whether the current user logged in with a SAML
-provider. If so, it sends an API request to the appropriate remote API
+The service checks to see whether the current user logged in with an external
+authentication provider. If so, it sends an API request to the appropriate remote API
 associated with that server and stores or updates the user's data on the
 remote service in the Invenio database.
 

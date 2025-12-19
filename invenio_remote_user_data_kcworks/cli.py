@@ -34,7 +34,7 @@ def cli():
     "--source",
     default="knowledgeCommons",
     help=(
-        "Remote source name. Should be the same as the saml IDP listed in "
+        "Remote source name. Should be the same as the OAuth/SAML IDP listed in "
         "the UserIdentity table."
     ),
 )

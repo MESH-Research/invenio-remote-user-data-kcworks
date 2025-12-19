@@ -104,9 +104,9 @@ class CILogonHelpers:
                         original.get(key, {}), value
                     )
                 elif isinstance(value, list):
-                    diff[key] = [
-                        i for i in value if i not in original.get(key, [])
-                    ] + [x for x in original.get(key, []) if x not in value]
+                    diff[key] = [i for i in value if i not in original.get(key, [])] + [
+                        x for x in original.get(key, []) if x not in value
+                    ]
                 else:
                     if original.get(key) != value:
                         diff[key] = value
@@ -180,25 +180,21 @@ class CILogonHelpers:
         params = {"userinfo": id_token}
 
         # encode the query string
-        encoder = SecureParamEncoder(
-            current_app.config.get("STATIC_BEARER_TOKEN")
-        )
+        encoder = SecureParamEncoder(os.getenv("COMMONS_PROFILES_API_TOKEN"))
 
         encoded_params = {"userinfo": encoder.encode(params)}
         query_string = urlencode(encoded_params)
         parsed_url = urlparse(base_url)
 
         # Reconstruct the URL
-        return urlunparse(
-            (
-                parsed_url.scheme,
-                parsed_url.netloc,
-                parsed_url.path,
-                parsed_url.params,
-                query_string,
-                parsed_url.fragment,
-            )
-        )
+        return urlunparse((
+            parsed_url.scheme,
+            parsed_url.netloc,
+            parsed_url.path,
+            parsed_url.params,
+            query_string,
+            parsed_url.fragment,
+        ))
 
     @staticmethod
     def _get_external_id(account_info):
@@ -216,7 +212,7 @@ class CILogonHelpers:
     ) -> User | None:
         """Retrieve user object for the given request.
 
-        Extends invenio_saml.invenio_accounts.utils.account_get_user to allow for
+        Extends the default account_get_user to allow for
         retrieving a user by ORCID as well as email.
 
         Uses either the access token or extracted account information to retrieve
@@ -273,9 +269,7 @@ class CILogonHelpers:
         try:
             external_id = CILogonHelpers._get_external_id(account_info)
             if external_id:
-                return UserIdentity.get_user(
-                    external_id["method"], external_id["id"]
-                )
+                return UserIdentity.get_user(external_id["method"], external_id["id"])
         except Exception:
             # Log the exception in a real implementation
             pass
@@ -319,8 +313,7 @@ class CILogonHelpers:
 
             # Then try profile lookup
             return User.query.filter(
-                User._user_profile.op("->>")("identifier_kc_username")
-                == kc_username
+                User._user_profile.op("->>")("identifier_kc_username") == kc_username
             ).one_or_none()
         except Exception:
             pass
@@ -349,9 +342,7 @@ class CILogonHelpers:
         ).first()
 
         if existing_identity:
-            current_app.logger.debug(
-                "User already has identity linked to CILogon"
-            )
+            current_app.logger.debug("User already has identity linked to CILogon")
             # Update existing record if needed
             if existing_identity.user != user:
                 existing_identity.user = user
@@ -384,10 +375,7 @@ class CILogonHelpers:
 
         for group_name in changed_memberships["added_groups"]:
             group_role = grouper.find_or_create_group(group_name)
-            if (
-                group_role
-                and grouper.add_user_to_group(group_role, user) is not None
-            ):
+            if group_role and grouper.add_user_to_group(group_role, user) is not None:
                 updated_local_groups.append(group_role.name)
 
         for group_name in changed_memberships["dropped_groups"]:
@@ -395,8 +383,7 @@ class CILogonHelpers:
 
             if (
                 group_role
-                and grouper.remove_user_from_group(group_role, user)
-                is not None
+                and grouper.remove_user_from_group(group_role, user) is not None
             ):
                 updated_local_groups.remove(group_role.name)
                 # NOTE: We don't delete the group role because that would
@@ -439,13 +426,9 @@ class CILogonHelpers:
             updated_data["user"] = user_changes
         else:
             updated_data["user"] = []
-        if group_changes.get("added_groups") or group_changes.get(
-            "dropped_groups"
-        ):
-            updated_data["groups"] = (
-                CILogonHelpers._update_invenio_group_memberships(
-                    user, group_changes, **kwargs
-                )
+        if group_changes.get("added_groups") or group_changes.get("dropped_groups"):
+            updated_data["groups"] = CILogonHelpers._update_invenio_group_memberships(
+                user, group_changes, **kwargs
             )
         else:
             updated_data["groups"] = group_changes["unchanged_groups"] or []
@@ -465,9 +448,7 @@ class CILogonHelpers:
 
         try:
             initial_user_data["user_profile"] = user.user_profile
-            current_app.logger.debug(
-                f"Initial user profile: {user.user_profile}"
-            )
+            current_app.logger.debug(f"Initial user profile: {user.user_profile}")
         except ValueError:
             current_app.logger.error(
                 f"Error fetching initial user profile data for user {user.id}. "
@@ -483,33 +464,25 @@ class CILogonHelpers:
         if isinstance(profile, APIResponse):
             profile = profile.data[0].profile
 
-        new_data["user_profile"].update(
-            {
-                "full_name": profile.name,
-                "name_parts": json.dumps(
-                    {
-                        "first": profile.first_name,
-                        "last": profile.last_name,
-                    }
-                ),
-            }
-        )
+        new_data["user_profile"].update({
+            "full_name": profile.name,
+            "name_parts": json.dumps({
+                "first": profile.first_name,
+                "last": profile.last_name,
+            }),
+        })
         if profile.institutional_affiliation:
-            new_data["user_profile"][
-                "affiliations"
-            ] = profile.institutional_affiliation
+            new_data["user_profile"]["affiliations"] = profile.institutional_affiliation
         if profile.orcid and profile.orcid != "":
             new_data["user_profile"]["identifier_orcid"] = profile.orcid
         new_data["user_profile"]["identifier_kc_username"] = profile.username
         new_data["username"] = profile.username
         new_data["email"] = profile.email
         new_data["preferences"] = user.preferences
-        new_data["preferences"].update(
-            {
-                "visibility": "public",
-                "email_visibility": "public",
-            }
-        )
+        new_data["preferences"].update({
+            "visibility": "public",
+            "email_visibility": "public",
+        })
         user_changes = CILogonHelpers._diff_between_nested_dicts(
             initial_user_data, new_data
         )
@@ -540,9 +513,7 @@ class CILogonHelpers:
             if remote_groups != local_groups:
                 # Filter local groups to only knowledge commons groups for comparison
                 local_kc_groups = [
-                    g
-                    for g in local_groups
-                    if g.split("---")[0] == "knowledgeCommons"
+                    g for g in local_groups if g.split("---")[0] == "knowledgeCommons"
                 ]
 
                 group_changes = {
@@ -556,11 +527,7 @@ class CILogonHelpers:
                         r
                         for r in local_groups
                         if r
-                        not in [
-                            g
-                            for g in local_kc_groups
-                            if g not in remote_groups
-                        ]
+                        not in [g for g in local_kc_groups if g not in remote_groups]
                     ],
                 }
 
@@ -625,9 +592,7 @@ class CILogonHelpers:
     @staticmethod
     def create_new_user(result):
         """Create a new user."""
-        current_app.logger.debug(
-            f"Creating user: {result.data[0].profile.username}"
-        )
+        current_app.logger.debug(f"Creating user: {result.data[0].profile.username}")
         user_info = {
             "username": result.data[0].profile.username,
             "email": result.data[0].profile.email,
@@ -663,13 +628,11 @@ def diff_between_nested_dicts(original, update):
     else:
         for key, value in update.items():
             if isinstance(value, dict):
-                diff[key] = diff_between_nested_dicts(
-                    original.get(key, {}), value
-                )
+                diff[key] = diff_between_nested_dicts(original.get(key, {}), value)
             elif isinstance(value, list):
-                diff[key] = [
-                    i for i in value if i not in original.get(key, [])
-                ] + [x for x in original.get(key, []) if x not in value]
+                diff[key] = [i for i in value if i not in original.get(key, [])] + [
+                    x for x in original.get(key, []) if x not in value
+                ]
             else:
                 if original.get(key) != value:
                     diff[key] = value

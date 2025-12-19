@@ -85,10 +85,10 @@ def fetch_user_profile(
         raise ValueError("sub_id and kc_username cannot both be provided")
 
     # Get bearer token from environment variable
-    bearer_token = current_app.config.get("STATIC_BEARER_TOKEN")
+    bearer_token = os.getenv("COMMONS_PROFILES_API_TOKEN")
 
     if not bearer_token:
-        raise ValueError("STATIC_BEARER_TOKEN environment variable not found")
+        raise ValueError("COMMONS_PROFILES_API_TOKEN environment variable not found")
 
     # Prepare headers
     headers = {
@@ -160,10 +160,10 @@ def update_token_information(
     api_url = f"{base_api_url}tokens/"
 
     # Get bearer token from environment variable
-    bearer_token = current_app.config.get("STATIC_BEARER_TOKEN")
+    bearer_token = os.getenv("COMMONS_PROFILES_API_TOKEN")
 
     if not bearer_token:
-        raise ValueError("STATIC_BEARER_TOKEN environment variable not found")
+        raise ValueError("COMMONS_PROFILES_API_TOKEN environment variable not found")
 
     headers = {
         "Authorization": f"Bearer {bearer_token}",
@@ -180,9 +180,7 @@ def update_token_information(
     }
 
     # Make the POST request
-    response = requests.post(
-        api_url, json=payload, headers=headers, timeout=timeout
-    )
+    response = requests.post(api_url, json=payload, headers=headers, timeout=timeout)
 
     # Raise an exception if the request fails
     response.raise_for_status()

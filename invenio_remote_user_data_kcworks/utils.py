@@ -398,6 +398,7 @@ class CILogonHelpers:
         new_data: dict,
         user_changes: dict,
         group_changes: dict,
+        remote_service: str,
         **kwargs,
     ) -> dict:
         """Update Invenio user data for the supplied identity.
@@ -407,6 +408,8 @@ class CILogonHelpers:
             new_data (dict): The new user data.
             user_changes (dict): The changes to the user data.
             group_changes (dict): The changes to the user's group memberships.
+            remote_service (str): The name of the remote service providing
+                the user data update.
 
         Returns:
             dict: A dictionary of the updated user data with the keys "user"
@@ -416,7 +419,7 @@ class CILogonHelpers:
         if user_changes:
             # if email changes, keep the old email as an
             # `identifier_email` in the user_profile
-            user.username = "knowledgeCommons-" + new_data["username"]
+            user.username = f"{remote_service}-{new_data['username']}"
             user.user_profile = new_data["user_profile"]
             user.preferences = new_data["preferences"]
             if user.email != new_data["email"]:

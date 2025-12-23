@@ -1,5 +1,6 @@
 """This module provides functions and classes for interacting with the IDMS API."""
 
+import os
 import requests
 from flask import current_app, request
 from pydantic import BaseModel, HttpUrl

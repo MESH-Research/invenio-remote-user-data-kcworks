@@ -8,6 +8,7 @@
 # LICENSE file for more details.
 
 import contextlib
+from pprint import pformat
 
 # from flask import render_template
 from flask import (
@@ -96,8 +97,6 @@ def _login(remote_app, authorized_view_name):
             "callback_next": callback_url,
         }).encode()
     )
-    current_app.logger.debug("stats_token")
-    current_app.logger.debug(base64.urlsafe_b64encode(state_token).decode())
 
     # the path the user will take, here, will be:
     # here -> cilogon
@@ -183,9 +182,11 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs):
 
         # build an account_info dict that looks as expected
         account_info = CILogonHelpers.build_account_info(result, sub)
+        current_app.logger.debug(f"account_info: {pformat(account_info)}")
 
         # see if we have an existing user
         user = CILogonHelpers.get_user_from_account_info(account_info)
+        current_app.logger.debug(f"found user: {user.id}")
         if not user:
             user = CILogonHelpers.create_new_user(result)
 
@@ -203,10 +204,6 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs):
         user.full_name = result.data[0].profile.name
         user.email = result.data[0].profile.email
 
-        # TODO: identifier_kc_username
-        # TODO: identifier_orcid
-        # TODO: name_parts
-        # TODO: affiliations as list? ROR?
         # NOTE: Invenio full_name is generated dynamically
 
         group_changes = CILogonHelpers.calculate_group_changes(result, user)
@@ -217,6 +214,7 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs):
             new_data,
             user_changes,
             group_changes,
+            "knowledgeCommons",
             **kwargs,
         )
 

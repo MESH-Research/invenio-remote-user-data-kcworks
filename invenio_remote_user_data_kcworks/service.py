@@ -66,9 +66,7 @@ class RemoteGroupDataService(Service):
             when webhook is triggered.
             """
 
-            self.logger.debug(
-                "RemoteGroupDataService: webhook update signal received"
-            )
+            self.logger.debug("RemoteGroupDataService: webhook update signal received")
 
             for event in current_queues.queues["user-data-updates"].consume():
                 if event["entity_type"] == "groups" and event["event"] in [
@@ -78,23 +76,16 @@ class RemoteGroupDataService(Service):
                     celery_result = do_group_data_update.delay(  # noqa:F841
                         event["idp"], event["id"]
                     )  # type: ignore
-                elif (
-                    event["entity_type"] == "groups"
-                    and event["event"] == "deleted"
-                ):
+                elif event["entity_type"] == "groups" and event["event"] == "deleted":
                     raise NotImplementedError(
-                        "Group role deletion from remote signal is not "
-                        "yet implemented."
+                        "Group role deletion from remote signal is not yet implemented."
                     )
 
     def _update_community_metadata_dict(
         self, starting_dict: dict, new_data: dict
     ) -> dict:
         """Update a dictionary of community metadata with new data."""
-        assert (
-            new_data["id"]
-            == starting_dict["custom_fields"]["kcr:commons_group_id"]
-        )
+        assert new_data["id"] == starting_dict["custom_fields"]["kcr:commons_group_id"]
 
         metadata_updates = starting_dict["metadata"]
         custom_fields_updates = starting_dict["custom_fields"]
@@ -105,9 +96,7 @@ class RemoteGroupDataService(Service):
                     starting_dict["id"], new_data["avatar"]
                 )
             except AssertionError:
-                self.logger.error(
-                    f"Error uploading avatar for {new_data['id']} group."
-                )
+                self.logger.error(f"Error uploading avatar for {new_data['id']} group.")
 
         if "url" in new_data.keys():
             metadata_updates["website"] = new_data["url"]
@@ -165,9 +154,7 @@ class RemoteGroupDataService(Service):
         self.require_permission(identity, "trigger_update")
         results_dict = {}
         idp_config = self.endpoints_config[idp]
-        remote_api_token = os.environ[
-            idp_config["groups"]["token_env_variable_label"]
-        ]
+        remote_api_token = os.environ[idp_config["groups"]["token_env_variable_label"]]
 
         headers = {"Authorization": f"Bearer {remote_api_token}"}
         response = requests.get(
@@ -219,9 +206,9 @@ class RemoteGroupDataService(Service):
                         community, group_metadata
                     ),
                 )
-                results_dict.setdefault(community["slug"], {})[
-                    "metadata_updated"
-                ] = update_result.to_dict()
+                results_dict.setdefault(community["slug"], {})["metadata_updated"] = (
+                    update_result.to_dict()
+                )
             elif len(active_comms) == 0:
                 self.logger.info(
                     f"No active group collection found for {idp} "
@@ -322,10 +309,7 @@ class RemoteUserDataService(Service):
             self.logger.info("%%%%% webhook signal received")
 
             for event in current_queues.queues["user-data-updates"].consume():
-                if (
-                    event["entity_type"] == "users"
-                    and event["event"] == "updated"
-                ):
+                if event["entity_type"] == "users" and event["event"] == "updated":
                     try:
                         # confirm that user exists in Invenio
                         my_user_identity = UserIdentity.query.filter_by(
@@ -338,13 +322,10 @@ class RemoteUserDataService(Service):
                         )  # noqa
                     except AssertionError:
                         self.logger.error(
-                            f'Cannot update: user {event["id"]} does not exist'
+                            f"Cannot update: user {event['id']} does not exist"
                             " in Invenio."
                         )
-                elif (
-                    event["entity_type"] == "groups"
-                    and event["event"] == "updated"
-                ):
+                elif event["entity_type"] == "groups" and event["event"] == "updated":
                     # TODO: implement group updates and group/user creation
                     pass
 
@@ -383,13 +364,17 @@ class RemoteUserDataService(Service):
         )
         updated_data = {}
 
+        remote_service = idp
+        if idp in current_app.config.get("KC_REMOTE_IDPS"):
+            remote_service = "knowledgeCommons"
+
         try:
             user: User = current_accounts.datastore.get_user_by_id(user_id)
             remote_data: APIResponse = fetch_user_profile(sub_id=remote_id)
 
             for external_id in user.external_identifiers:
                 self.logger.debug(f"External ID: {external_id}")
-                if external_id.method == "knowledgeCommons":
+                if external_id.method in current_app.config.get("KC_REMOTE_IDPS"):
                     self.logger.debug(f"Found KC ID: {external_id}")
                     break
 
@@ -397,7 +382,7 @@ class RemoteUserDataService(Service):
             # the KC username to fetch the user, which is not a problem
             if not remote_data.data or len(remote_data.data) == 0:
                 for external_id in user.external_ids:
-                    if external_id.method == "knowledgeCommons":
+                    if external_id.method in current_app.config.get("KC_REMOTE_IDPS"):
                         remote_id = external_id
                         remote_data: Profile = fetch_user_profile(remote_id)
                         break
@@ -421,13 +406,11 @@ class RemoteUserDataService(Service):
                     profile = remote_data.results[0].profile
 
                 # update the user profile
-                user.username = "knowledgeCommons-" + profile.username
+                user.username = f"{remote_service}-{profile.username}"
                 user.full_name = profile.name
                 user.email = profile.email
 
-                group_changes = CILogonHelpers.calculate_group_changes(
-                    profile, user
-                )
+                group_changes = CILogonHelpers.calculate_group_changes(profile, user)
                 user_changes, new_data = CILogonHelpers.calculate_user_changes(
                     profile, user
                 )
@@ -437,6 +420,7 @@ class RemoteUserDataService(Service):
                     new_data,
                     user_changes,
                     group_changes,
+                    remote_service,
                     **kwargs,
                 )
 
@@ -458,14 +442,10 @@ class RemoteUserDataService(Service):
 
             else:
                 # no record found on remote server
-                self.logger.error(
-                    f"User {remote_id} not found on remote server."
-                )
+                self.logger.error(f"User {remote_id} not found on remote server.")
                 return user, remote_data, [], {}
 
         except Exception as e:
-            self.logger.error(
-                f"Error updating user data from remote server: {repr(e)}"
-            )
+            self.logger.error(f"Error updating user data from remote server: {repr(e)}")
             self.logger.error(traceback.format_exc())
             return None, None, [], {}

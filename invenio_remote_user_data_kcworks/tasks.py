@@ -45,7 +45,6 @@ def do_user_data_update(
         - A dictionary of the changes to the user's group memberships (with
           the keys "added_groups", "dropped_groups", and "unchanged_groups").
     """
-
     with app.app_context():
         if not idp:
             my_user_identity = UserIdentity.query.filter_by(
@@ -56,11 +55,6 @@ def do_user_data_update(
                 idp = my_user_identity.method
                 remote_id = my_user_identity.id
 
-        # task_logger.debug("doing task&&&&&&&")
-        # print("doing task&&&&&&&")
-        # task_logger.info(dir(task_logger))
-        # task_logger.info(task_logger.handlers)
-        # app.logger.info(task_logger.handlers)
         if idp:
             service = current_remote_user_data_service
 
@@ -89,9 +83,6 @@ def do_group_data_update(idp, remote_id, **kwargs):
     """Perform a group metadata update."""
 
     with app.app_context():
-        task_logger.info(dir(task_logger))
-        task_logger.info(task_logger.handlers)
-        app.logger.info(task_logger.handlers)
         service = current_remote_group_service
         service.update_group_from_remote(system_identity, idp, remote_id)
         return True

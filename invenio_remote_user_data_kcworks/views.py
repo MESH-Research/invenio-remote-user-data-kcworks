@@ -126,9 +126,6 @@ def login(remote_app):
 
 def _authorized(remote_app=None):
     """Authorized handler callback."""
-    current_app.logger.debug("oauth handlers")
-    current_app.logger.debug(current_oauthclient.handlers)
-
     if remote_app not in current_oauthclient.handlers:
         return abort(404)
 
@@ -369,8 +366,6 @@ class RemoteUserDataUpdateWebhook(MethodView):
         These are requests from a remote IDP indicating that user or group
         data has been updated on the remote server.
         """
-        self.logger.debug("****Received POST request to webhook endpoint again")
-
         current_remote_user_data_service.require_permission(
             g.identity, "trigger_update"
         )
@@ -378,6 +373,10 @@ class RemoteUserDataUpdateWebhook(MethodView):
         try:
             data = request.get_json()
             idp = data["idp"]
+            auth_method = idp
+            if idp == "knowledgeCommons":
+                # FIXME: Allow for multiple KC auth methods
+                auth_method = app.config["KC_REMOTE_IDPS"][0]
             events = []
             config = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]
             entity_types = config["entity_types"]
@@ -394,21 +393,25 @@ class RemoteUserDataUpdateWebhook(MethodView):
                         if u["event"] in entity_types[e]["events"]:
                             if e == "users":
                                 user_identity = UserIdentity.query.filter_by(
-                                    id=u["id"], method=idp
+                                    id=u["id"], method=auth_method
                                 ).one_or_none()
                                 if user_identity is None:
                                     bad_users.append(u["id"])
                                     self.logger.error(
                                         f"Received update signal from {idp} "
-                                        f"for unknown user: {u['id']}"
+                                        f"for unknown user: external id {u['id']}"
                                     )
                                 else:
+                                    self.logger.error(
+                                        f"user_identity: {user_identity.id_user}, {user_identity.id}"
+                                    )
                                     users.append(u["id"])
                                     events.append({
                                         "idp": idp,
                                         "entity_type": e,
                                         "event": u["event"],
-                                        "id": u["id"],
+                                        "oauth_id": user_identity.id,
+                                        "user_id": user_identity.id_user,
                                     })
                             elif e == "groups":
                                 groups.append(u["id"])
@@ -437,7 +440,6 @@ class RemoteUserDataUpdateWebhook(MethodView):
                     f"Published {len(events)} events to queue and emitted"
                     " remote_data_updated signal"
                 )
-                # self.logger.debug(events)
             else:
                 if not users and bad_users or not groups and bad_groups:
                     entity_string = ""
@@ -485,7 +487,6 @@ class RemoteUserDataUpdateWebhook(MethodView):
         )
 
     def get(self):
-        self.logger.debug("****Received GET request to webhook endpoint")
         return (
             jsonify({"message": "Webhook receiver is active", "status": 200}),
             200,

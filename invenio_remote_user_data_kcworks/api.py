@@ -103,7 +103,7 @@ def fetch_user_profile(
     if sub_id:
         url = f"{base_api_url}subs/?sub={sub_id}"
     else:
-        url = f"{base_api_url}users/{kc_username}/"
+        url = f"{base_api_url}members/{kc_username}/"
 
     try:
         response = requests.get(url, headers=headers)

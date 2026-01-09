@@ -24,6 +24,7 @@ import json
 import os
 
 # from pprint import pprint
+from flask import current_app
 import requests
 import traceback
 from typing import Optional
@@ -311,14 +312,8 @@ class RemoteUserDataService(Service):
             for event in current_queues.queues["user-data-updates"].consume():
                 if event["entity_type"] == "users" and event["event"] == "updated":
                     try:
-                        # confirm that user exists in Invenio
-                        my_user_identity = UserIdentity.query.filter_by(
-                            id=event["id"]
-                        ).one_or_none()
-                        assert my_user_identity is not None
-
                         do_user_data_update.delay(  # noqa
-                            my_user_identity.id_user, event["idp"], event["id"]
+                            event["user_id"], event["idp"], event["oauth_id"]
                         )  # noqa
                     except AssertionError:
                         self.logger.error(
@@ -336,7 +331,8 @@ class RemoteUserDataService(Service):
 
         Parameters:
             user_id (int): The user's id in the Invenio database.
-            idp (str): The identity provider name.
+            idp (str): The identity provider name. This is not the oauth
+                method name but rather the name of the user data source.
             remote_id (str): The identifier for the user on the remote idp
                 service.
             **kwargs: Additional keyword arguments to pass to the method.
@@ -371,21 +367,15 @@ class RemoteUserDataService(Service):
         try:
             user: User = current_accounts.datastore.get_user_by_id(user_id)
             remote_data: APIResponse = fetch_user_profile(sub_id=remote_id)
+            self.logger.error(f"remote_data: {remote_data}")
 
-            for external_id in user.external_identifiers:
-                self.logger.debug(f"External ID: {external_id}")
-                if external_id.method in current_app.config.get("KC_REMOTE_IDPS"):
-                    self.logger.debug(f"Found KC ID: {external_id}")
-                    break
+            kc_username = user.user_profile.get("identifier_kc_username")
+            self.logger.error(f"kc_username: {kc_username}")
 
             # TODO: if we don't have a remote id using this, we need to use
             # the KC username to fetch the user, which is not a problem
             if not remote_data.data or len(remote_data.data) == 0:
-                for external_id in user.external_ids:
-                    if external_id.method in current_app.config.get("KC_REMOTE_IDPS"):
-                        remote_id = external_id
-                        remote_data: Profile = fetch_user_profile(remote_id)
-                        break
+                remote_data: Profile = fetch_user_profile(kc_username=kc_username)
             else:
                 if not remote_data.meta.authorized:
                     self.logger.error("Problem with static bearer key")

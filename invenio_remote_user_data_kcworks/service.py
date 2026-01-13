@@ -417,7 +417,7 @@ class RemoteUserDataService(Service):
                 self.logger.debug(f"User changes: {user_changes}")
                 self.logger.debug(f"Group changes: {group_changes}")
 
-                # if not in test, commit
+                # FIXME: if not in test, commit
                 # this is not very good practice, but a session
                 # commit appeared to caause ORM problems with the ORM
                 if not hasattr(user, "mock"):

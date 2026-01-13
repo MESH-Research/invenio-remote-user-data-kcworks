@@ -195,6 +195,7 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs):
         # revoked
         CILogonHelpers.update_token_data(resp, result)
 
+        # FIXME: Call service method and make api call instead of putting this logic here
         # update the user profile
         # "user_profile": dict(full_name=full_name, affiliations=affiliations),
         user.username = result.data[0].profile.username

@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 
+from pprint import pformat
 from urllib.parse import urlencode, urlunparse, urlparse
 
 import invenio_oauthclient
@@ -237,7 +238,7 @@ class CILogonHelpers:
         # Extract user profile safely
         user_profile = account_info.get("user", {}).get("profile", {})
 
-        # Try ORCID lookup
+        # Try ORCID lookup before kc username (more universal)
         user = CILogonHelpers._try_get_user_by_orcid(
             user_profile.get("identifier_orcid")
         )
@@ -245,7 +246,7 @@ class CILogonHelpers:
             current_app.logger.debug("User found by ORCID")
             return user
 
-        # Try KC username lookup
+        # Try KC username lookup before email (more reliable)
         user = CILogonHelpers._try_get_user_by_kc_username(
             user_profile.get("identifier_kc_username"),
             account_info.get("external_method"),
@@ -260,6 +261,8 @@ class CILogonHelpers:
         if user:
             current_app.logger.debug("User found by email")
             return user
+
+        current_app.logger.debug("No user found for account info.")
 
         return None
 
@@ -580,15 +583,18 @@ class CILogonHelpers:
     @staticmethod
     def build_account_info(result, sub):
         """Build an account_info dict that looks as expected."""
+        current_app.logger.debug(f"result: {pformat(result)}")
+        profile_result = result.data[0].profile
         account_info = {
             "user": {
+                "email": profile_result.email,
                 "profile": {
-                    "identifier_orcid": result.data[0].profile.orcid,
-                    "identifier_kc_username": result.data[0].profile.username,
-                }
+                    "identifier_orcid": profile_result.orcid,
+                    "identifier_kc_username": profile_result.username,
+                },
             },
             "external_id": sub,
-            "external_method": "cilogon",  # or "orcid"
+            "external_method": "cilogon",
         }
         return account_info
 

@@ -18,6 +18,7 @@ from flask import (
     g,
 )
 from flask.views import MethodView
+from invenio_access.permissions import system_identity
 from invenio_accounts.errors import AlreadyLinkedError
 from invenio_accounts.models import UserIdentity
 from invenio_queues.proxies import current_queues
@@ -179,11 +180,9 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs):
 
         # build an account_info dict that looks as expected
         account_info = CILogonHelpers.build_account_info(result, sub)
-        current_app.logger.debug(f"account_info: {pformat(account_info)}")
 
         # see if we have an existing user
         user = CILogonHelpers.get_user_from_account_info(account_info)
-        current_app.logger.debug(f"found user: {user.id}")
         if not user:
             user = CILogonHelpers.create_new_user(result)
 
@@ -195,30 +194,10 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs):
         # revoked
         CILogonHelpers.update_token_data(resp, result)
 
-        # FIXME: Call service method and make api call instead of putting this logic here
-        # update the user profile
-        # "user_profile": dict(full_name=full_name, affiliations=affiliations),
-        user.username = result.data[0].profile.username
-        user.full_name = result.data[0].profile.name
-        user.email = result.data[0].profile.email
-
-        # NOTE: Invenio full_name is generated dynamically
-
-        group_changes = CILogonHelpers.calculate_group_changes(result, user)
-        user_changes, new_data = CILogonHelpers.calculate_user_changes(result, user)
-
-        CILogonHelpers.update_local_user_data(
-            user,
-            new_data,
-            user_changes,
-            group_changes,
-            "knowledgeCommons",
-            **kwargs,
+        # update user data with pre-fetched remote response
+        current_remote_user_data_service.update_user_from_remote(
+            system_identity, user.id, "knowledgeCommons", sub, remote_data=result
         )
-
-        current_app.logger.debug(f"User changes: {user_changes}")
-        current_app.logger.debug(f"Group changes: {group_changes}")
-        db.session.commit()
 
         # log the user in!
         state_token = request.args.get("state")
@@ -230,8 +209,6 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs):
     else:
         # redirect to the association service
         redirect_url = CILogonHelpers.build_association_url(id_token)
-
-        current_app.logger.debug(f"Redirecting to: {redirect_url}")
 
         return redirect(redirect_url)
 
@@ -437,10 +414,6 @@ class RemoteUserDataUpdateWebhook(MethodView):
             if len(events) > 0:
                 current_queues.queues["user-data-updates"].publish(events)
                 remote_data_updated.send(app._get_current_object(), events=events)
-                self.logger.debug(
-                    f"Published {len(events)} events to queue and emitted"
-                    " remote_data_updated signal"
-                )
             else:
                 if not users and bad_users or not groups and bad_groups:
                     entity_string = ""

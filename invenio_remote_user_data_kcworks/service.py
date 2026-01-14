@@ -325,7 +325,13 @@ class RemoteUserDataService(Service):
                     pass
 
     def update_user_from_remote(
-        self, identity, user_id: int, idp: str, remote_id: str, **kwargs
+        self,
+        identity,
+        user_id: int,
+        idp: str,
+        remote_id: str,
+        remote_data: APIResponse | None,
+        **kwargs,
     ) -> tuple[Optional[User], APIResponse | Profile | None, list[str], dict]:
         """Main method to update user data from remote server.
 
@@ -335,6 +341,8 @@ class RemoteUserDataService(Service):
                 method name but rather the name of the user data source.
             remote_id (str): The identifier for the user on the remote idp
                 service.
+            remote_data (APIResponse | None): A pre-fetched user data API response
+                to use instead of making a new remote request (optional)
             **kwargs: Additional keyword arguments to pass to the method.
 
         Returns:
@@ -366,15 +374,11 @@ class RemoteUserDataService(Service):
 
         try:
             user: User = current_accounts.datastore.get_user_by_id(user_id)
-            remote_data: APIResponse = fetch_user_profile(sub_id=remote_id)
-            self.logger.error(f"remote_data: {remote_data}")
+            if not remote_data or len(remote_data.data) == 0:
+                remote_data: APIResponse = fetch_user_profile(sub_id=remote_id)
 
-            kc_username = user.user_profile.get("identifier_kc_username")
-            self.logger.error(f"kc_username: {kc_username}")
-
-            # TODO: if we don't have a remote id using this, we need to use
-            # the KC username to fetch the user, which is not a problem
             if not remote_data.data or len(remote_data.data) == 0:
+                kc_username = user.user_profile.get("identifier_kc_username")
                 remote_data: Profile = fetch_user_profile(kc_username=kc_username)
             else:
                 if not remote_data.meta.authorized:
@@ -416,12 +420,6 @@ class RemoteUserDataService(Service):
 
                 self.logger.debug(f"User changes: {user_changes}")
                 self.logger.debug(f"Group changes: {group_changes}")
-
-                # FIXME: if not in test, commit
-                # this is not very good practice, but a session
-                # commit appeared to caause ORM problems with the ORM
-                if not hasattr(user, "mock"):
-                    db.session.commit()
 
                 return (
                     user,

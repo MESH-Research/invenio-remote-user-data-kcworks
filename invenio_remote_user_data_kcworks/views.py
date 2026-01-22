@@ -7,21 +7,47 @@
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
+import base64
 import contextlib
+import json
 from pprint import pformat
 
 # from flask import render_template
 from flask import (
+    Blueprint,
+    abort,
+    g,
     jsonify,
     make_response,
+    redirect,
+    request,
+    url_for,
+)
+from flask import (
     current_app as app,
-    g,
 )
 from flask.views import MethodView
+from flask_login import login_user
+from flask_oauthlib.client import OAuthException, OAuthRemoteApp
 from invenio_access.permissions import system_identity
 from invenio_accounts.errors import AlreadyLinkedError
 from invenio_accounts.models import UserIdentity
+from invenio_db import db
+from invenio_oauthclient import current_oauthclient
+from invenio_oauthclient._compat import _create_identifier
+from invenio_oauthclient.errors import OAuthRemoteNotFound
+from invenio_oauthclient.handlers import (
+    set_session_next_url,
+)
+from invenio_oauthclient.utils import (
+    get_safe_redirect_target,
+    serializer,
+)
 from invenio_queues.proxies import current_queues
+from invenio_remote_user_data_kcworks.proxies import (
+    current_remote_user_data_service,
+)
+from itsdangerous import BadData
 from werkzeug.exceptions import (
     BadRequest,
     Forbidden,
@@ -30,43 +56,8 @@ from werkzeug.exceptions import (
     # Unauthorized,
 )
 
-from .signals import remote_data_updated
-
-from invenio_remote_user_data_kcworks.proxies import (
-    current_remote_user_data_service,
-)
-
-import base64
-import json
-
-
-from flask import (
-    Blueprint,
-    abort,
-    current_app,
-    redirect,
-    request,
-    url_for,
-)
-from flask_login import login_user
-from flask_oauthlib.client import OAuthRemoteApp, OAuthException
-
-from invenio_db import db
-from invenio_oauthclient import current_oauthclient
-from invenio_oauthclient.errors import OAuthRemoteNotFound
-from invenio_oauthclient.handlers import (
-    set_session_next_url,
-)
-
-from invenio_oauthclient.utils import (
-    get_safe_redirect_target,
-    serializer,
-)
-
-from invenio_oauthclient._compat import _create_identifier
-from itsdangerous import BadData
-
 from .api import APIResponse, fetch_user_profile
+from .signals import remote_data_updated
 from .utils import CILogonHelpers
 
 
@@ -105,18 +96,14 @@ def _login(remote_app, authorized_view_name):
     # https://profile.hcommons.org/cilogon/callback/ -> callback_url
     # callback_url -> next_param
     return oauth.remote_apps[remote_app].authorize(
-        callback="https://profile.hcommons.org/cilogon/callback/",
+        callback=f"{app.config.get('COMMONS_API_REQUEST_PROTOCOL')}://{app.config.get('KC_PROFILES_DOMAIN')}/cilogon/callback/",
         state=state_token,
     )
 
 
 def login(remote_app):
     """Send user to remote application for authentication."""
-    if (
-        current_app.config["OAUTHCLIENT_REMOTE_APPS"]
-        .get(remote_app, {})
-        .get("hide", False)
-    ):
+    if app.config["OAUTHCLIENT_REMOTE_APPS"].get(remote_app, {}).get("hide", False):
         abort(404)
 
     try:
@@ -152,7 +139,7 @@ def _authorized(remote_app=None):
     # Store next URL
     set_session_next_url(remote_app, state["next"])
 
-    oauth = current_app.extensions.get("oauthlib.client")
+    oauth = app.extensions.get("oauthlib.client")
 
     return _authorized_handler(oauth.remote_apps[remote_app])
 
@@ -220,13 +207,13 @@ def authorized(remote_app=None):
     except OAuthRemoteNotFound:
         return abort(404)
     except (AssertionError, BadData):
-        if current_app.config.get("OAUTHCLIENT_STATE_ENABLED", True) or (
-            not (current_app.debug or current_app.testing)
+        if app.config.get("OAUTHCLIENT_STATE_ENABLED", True) or (
+            not (app.debug or app.testing)
         ):
             abort(403)
     except OAuthException as e:
         if e.type == "invalid_response":
-            current_app.logger.warning(f"{e.message} ({e.data})")
+            app.logger.warning(f"{e.message} ({e.data})")
             abort(500)
         else:
             raise
@@ -357,7 +344,7 @@ class RemoteUserDataUpdateWebhook(MethodView):
                 auth_method = app.config["KC_REMOTE_IDPS"][0]
             events = []
             config = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]
-            entity_types = config["entity_types"]
+            entity_types = app.config["entity_types"]
             bad_entity_types = []
             bad_events = []
             users = []

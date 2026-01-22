@@ -96,7 +96,10 @@ def _login(remote_app, authorized_view_name):
     # https://profile.hcommons.org/cilogon/callback/ -> callback_url
     # callback_url -> next_param
     return oauth.remote_apps[remote_app].authorize(
-        callback=f"{app.config.get('COMMONS_API_REQUEST_PROTOCOL')}://{app.config.get('KC_PROFILES_DOMAIN')}/cilogon/callback/",
+        callback=app.config.get(
+            "IDMS_CALLBACK_URL",
+            f"{app.config.get('COMMONS_API_REQUEST_PROTOCOL')}://{app.config.get('KC_PROFILES_DOMAIN')}/cilogon/callback/",
+        ),
         state=state_token,
     )
 

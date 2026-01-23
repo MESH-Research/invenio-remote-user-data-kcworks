@@ -330,7 +330,7 @@ class RemoteUserDataService(Service):
         user_id: int,
         idp: str,
         remote_id: str,
-        remote_data: APIResponse | None,
+        remote_data: APIResponse | None = None,
         **kwargs,
     ) -> tuple[Optional[User], APIResponse | Profile | None, list[str], dict]:
         """Main method to update user data from remote server.
@@ -374,6 +374,7 @@ class RemoteUserDataService(Service):
 
         try:
             user: User = current_accounts.datastore.get_user_by_id(user_id)
+
             if not remote_data or len(remote_data.data) == 0:
                 remote_data: APIResponse = fetch_user_profile(sub_id=remote_id)
 

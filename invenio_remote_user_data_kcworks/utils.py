@@ -271,10 +271,14 @@ class CILogonHelpers:
         """Try to get user by external ID."""
         try:
             external_id = CILogonHelpers._get_external_id(account_info)
+            current_app.logger.debug(f"external_id: {external_id}")
             if external_id:
-                return UserIdentity.get_user(external_id["method"], external_id["id"])
+                return_value = UserIdentity.get_user(
+                    external_id["method"], external_id["id"]
+                )
+                current_app.logger.debug(f"return_value: {return_value}")
+                return return_value
         except Exception:
-            # Log the exception in a real implementation
             pass
         return None
 
@@ -300,24 +304,35 @@ class CILogonHelpers:
         if not kc_username:
             return None
 
-        # check if the username is a direct valid kc identifier
-        user = User.query.filter_by(username=f"{kc_username}").one_or_none()
-        if user:
-            return user
-
         try:
-            # First try with external method prefix
-            if external_method:
+            # try profile field
+            user = User.query.filter(
+                User._user_profile.op("->>")("identifier_kc_username") == kc_username
+            ).one_or_none()
+            current_app.logger.debug(f"user with kc id in profile field: {user}")
+
+            # try legacy external identifier (used to use kc id as sub id)
+            if external_method and not user:
+                user = UserIdentity.get_user(external_method, kc_username)
+                current_app.logger.debug(
+                    f"user with kc id as legacy external id: {user}"
+                )
+
+            # try with username as a direct valid kc identifier
+            if not user:
+                user = User.query.filter_by(username=f"{kc_username}").one_or_none()
+                current_app.logger.debug(f"user with username as kc id: {user}")
+
+            # try with external method prefix
+            if external_method and not user:
                 user = User.query.filter_by(
                     username=f"{external_method}-{kc_username}"
                 ).one_or_none()
-                if user:
-                    return user
-
-            # Then try profile lookup
-            return User.query.filter(
-                User._user_profile.op("->>")("identifier_kc_username") == kc_username
-            ).one_or_none()
+                current_app.logger.debug(
+                    f"user with username as kc id with prefix: {user}"
+                )
+            if user:
+                return user
         except Exception:
             pass
         return None

@@ -346,8 +346,8 @@ class RemoteUserDataUpdateWebhook(MethodView):
                 # FIXME: Allow for multiple KC auth methods
                 auth_method = app.config["KC_REMOTE_IDPS"][0]
             events = []
-            config = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]
-            entity_types = app.config["entity_types"]
+            idp_config = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]
+            entity_types = idp_config["entity_types"]
             bad_entity_types = []
             bad_events = []
             users = []

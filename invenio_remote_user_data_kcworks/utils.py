@@ -271,12 +271,10 @@ class CILogonHelpers:
         """Try to get user by external ID."""
         try:
             external_id = CILogonHelpers._get_external_id(account_info)
-            current_app.logger.debug(f"external_id: {external_id}")
             if external_id:
                 return_value = UserIdentity.get_user(
                     external_id["method"], external_id["id"]
                 )
-                current_app.logger.debug(f"return_value: {return_value}")
                 return return_value
         except Exception:
             pass
@@ -596,21 +594,24 @@ class CILogonHelpers:
             )
 
     @staticmethod
-    def build_account_info(result, sub):
+    def build_account_info(
+        api_result: APIResponse | None, sub: str
+    ) -> dict[str, str | dict]:
         """Build an account_info dict that looks as expected."""
-        current_app.logger.debug(f"result: {pformat(result)}")
-        profile_result = result.data[0].profile
+        current_app.logger.debug(f"result: {pformat(api_result)}")
         account_info = {
-            "user": {
+            "external_id": sub,
+            "external_method": "cilogon",
+        }
+        if api_result and api_result.data and len(api_result.data) > 0:
+            profile_result = api_result.data[0].profile
+            account_info["user"] = {
                 "email": profile_result.email,
                 "profile": {
                     "identifier_orcid": profile_result.orcid,
                     "identifier_kc_username": profile_result.username,
                 },
-            },
-            "external_id": sub,
-            "external_method": "cilogon",
-        }
+            }
         return account_info
 
     @staticmethod

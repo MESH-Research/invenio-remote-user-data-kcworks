@@ -5,10 +5,6 @@ import requests
 from flask import current_app, request
 from pydantic import BaseModel, HttpUrl
 
-import logging
-
-logger = logging.getLogger(__name__)
-
 
 class AcademicInterest(BaseModel):
     """AcademicInterest is a Pydantic model of data associated with a user."""
@@ -64,20 +60,25 @@ class APIResponse(BaseModel):
 
 
 def fetch_user_profile(
-    sub_id: str = None, kc_username: str = None
-) -> APIResponse | Profile:
+    sub_id: str | None = None, kc_username: str | None = None, timeout: int = 10
+) -> APIResponse | Profile | None:
     """Fetch user profile data from the API endpoint.
 
+    Note that this function returns None if the API request failed or the response
+    cannot be parsed. If the user was not found it will *still* return an APIResponse
+    or Profile object:
+        APIResponse - the `data` property will be an empty list
+        Profile - there will be no `results` property and `meta.error.message` will
+            read "User not found".
+
     Args:
-        sub_id: The subject ID to query for (exclusive)
-        kc_username: The username to query for (exclusive)
+        sub_id: The subject ID to query for (exclusive of kc_username)
+        kc_username: The username to query for (exclusive of sub_id)
+        timeout: The timeout duration for the API request in seconds (default 10).
 
     Returns:
-        APIResponse: Parsed response data
-
-    Raises:
-        requests.RequestException: If the API request fails
-        ValueError: If the bearer token is not found in environment variables
+        APIResponse | Profile | None: Parsed response data or None if the API request
+            fails or the response cannot be parsed.
     """
     if not sub_id and not kc_username:
         raise ValueError("sub_id or kc_username must be provided")
@@ -106,7 +107,7 @@ def fetch_user_profile(
         url = f"{base_api_url}members/{kc_username}/"
 
     try:
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=timeout)
         response.raise_for_status()  # Raises an HTTPError for bad responses
 
         # Parse JSON response
@@ -122,14 +123,18 @@ def fetch_user_profile(
 
         return parsed_response
 
+    except requests.Timeout:
+        message = f"API request for user data timed out after {timeout} seconds"
+        current_app.logger.error(message)
+        return None
     except requests.RequestException:
-        message = "API request failed"
-        logger.exception(message)
-        raise
+        message = "API request for user data failed"
+        current_app.logger.error(message)
+        return None
     except Exception:
-        message = "Error parsing response"
-        logger.exception(message)
-        raise
+        message = "Error parsing api response from user data endpoint"
+        current_app.logger.error(message)
+        return None
 
 
 def update_token_information(

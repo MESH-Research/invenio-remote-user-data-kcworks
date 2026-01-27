@@ -1,6 +1,6 @@
 #
 # This file is part of the invenio-remote-user-data-kcworks package.
-# Copyright (C) 2023, MESH Research.
+# Copyright (C) 2023-2026, MESH Research.
 #
 # invenio-remote-user-data-kcworks is free software; you can redistribute it
 # and/or modify it under the terms of the MIT License; see
@@ -16,7 +16,23 @@ from invenio_accounts.models import User
 from . import config
 from .service import RemoteGroupDataService, RemoteUserDataService
 from .tasks import do_user_data_update
-from .views import login, authorized
+from .views import (
+    login,
+    authorized,
+    oauth_401_handler,
+    oauth_403_handler,
+    oauth_404_handler,
+    oauth_500_handler,
+)
+from werkzeug.exceptions import (
+    BadRequest,
+    Forbidden,
+    InternalServerError,
+    MethodNotAllowed,
+    NotFound,
+    Unauthorized,
+)
+
 
 OAUTH_ROUTE_REWRITES = {
     "/oauth/login/<remote_app>/": login,
@@ -53,9 +69,7 @@ def on_user_logged_in(_, user: User) -> None:
         if user.id:
             last_timestamp = session.get("user-data-updated", {}).get(user.id)
             current_app.logger.debug(f"last_updated: {last_timestamp}")
-            last_updated = (
-                arrow.get(last_timestamp) if last_timestamp else None
-            )
+            last_updated = arrow.get(last_timestamp) if last_timestamp else None
             update_interval = current_app.config.get(
                 "INVENIO_REMOTE_USER_DATA_UPDATE_INTERVAL", 10
             )
@@ -64,9 +78,7 @@ def on_user_logged_in(_, user: User) -> None:
                 minutes=-1 * update_interval
             ):
                 new_timestamp = arrow.now("UTC").isoformat()
-                session.setdefault("user-data-updated", {})[
-                    user.id
-                ] = new_timestamp
+                session.setdefault("user-data-updated", {})[user.id] = new_timestamp
 
                 do_user_data_update.delay(user.id)  # noqa
 
@@ -128,24 +140,22 @@ class InvenioRemoteUserData:
 def finalize_app(app):
     """Finalize app."""
 
-    app.logger.debug(
-        "invenio_remote_user_data_kcworks.ext:finalize_app: Rewriting routes"
-    )
-
     for rule in app.url_map.iter_rules():
         route_str = str(rule)
 
         if route_str in OAUTH_ROUTE_REWRITES:
             if rule.endpoint in app.view_functions:
-                app.view_functions[rule.endpoint] = OAUTH_ROUTE_REWRITES[
-                    route_str
-                ]
-                app.logger.debug(
-                    f"Rewrote route '{route_str}' to endpoint "
-                    f"'{rule.endpoint}'"
-                )
+                app.view_functions[rule.endpoint] = OAUTH_ROUTE_REWRITES[route_str]
             else:
                 app.logger.debug(
                     f"Warning: Endpoint '{rule.endpoint}' not "
-                    f"found for route '{route_str}'"
+                    f"found for overwriting route '{route_str}'"
                 )
+
+    # Register error handlers on the invenio_oauthclient blueprint
+    oauth_blueprint = app.blueprints.get("invenio_oauthclient")
+    if oauth_blueprint:
+        oauth_blueprint.register_error_handler(Unauthorized, oauth_401_handler)
+        oauth_blueprint.register_error_handler(NotFound, oauth_404_handler)
+        oauth_blueprint.register_error_handler(Forbidden, oauth_403_handler)
+        oauth_blueprint.register_error_handler(InternalServerError, oauth_500_handler)

@@ -349,55 +349,7 @@ test_config["SSO_SAML_IDPS"] = {
             "name": "urn:oid:2.5.4.42",  # "givenName"
             "surname": "urn:oid:2.5.4.4",  # "sn"
             "external_id": (
-                "urn:oid:2.16.840.1.113730.3.1.3"
-            ),  # "employeeNumber"
-        },  # FIXME: new entity id url, assertion consumer service url,
-        # certificate
-        # "title", 'urn:oid:2.5.4.12': ['Hc Developer'],
-        # 'urn:oid:2.16.840.1.113730.3.1.3': ['iscott'],
-        # 'urn:oid:0.9.2342.19200300.100.1.1':
-        #   ['100103028069838784737+google.com@commons.mla.org'],
-        # "isMemberOf", 'urn:oid:1.3.6.1.4.1.5923.1.5.1.1':
-        #   ['CO:COU:HC:members:active'],
-        # 'urn:oid:1.3.6.1.4.1.49574.110.13':
-        #   ['https://google-gateway.hcommons-dev.org/idp/shibboleth'],
-        # 'urn:oid:1.3.6.1.4.1.49574.110.10': ['Google login'],
-        # 'urn:oid:1.3.6.1.4.1.49574.110.11': ['Humanities Commons'],
-        # 'urn:oid:1.3.6.1.4.1.49574.110.12': ['Humanities Commons']}
-        # Inject your remote_app to handler
-        # Note: keep in mind the string should match
-        # given name for authentication provider
-        # NOTE: commented out to avoid import:
-        # "acs_handler": acs_handler_factory("knowledgeCommons"),
-        # Automatically set `confirmed_at` for users upon
-        # registration, when using the default `acs_handler`
-        "auto_confirm": True,
-    }
-}
-
-
-class CustomUserProfileSchema(Schema):
-    """The default user profile schema."""
-
-    full_name = fields.String()
-    affiliations = fields.String()
-    name_parts = fields.String()
-    identifier_email = fields.String()
-    identifier_orcid = fields.String()
-    identifier_kc_username = fields.String()
-
-
-test_config["ACCOUNTS_USER_PROFILE_SCHEMA"] = CustomUserProfileSchema
-
-test_config["REMOTE_USER_DATA_API_ENDPOINTS"] = {
-    "knowledgeCommons": {
-        "users": {
-            "remote_endpoint": (
-                "https://hcommons-dev.org/wp-json/commons/v1/users/"
-            ),
-            "remote_identifier": "id",
-            "remote_method": "GET",
-            "token_env_variable_label": "COMMONS_API_TOKEN",
+cntoken_env_variable_label": "COMMONS_API_TOKEN",
         },
         "groups": {
             "remote_endpoint": (
@@ -543,7 +495,7 @@ def db_session_options():
         def db_session_options():
             return dict(expire_on_commit=False)
     """
-    return {"expire_on_commit": True}
+    return {"expire_on_commit": False}
 
 
 @pytest.fixture(scope="function")

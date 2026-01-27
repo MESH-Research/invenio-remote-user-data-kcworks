@@ -20,6 +20,7 @@ from flask import (
     jsonify,
     make_response,
     redirect,
+    render_template
     request,
     url_for,
 )
@@ -53,13 +54,54 @@ from werkzeug.exceptions import (
     Forbidden,
     MethodNotAllowed,
     NotFound,
-    # Unauthorized,
+    Unauthorized,
 )
 
 from .api import APIResponse, fetch_user_profile
 from .signals import remote_data_updated
 from .utils import CILogonHelpers
 
+def oauth_401_handler(error):
+    """Custom 401 handler for OAuth login errors.
+
+    Manually registered on the authorized blueprint
+    in ext.py.
+    """
+    return render_template(
+        app.config.get("THEME_401_TEMPLATE", "invenio_theme/401.html"),
+        error_message=error.description or "This user could not be authenticated."
+    ), 401
+
+
+def oauth_404_handler(error):
+    """Custom 404 handler for OAuth login errors.
+
+    Manually registered on the authorized blueprint in ext.py.
+    """
+    return render_template(
+        app.config.get("THEME_404_TEMPLATE", "invenio_theme/404.html"),
+        error_message=error.description or "The requested OAuth provider was not found."
+    ), 404
+
+def oauth_403_handler(error):
+    """Custom 403 handler for OAuth login errors.
+
+    Manually registered on the authorized blueprint in ext.py.
+    """
+    return render_template(
+        app.config.get("THEME_403_TEMPLATE", "invenio_theme/403.html"),
+        error_message=error.description or "You are not authorized to access this login provider."
+    ), 403
+
+def oauth_500_handler(error):
+    """Custom 500 handler for OAuth login errors.
+
+    Manually registered on the authorized blueprint in ext.py.
+    """
+    return render_template(
+        app.config.get("THEME_500_TEMPLATE", "invenio_theme/500.html"),
+        error_message=error.description or "An internal error occurred during authentication."
+    ), 500
 
 def _login(remote_app, authorized_view_name):
     """Send user to remote application for authentication."""
@@ -105,20 +147,25 @@ def _login(remote_app, authorized_view_name):
 
 
 def login(remote_app):
-    """Send user to remote application for authentication."""
+    """Send user to remote application for authentication.
+
+    The blueprint for this view function is registered in invenio_oauthclient/
+    views/client.py but we (in ext.py) override the route to lead to this
+    function instead of the default function provided in invenio_oauthclient.
+    """
     if app.config["OAUTHCLIENT_REMOTE_APPS"].get(remote_app, {}).get("hide", False):
         abort(404)
 
     try:
         return _login(remote_app, ".authorized")
     except OAuthRemoteNotFound:
-        return abort(404)
+        abort(404)
 
 
 def _authorized(remote_app=None):
     """Authorized handler callback."""
     if remote_app not in current_oauthclient.handlers:
-        return abort(404)
+        abort(404)
 
     state_token = request.args.get("state")
 
@@ -148,67 +195,101 @@ def _authorized(remote_app=None):
 
 
 def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs):
-    """CILogon authorization handler."""
-    """Contains: access_token, refresh_token, refresh_token_lifetime, id_token,
+    """CILogon authorization handler.
+
+    Contains: access_token, refresh_token, refresh_token_lifetime, id_token,
     token_type, expires_in, refresh_token_iat
     """
     resp = remote.authorized_response()
 
-    # validate the token and extract the data fields
+    # Validate the token and extract the data fields
     decoded_token, id_token, sub = CILogonHelpers.validate_token_and_extract_sub(resp)
 
-    # get user profile
+    # Get user profile APIResponse
     # contains: data, meta, next, previous
-    result: APIResponse = fetch_user_profile(sub)
+    profile_response: APIResponse | None = fetch_user_profile(sub_id=sub)
 
-    # if the static bearer token is not authorized
-    if not result.meta.authorized:
-        raise abort(403)
+    # If the static bearer token is not authorized
+    if profile_response.meta and not profile_response.meta.authorized:
+        abort(403)
 
-    if result.data and len(result.data) > 0:
-        # get the first user profile and log the user in or create a user
+    # Combine account data available so we can look up user
+    account_info = CILogonHelpers.build_account_info(profile_response, sub)
 
-        # build an account_info dict that looks as expected
-        account_info = CILogonHelpers.build_account_info(result, sub)
+    # See if we have an existing user
+    # If profile api request fails we can still get from
+    # sub and UserIdentity table
+    user = CILogonHelpers.get_user_from_account_info(account_info)
 
-        # see if we have an existing user
-        user = CILogonHelpers.get_user_from_account_info(account_info)
-        if not user:
-            user = CILogonHelpers.create_new_user(result)
+    if profile_response:
+        # if the profile lookup succeeds...
+        # get the first user matching user and log the user in or create a user
+        if profile_response.data and len(profile_response.data) > 0:
+            if not user:
+                user = CILogonHelpers.create_new_user(profile_response)
 
-        # link the user to the external id from cilogon
-        with contextlib.suppress(AlreadyLinkedError):
-            CILogonHelpers.link_user_to_oauth_identifier(user, "cilogon", sub)
+            # link the user to the external id from cilogon
+            with contextlib.suppress(AlreadyLinkedError):
+                CILogonHelpers.link_user_to_oauth_identifier(user, "cilogon", sub)
 
-        # send the tokens to the storage API so that on logout they can be
-        # revoked
-        CILogonHelpers.update_token_data(resp, result)
+            # send the tokens to the storage API so that on logout they can be
+            # revoked
+            CILogonHelpers.update_token_data(resp, profile_response)
 
-        # update user data with pre-fetched remote response
-        current_remote_user_data_service.update_user_from_remote(
-            system_identity, user.id, "knowledgeCommons", sub, remote_data=result
-        )
+            # update user data with pre-fetched remote response
+            current_remote_user_data_service.update_user_from_remote(
+                system_identity,
+                user.id,
+                "knowledgeCommons",
+                sub,
+                remote_data=profile_response,
+            )
 
-        # log the user in!
+            # log the user in!
+            state_token = request.args.get("state")
+            data = json.loads(base64.urlsafe_b64decode(state_token).decode())
+            login_user(user)
+
+            return redirect(data["next"])
+
+        else:
+            # No matching KC member was found. They need to associate their login
+            # with a KC account before logging in here and linking/creating a
+            # KCWorks account.
+            redirect_url = CILogonHelpers.build_association_url(id_token)
+
+            return redirect(redirect_url)
+
+    elif user:
+        # User has a valid KCWorks account but member API failed.
+        # If the profile lookup failed because the API call failed
+        # we don't send them to the association service because we
+        # don't know the status of their KC account. If the user was
+        # not *found* we will have a profile_response without data
+        # and end up in the other code path above.
         state_token = request.args.get("state")
         data = json.loads(base64.urlsafe_b64decode(state_token).decode())
+
+        # Log them in since they have a valid KCWorks account
         login_user(user)
 
         return redirect(data["next"])
 
     else:
-        # redirect to the association service
-        redirect_url = CILogonHelpers.build_association_url(id_token)
-
-        return redirect(redirect_url)
+        abort(401, message="Sorry, we could not log you into KCWorks.")
 
 
 def authorized(remote_app=None):
-    """Authorized handler callback."""
+    """Authorized handler callback.
+
+    The blueprint for this view function is registered in invenio_oauthclient/
+    views/client.py but we (in ext.py) override the route to lead to this
+    function instead of the default function provided in invenio_oauthclient.
+    """
     try:
         return _authorized(remote_app)
     except OAuthRemoteNotFound:
-        return abort(404)
+        abort(404)
     except (AssertionError, BadData):
         if app.config.get("OAUTHCLIENT_STATE_ENABLED", True) or (
             not (app.debug or app.testing)

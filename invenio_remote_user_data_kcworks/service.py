@@ -361,7 +361,7 @@ class RemoteUserDataService(Service):
 
         # TODO: Can we refresh the user's identity if they're currently
         # logged in?
-        self.logger.warning(
+        self.logger.debug(
             f"Updating data from remote server -- user: {user_id}; "
             f"idp: {idp};"
             f" remote_id: {remote_id}."
@@ -431,7 +431,7 @@ class RemoteUserDataService(Service):
 
             else:
                 # no record found on remote server
-                self.logger.error(f"User {remote_id} not found on remote server.")
+                self.logger.warning(f"User {remote_id} not found on remote server.")
                 return user, remote_data, [], {}
 
         except Exception as e:

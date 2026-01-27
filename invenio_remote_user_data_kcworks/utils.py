@@ -117,10 +117,11 @@ class CILogonHelpers:
     @staticmethod
     def _get_cilogon_public_key(kid):
         """Fetch the specific public key from CILogon's JWKS endpoint."""
+        timeout = current_app.config("IDMS_CILOGON_PUBLIC_KEY_TIMEOUT", 30)
         jwks_url = "https://cilogon.org/oauth2/certs"
 
         try:
-            response = requests.get(jwks_url)
+            response = requests.get(jwks_url, timeout=timeout)
             response.raise_for_status()
             jwks = response.json()
 
@@ -585,7 +586,6 @@ class CILogonHelpers:
                 resp.get("access_token"),
                 resp.get("refresh_token"),
                 result.data[0].profile.username,
-                timeout=30,
             )
         except Exception:  # noqa: BLE001
             # semi-silently fail if we can't update the token

@@ -20,7 +20,7 @@ from flask import (
     jsonify,
     make_response,
     redirect,
-    render_template
+    render_template,
     request,
     url_for,
 )
@@ -61,6 +61,7 @@ from .api import APIResponse, fetch_user_profile
 from .signals import remote_data_updated
 from .utils import CILogonHelpers
 
+
 def oauth_401_handler(error):
     """Custom 401 handler for OAuth login errors.
 
@@ -69,7 +70,7 @@ def oauth_401_handler(error):
     """
     return render_template(
         app.config.get("THEME_401_TEMPLATE", "invenio_theme/401.html"),
-        error_message=error.description or "This user could not be authenticated."
+        error_message=error.description or "This user could not be authenticated.",
     ), 401
 
 
@@ -80,8 +81,10 @@ def oauth_404_handler(error):
     """
     return render_template(
         app.config.get("THEME_404_TEMPLATE", "invenio_theme/404.html"),
-        error_message=error.description or "The requested OAuth provider was not found."
+        error_message=error.description
+        or "The requested OAuth provider was not found.",
     ), 404
+
 
 def oauth_403_handler(error):
     """Custom 403 handler for OAuth login errors.
@@ -90,8 +93,10 @@ def oauth_403_handler(error):
     """
     return render_template(
         app.config.get("THEME_403_TEMPLATE", "invenio_theme/403.html"),
-        error_message=error.description or "You are not authorized to access this login provider."
+        error_message=error.description
+        or "You are not authorized to access this login provider.",
     ), 403
+
 
 def oauth_500_handler(error):
     """Custom 500 handler for OAuth login errors.
@@ -100,8 +105,10 @@ def oauth_500_handler(error):
     """
     return render_template(
         app.config.get("THEME_500_TEMPLATE", "invenio_theme/500.html"),
-        error_message=error.description or "An internal error occurred during authentication."
+        error_message=error.description
+        or "An internal error occurred during authentication.",
     ), 500
+
 
 def _login(remote_app, authorized_view_name):
     """Send user to remote application for authentication."""

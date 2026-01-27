@@ -60,7 +60,9 @@ class APIResponse(BaseModel):
 
 
 def fetch_user_profile(
-    sub_id: str | None = None, kc_username: str | None = None, timeout: int = 10
+    sub_id: str | None = None,
+    kc_username: str | None = None,
+    timeout: int | None = None,
 ) -> APIResponse | Profile | None:
     """Fetch user profile data from the API endpoint.
 
@@ -80,6 +82,9 @@ def fetch_user_profile(
         APIResponse | Profile | None: Parsed response data or None if the API request
             fails or the response cannot be parsed.
     """
+    if not timeout:
+        timeout = current_app.config.get("REMOTE_USER_DATA_API_TIMEOUT", 5)
+
     if not sub_id and not kc_username:
         raise ValueError("sub_id or kc_username must be provided")
 
@@ -142,7 +147,7 @@ def update_token_information(
     refresh_token: str,
     user_name: str,
     app: str = "Works",
-    timeout: int = 30,
+    timeout: int | None = None,
 ) -> requests.Response:
     """Make a POST API request with token data for storage and revocation.
 
@@ -159,6 +164,9 @@ def update_token_information(
     Raises:
         requests.RequestException: If the request fails
     """
+    if not timeout:
+        timeout = current_app.config.get("IDMS_TOKEN_UPDATE_TIMEOUT", 5)
+
     # Get user agent from current request
     user_agent = request.headers.get("User-Agent", "Unknown")
 

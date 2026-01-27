@@ -119,7 +119,12 @@ class RemoteGroupDataService(Service):
         return starting_dict
 
     def update_group_from_remote(
-        self, identity, idp: str, remote_group_id: str, **kwargs
+        self,
+        identity,
+        idp: str,
+        remote_group_id: str,
+        timeout: int | None = None,
+        **kwargs,
     ) -> Optional[dict]:
         """Update group data from remote server.
 
@@ -142,6 +147,8 @@ class RemoteGroupDataService(Service):
             idp (str): The identity provider name.
             remote_group_id (str): The identifier for the group on the
             remote service.
+            timeout (int | None): Timeout in seconds for the remote groups
+              endpoint request.
             **kwargs: Additional keyword arguments to pass to the method.
 
         Returns:
@@ -153,6 +160,8 @@ class RemoteGroupDataService(Service):
             updated.
         """
         self.require_permission(identity, "trigger_update")
+        if not timeout:
+            timeout = current_app.config.get("REMOTE_USER_DATA_API_TIMEOUT", 5)
         results_dict = {}
         idp_config = self.endpoints_config[idp]
         remote_api_token = os.environ[idp_config["groups"]["token_env_variable_label"]]
@@ -161,7 +170,7 @@ class RemoteGroupDataService(Service):
         response = requests.get(
             f"{idp_config['groups']['remote_endpoint']}{remote_group_id}",
             headers=headers,
-            timeout=30,
+            timeout=timeout,
         )
         group_metadata = response.json()
 

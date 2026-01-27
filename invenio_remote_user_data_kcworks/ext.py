@@ -7,7 +7,7 @@
 # LICENSE file for more details.
 
 import arrow
-from flask import current_app, session  # after_this_request, request,
+from flask import current_app, request, session
 from flask_login import user_logged_in
 
 # from flask_principal import  identity_changed, Identity
@@ -152,10 +152,31 @@ def finalize_app(app):
                     f"found for overwriting route '{route_str}'"
                 )
 
-    # Register error handlers on the invenio_oauthclient blueprint
-    oauth_blueprint = app.blueprints.get("invenio_oauthclient")
-    if oauth_blueprint:
-        oauth_blueprint.register_error_handler(Unauthorized, oauth_401_handler)
-        oauth_blueprint.register_error_handler(NotFound, oauth_404_handler)
-        oauth_blueprint.register_error_handler(Forbidden, oauth_403_handler)
-        oauth_blueprint.register_error_handler(InternalServerError, oauth_500_handler)
+    # Register error handlers on the Flask app for oauth blueprint routes
+    # We can't register on the blueprint after it's been registered, so we
+    # register on the app and check the blueprint name or URL path in the handler
+    def oauth_error_wrapper(handler, blueprint_name="invenio_oauthclient"):
+        """Wrap error handler to only handle errors from oauth blueprint."""
+        def wrapped_handler(error):
+            # Only handle errors from the oauth blueprint or oauth routes
+            # Check if request context is available first
+            try:
+                # Check blueprint first, then URL path as fallback
+                if (
+                    (hasattr(request, "blueprint") and request.blueprint == blueprint_name)
+                    or (hasattr(request, "path") and request.path.startswith("/oauth/"))
+                ):
+                    return handler(error)
+            except RuntimeError:
+                # Request context not available, let Flask handle it
+                pass
+            # Let Flask handle it with default behavior by returning None
+            # This allows other error handlers to process the error
+            return None
+        return wrapped_handler
+
+    # Register error handlers on the app (they'll check blueprint/URL internally)
+    app.register_error_handler(Unauthorized, oauth_error_wrapper(oauth_401_handler))
+    app.register_error_handler(NotFound, oauth_error_wrapper(oauth_404_handler))
+    app.register_error_handler(Forbidden, oauth_error_wrapper(oauth_403_handler))
+    app.register_error_handler(InternalServerError, oauth_error_wrapper(oauth_500_handler))

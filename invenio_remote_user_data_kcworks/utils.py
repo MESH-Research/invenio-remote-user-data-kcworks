@@ -117,7 +117,7 @@ class CILogonHelpers:
     @staticmethod
     def _get_cilogon_public_key(kid):
         """Fetch the specific public key from CILogon's JWKS endpoint."""
-        timeout = current_app.config("IDMS_CILOGON_PUBLIC_KEY_TIMEOUT", 30)
+        timeout = current_app.config.get("IDMS_CILOGON_PUBLIC_KEY_TIMEOUT", 30)
         jwks_url = "https://cilogon.org/oauth2/certs"
 
         try:

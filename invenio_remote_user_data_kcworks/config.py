@@ -51,3 +51,46 @@ REMOTE_USER_DATA_PERMISSION_POLICY = RemoteUserDataPermissionPolicy
 IDMS_TOKEN_UPDATE_TIMEOUT = 5
 
 IDMS_CILOGON_PUBLIC_KEY_TIMEOUT = 30
+
+REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE = (
+    '<p class="ml-25 pl-30">Sorry, we '
+    "couldn't log you into KCWorks.</p>"
+    '<p class="ml-25 pl-30">This is a problem on our end, so please try '
+    "again later.</p>"
+    '<p class="ml-25 pl-30">In the meantime you can still browse and search open access '
+    "works and collections as a guest.</p>"
+)
+
+REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_TIMEOUT = (
+    '<p class="ml-25 pl-30">Sorry, we '
+    "couldn't log you into KCWorks.</p>"
+    '<p class="ml-25 pl-30">The KCProfiles app '
+    "wasn't available to retrieve "
+    "your member information. "
+    "This is a problem on our end, so please try again later.</p>"
+    '<p class="ml-25 pl-30">In the meantime you can still browse and search open access '
+    "works and collections as a guest.</p>"
+)
+
+REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_CONNECTION = (
+    '<p class="ml-25 pl-30">Sorry, we '
+    "couldn't log you into KCWorks.</p>"
+    '<p class="ml-25 pl-30">There were problems communicating with the KCProfiles app to retrieve '
+    "your member information. This is a problem on our end, so please "
+    "try again later.</p>"
+    '<p class="ml-25 pl-30">In the meantime you can still browse and search open access '
+    "works and collections as a guest.</p>"
+)
+
+REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_STATE = (
+    '<p class="ml-25 pl-30">Sorry, we '
+    "couldn't log you into KCWorks.</p>"
+    '<p class="ml-25 pl-30">There were problems validating the response from the '
+    "authentication provider. Please try logging in again later.</p>"
+    '<p class="ml-25 pl-30">In the meantime you can still browse and search open access '
+    "works and collections as a guest.</p>"
+)
+
+REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_TOKEN = (
+    REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_STATE
+)

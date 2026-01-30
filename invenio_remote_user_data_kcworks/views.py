@@ -12,7 +12,7 @@ import contextlib
 import json
 from pprint import pformat
 
-# from flask import render_template
+import requests
 from flask import (
     Blueprint,
     abort,
@@ -22,6 +22,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    Response,
     url_for,
 )
 from flask import (
@@ -45,6 +46,11 @@ from invenio_oauthclient.utils import (
     serializer,
 )
 from invenio_queues.proxies import current_queues
+from invenio_remote_user_data_kcworks.errors import (
+    IDTokenInvalid,
+    StateTokenInvalid,
+    UserDataRequestFailed,
+)
 from invenio_remote_user_data_kcworks.proxies import (
     current_remote_user_data_service,
 )
@@ -60,54 +66,6 @@ from werkzeug.exceptions import (
 from .api import APIResponse, fetch_user_profile
 from .signals import remote_data_updated
 from .utils import CILogonHelpers
-
-
-def oauth_401_handler(error):
-    """Custom 401 handler for OAuth login errors.
-
-    Manually registered on the authorized blueprint
-    in ext.py.
-    """
-    return render_template(
-        app.config.get("THEME_401_TEMPLATE", "invenio_theme/401.html"),
-        error_message=error.description or "This user could not be authenticated.",
-    ), 401
-
-
-def oauth_404_handler(error):
-    """Custom 404 handler for OAuth login errors.
-
-    Manually registered on the authorized blueprint in ext.py.
-    """
-    return render_template(
-        app.config.get("THEME_404_TEMPLATE", "invenio_theme/404.html"),
-        error_message=error.description
-        or "The requested OAuth provider was not found.",
-    ), 404
-
-
-def oauth_403_handler(error):
-    """Custom 403 handler for OAuth login errors.
-
-    Manually registered on the authorized blueprint in ext.py.
-    """
-    return render_template(
-        app.config.get("THEME_403_TEMPLATE", "invenio_theme/403.html"),
-        error_message=error.description
-        or "You are not authorized to access this login provider.",
-    ), 403
-
-
-def oauth_500_handler(error):
-    """Custom 500 handler for OAuth login errors.
-
-    Manually registered on the authorized blueprint in ext.py.
-    """
-    return render_template(
-        app.config.get("THEME_500_TEMPLATE", "invenio_theme/500.html"),
-        error_message=error.description
-        or "An internal error occurred during authentication.",
-    ), 500
 
 
 def _login(remote_app, authorized_view_name):
@@ -144,13 +102,19 @@ def _login(remote_app, authorized_view_name):
     # cilogon -> https://profile.hcommons.org/cilogon/callback/
     # https://profile.hcommons.org/cilogon/callback/ -> callback_url
     # callback_url -> next_param
-    return oauth.remote_apps[remote_app].authorize(
-        callback=app.config.get(
-            "IDMS_CALLBACK_URL",
-            f"{app.config.get('COMMONS_API_REQUEST_PROTOCOL')}://{app.config.get('KC_PROFILES_DOMAIN')}/cilogon/callback/",
-        ),
-        state=state_token,
-    )
+    try:
+        return oauth.remote_apps[remote_app].authorize(
+            callback=app.config.get(
+                "IDMS_CALLBACK_URL",
+                f"{app.config.get('COMMONS_API_REQUEST_PROTOCOL')}://{app.config.get('KC_PROFILES_DOMAIN')}/cilogon/callback/",
+            ),
+            state=state_token,
+        )
+    except JSONDecodeError:
+        abort(
+            500,
+            description=app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"),
+        )
 
 
 def login(remote_app):
@@ -169,56 +133,98 @@ def login(remote_app):
         abort(404)
 
 
-def _authorized(remote_app=None):
-    """Authorized handler callback."""
+def _authorized(remote_app: str | None = None) -> Response:
+    """Authorized handler callback.
+
+    Arguments:
+        remote_app (str): The name of the remote app returning the
+            authorized response, matching a key in the configuration
+            for oauth remote apps.
+
+    Raises:
+        OAuthRemoteNotFound: If the remote_app doesn't match any
+            configured remote oauth app.
+        StateTokenInvalid: If the state token returned is invalid,
+            either because it is malformed, its `app` doesn't match
+            the remote_app name, or the `sid` doesn't match the unique
+            session id that was sent with the token when the login
+            was initiated.
+
+    Returns:
+        Response: Redirects to a Flask/Werkzeug Response.
+    """
     if remote_app not in current_oauthclient.handlers:
-        abort(404)
+        raise OAuthRemoteNotFound()
 
     state_token = request.args.get("state")
 
-    data = json.loads(base64.urlsafe_b64decode(state_token).decode())
+    try:
+        data = json.loads(base64.urlsafe_b64decode(state_token).decode())
 
-    # repack the state token in a way that Invenio uses
-    state_token = serializer.dumps({
-        "next": data["next"],
-        "sid": data["sid"],
-        "app": data["app"],
-    })
+        # repack the state token in a way that Invenio uses
+        state_token = serializer.dumps({
+            "next": data["next"],
+            "sid": data["sid"],
+            "app": data["app"],
+        })
 
-    # Verify state parameter
-    assert state_token
-    # Checks authenticity and integrity of state and decodes the value.
-    state = serializer.loads(state_token)
-    # Verify that state is for this session, app and that next parameter
-    # have not been modified.
-    assert state["sid"] == _create_identifier()
-    assert state["app"] == remote_app
-    # Store next URL
-    set_session_next_url(remote_app, state["next"])
+        # Verify state parameter
+        assert state_token
+        # Checks authenticity and integrity of state and decodes the value.
+        state = serializer.loads(state_token)
+        # Verify that state is for this session, app and that next parameter
+        # have not been modified.
+        assert state["sid"] == _create_identifier()
+        assert state["app"] == remote_app
+        # Store next URL
+        set_session_next_url(remote_app, state["next"])
+    except (AssertionError, BadData) as e:
+        app.logger.warning("OAuth state token validation failed in authorized handler.")
+        raise StateTokenInvalid from e
 
     oauth = app.extensions.get("oauthlib.client")
 
     return _authorized_handler(oauth.remote_apps[remote_app])
 
 
-def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs):
+def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs) -> Response:
     """CILogon authorization handler.
 
-    Contains: access_token, refresh_token, refresh_token_lifetime, id_token,
-    token_type, expires_in, refresh_token_iat
+    Arguments:
+        remote (OAuthRemoteApp): The invenio_oauthclient app object that
+            carries the oauth configuration and token exchange method.
+
+    Returns:
+        Response: Redirects to a Flask/Werkzeug Response.
     """
     resp = remote.authorized_response()
+    # JSON response contains: access_token, refresh_token, refresh_token_lifetime,
+    # id_token, token_type, expires_in, refresh_token_iat
 
     # Validate the token and extract the data fields
     decoded_token, id_token, sub = CILogonHelpers.validate_token_and_extract_sub(resp)
 
     # Get user profile APIResponse
     # contains: data, meta, next, previous
-    profile_response: APIResponse | None = fetch_user_profile(sub_id=sub)
+    profile_response: APIResponse | None = None
+    try:
+        profile_response = fetch_user_profile(sub_id=sub)
+    except requests.Timeout as e:
+        raise UserDataRequestTimeout from e
+    except requests.RequestException as e:
+        raise UserDataRequestFailed(
+            message="Something went wrong connecting to the profiles user data endpoint."
+        ) from e
 
     # If the static bearer token is not authorized
-    if profile_response.meta and not profile_response.meta.authorized:
-        abort(403)
+    if (
+        profile_response
+        and profile_response.meta
+        and not profile_response.meta.authorized
+    ):
+        raise UserDataRequestFailed(
+            message="Bearer token for user data endpoint was not accepted."
+        )
 
     # Combine account data available so we can look up user
     account_info = CILogonHelpers.build_account_info(profile_response, sub)
@@ -229,6 +235,7 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs):
     user = CILogonHelpers.get_user_from_account_info(account_info)
 
     if profile_response:
+        app.logger.debug("Got profile")
         # if the profile lookup succeeds...
         # get the first user matching user and log the user in or create a user
         if profile_response.data and len(profile_response.data) > 0:
@@ -283,29 +290,86 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs):
         return redirect(data["next"])
 
     else:
-        abort(401, message="Sorry, we could not log you into KCWorks.")
+        abort(
+            401,
+            description=error_message,
+        )
 
 
-def authorized(remote_app=None):
+def authorized(remote_app: str | None = None):
     """Authorized handler callback.
 
     The blueprint for this view function is registered in invenio_oauthclient/
     views/client.py but we (in ext.py) override the route to lead to this
     function instead of the default function provided in invenio_oauthclient.
+
+    Arguments:
+        remote_app (str): The name of the oauth remote app set
+            up in the config for oauth remote apps.
     """
     try:
         return _authorized(remote_app)
     except OAuthRemoteNotFound:
-        abort(404)
-    except (AssertionError, BadData):
+        abort(
+            404,
+            description=(
+                f"A remote oauth response was received for an app that is not "
+                f"in current_oauthclient.handlers: {remote_app}"
+            ),
+        )
+    except StateTokenInvalid:
         if app.config.get("OAUTHCLIENT_STATE_ENABLED", True) or (
             not (app.debug or app.testing)
         ):
-            abort(403)
+            abort(
+                403,
+                description=app.config.get(
+                    "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_STATE"
+                ),
+            )
+        else:
+            raise
+    except IDTokenInvalid as e:
+        app.logger.warning(
+            f"Returned id_token from {remote_app} failed validation: {e.message}"
+        )
+        abort(
+            403,
+            description=app.config.get(
+                "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_TOKEN"
+            ),
+        )
+    except UserDataRequestFailed as e:
+        app.logger.warning(e.message)
+        if "Bearer token" in e.message:
+            abort(
+                403,
+                description=app.config.get(
+                    "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
+                ),
+            )
+        else:
+            abort(
+                403,
+                description=app.config.get(
+                    "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_CONNECTION"
+                ),
+            )
+    except UserDataRequestTimeout as e:
+        app.logger.warning(e.message)
+        abort(
+            403,
+            description=app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_TIMEOUT"),
+        )
     except OAuthException as e:
         if e.type == "invalid_response":
             app.logger.warning(f"{e.message} ({e.data})")
-            abort(500)
+            abort(
+                500,
+                description=app.config.get(
+                    "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
+                ),
+            )
         else:
             raise
 

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of the invenio-remote-user-data-kcworks package.
-# Copyright (C) 2023, MESH Research.
+# Copyright (C) 2023-2026, MESH Research.
 #
 # invenio-remote-user-data-kcworks is free software; you can redistribute it
 # and/or modify it under the terms of the MIT License; see
@@ -30,6 +30,7 @@ from invenio_db import db
 from jwt.algorithms import RSAAlgorithm
 
 from .api import update_token_information, APIResponse, Profile
+from .errors import IDTokenInvalid
 from .groups import GroupRolesComponent
 
 
@@ -166,14 +167,15 @@ class CILogonHelpers:
             return decoded_token
 
         except jwt.ExpiredSignatureError as e:
-            raise ValueError("Token has expired") from e
+            raise IDTokenInvalid(message="Token has expired") from e
         except jwt.InvalidAudienceError as e:
-            raise ValueError("Invalid audience") from e
+            raise IDTokenInvalid(message="Invalid audience") from e
         except jwt.InvalidIssuerError as e:
-            raise ValueError("Invalid issuer") from e
+            raise IDTokenInvalid(message="Invalid issuer") from e
         except jwt.InvalidTokenError as e:
-            message = "Invalid token"
-            raise ValueError(message) from e
+            raise IDTokenInvalid(message="Invalid token") from e
+        except ValueError as e:
+            raise IDTokenInvalid(message=str(e)) from e
 
     @staticmethod
     def build_association_url(id_token):
@@ -557,18 +559,16 @@ class CILogonHelpers:
     def validate_token_and_extract_sub(resp):
         """Validate token and extract the sub field from the CILogon response."""
         if not resp or "id_token" not in resp:
-            raise abort(403)
+            raise IDTokenInvalid(message="No id_token returned from code exchange.")
         id_token = resp.get("id_token")
 
-        try:
-            decoded_token = CILogonHelpers._verify_and_decode_cilogon_jwt(
-                id_token, os.getenv("CILOGON_CLIENT_ID")
-            )
-        except ValueError as ve:
-            raise abort(403) from ve
+        # raises IDTokenInvalid for JWT validation errors
+        decoded_token = CILogonHelpers._verify_and_decode_cilogon_jwt(
+            id_token, os.getenv("CILOGON_CLIENT_ID")
+        )
 
         if not decoded_token or "sub" not in decoded_token:
-            raise abort(403)
+            raise IDTokenInvalid
 
         sub = decoded_token.get("sub")
         return decoded_token, id_token, sub

@@ -78,6 +78,12 @@ def fetch_user_profile(
         kc_username: The username to query for (exclusive of sub_id)
         timeout: The timeout duration for the API request in seconds (default 10).
 
+    Raises:
+        requests.Timeout: If the request to the profiles user data API fails to
+            yield a timely response.
+        requests.RequestException: If there were other kinds of errors communicating
+            with the user data API (e.g., connection problems).
+
     Returns:
         APIResponse | Profile | None: Parsed response data or None if the API request
             fails or the response cannot be parsed.
@@ -128,14 +134,14 @@ def fetch_user_profile(
 
         return parsed_response
 
-    except requests.Timeout:
+    except requests.Timeout as e:
         message = f"API request for user data timed out after {timeout} seconds"
         current_app.logger.error(message)
-        return None
-    except requests.RequestException:
+        raise e
+    except requests.RequestException as e:
         message = "API request for user data failed"
         current_app.logger.error(message)
-        return None
+        raise e
     except Exception:
         message = "Error parsing api response from user data endpoint"
         current_app.logger.error(message)

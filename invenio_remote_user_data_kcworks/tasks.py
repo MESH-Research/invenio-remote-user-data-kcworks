@@ -9,12 +9,11 @@
 
 """Celery task to update user data from remote API."""
 
-# from celery import current_app as current_celery_app
 from celery import shared_task
 from celery.utils.log import get_task_logger
-from flask import current_app as app  # , session
+from flask import current_app as app
 from invenio_access.permissions import system_identity
-from invenio_accounts.models import UserIdentity, User  # Role,
+from invenio_accounts.models import UserIdentity, User
 from .proxies import (
     current_remote_user_data_service,
     current_remote_group_service,
@@ -48,8 +47,8 @@ def do_user_data_update(
     with app.app_context():
         if not idp:
             my_user_identity = UserIdentity.query.filter_by(
-                id_user=user_id
-            ).one_or_none()
+                id_user=user_id, method=idp or "cilogon"
+            ).first()
             # will have a UserIdentity if the user has logged in via an IDP
             if my_user_identity is not None:
                 idp = my_user_identity.method

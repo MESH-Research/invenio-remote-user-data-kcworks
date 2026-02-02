@@ -302,6 +302,9 @@ class CILogonHelpers:
         kc_username: str | None, external_method: str | None
     ) -> User | None:
         """Try to get user by KC username."""
+        current_app.logger.debug(
+            f"in _try_get_user_by_kc_username: looking for {kc_username} with {external_method}"
+        )
         if not kc_username:
             return None
 
@@ -314,7 +317,7 @@ class CILogonHelpers:
 
             # try legacy external identifier (used to use kc id as sub id)
             if external_method and not user:
-                user = UserIdentity.get_user(external_method, kc_username)
+                user = UserIdentity.get_user("knowledgeCommons", kc_username)
                 current_app.logger.debug(
                     f"user with kc id as legacy external id: {user}"
                 )
@@ -324,10 +327,10 @@ class CILogonHelpers:
                 user = User.query.filter_by(username=f"{kc_username}").one_or_none()
                 current_app.logger.debug(f"user with username as kc id: {user}")
 
-            # try with external method prefix
+            # try with kc prefix
             if external_method and not user:
                 user = User.query.filter_by(
-                    username=f"{external_method}-{kc_username}"
+                    username=f"knowledgeCommons-{kc_username}"
                 ).one_or_none()
                 current_app.logger.debug(
                     f"user with username as kc id with prefix: {user}"

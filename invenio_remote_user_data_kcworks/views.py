@@ -50,6 +50,7 @@ from invenio_remote_user_data_kcworks.errors import (
     IDTokenInvalid,
     StateTokenInvalid,
     UserDataRequestFailed,
+    UserDataRequestTimeout,
 )
 from invenio_remote_user_data_kcworks.proxies import (
     current_remote_user_data_service,
@@ -111,10 +112,7 @@ def _login(remote_app, authorized_view_name):
             state=state_token,
         )
     except JSONDecodeError:
-        abort(
-            500,
-            description=app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"),
-        )
+        abort(500)
 
 
 def login(remote_app):
@@ -212,9 +210,7 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs) -> Response:
     except requests.Timeout as e:
         raise UserDataRequestTimeout from e
     except requests.RequestException as e:
-        raise UserDataRequestFailed(
-            message="Something went wrong connecting to the profiles user data endpoint."
-        ) from e
+        raise UserDataRequestFailed from e
 
     # If the static bearer token is not authorized
     if (
@@ -317,50 +313,52 @@ def authorized(remote_app: str | None = None):
                 f"in current_oauthclient.handlers: {remote_app}"
             ),
         )
-    except StateTokenInvalid:
-        if app.config.get("OAUTHCLIENT_STATE_ENABLED", True) or (
-            not (app.debug or app.testing)
-        ):
-            abort(
-                403,
-                description=app.config.get(
-                    "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_STATE"
-                ),
-            )
-        else:
-            raise
-    except IDTokenInvalid as e:
-        app.logger.warning(
-            f"Returned id_token from {remote_app} failed validation: {e.message}"
-        )
-        abort(
-            403,
-            description=app.config.get(
-                "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_TOKEN"
-            ),
-        )
-    except UserDataRequestFailed as e:
-        app.logger.warning(e.message)
-        if "Bearer token" in e.message:
-            abort(
-                403,
-                description=app.config.get(
-                    "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
-                ),
-            )
-        else:
-            abort(
-                403,
-                description=app.config.get(
-                    "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_CONNECTION"
-                ),
-            )
-    except UserDataRequestTimeout as e:
-        app.logger.warning(e.message)
-        abort(
-            403,
-            description=app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_TIMEOUT"),
-        )
+    # except StateTokenInvalid:
+    #     if app.config.get("OAUTHCLIENT_STATE_ENABLED", True) or (
+    #         not (app.debug or app.testing)
+    #     ):
+    #         abort(
+    #             403,
+    #             description=app.config.get(
+    #                 "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_STATE"
+    #             ).format(message=e.message),
+    #         )
+    #     else:
+    #         raise
+    # except IDTokenInvalid as e:
+    #     app.logger.warning(
+    #         f"Returned id_token from {remote_app} failed validation: {e.message}"
+    #     )
+    #     abort(
+    #         403,
+    #         description=app.config.get(
+    #             "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_TOKEN"
+    #         ).format(message=e.message),
+    #     )
+    # except UserDataRequestFailed as e:
+    #     app.logger.warning(e.message)
+    #     if "Bearer token" in e.message:
+    #         abort(
+    #             403,
+    #             description=app.config.get(
+    #                 "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
+    #             ).format(message=e.message),
+    #         )
+    #     else:
+    #         abort(
+    #             403,
+    #             description=app.config.get(
+    #                 "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_CONNECTION"
+    #             ).format(message=e.message),
+    #         )
+    # except UserDataRequestTimeout as e:
+    #     app.logger.warning(e.message)
+    #     abort(
+    #         403,
+    #         description=app.config.get(
+    #             "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_TIMEOUT"
+    #         ).format(message=e.message),
+    #     )
     except OAuthException as e:
         if e.type == "invalid_response":
             app.logger.warning(f"{e.message} ({e.data})")
@@ -368,7 +366,7 @@ def authorized(remote_app: str | None = None):
                 500,
                 description=app.config.get(
                     "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
-                ),
+                ).format(message=e.message),
             )
         else:
             raise

@@ -59,6 +59,7 @@ REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE = (
     "again later.</p>"
     '<p class="ml-25 pl-30">In the meantime you can still browse and search open access '
     "works and collections as a guest.</p>"
+    '<p class="ml-25 pl-30">Error message: {message}</p>'
 )
 
 REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_TIMEOUT = (
@@ -70,6 +71,7 @@ REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_TIMEOUT = (
     "This is a problem on our end, so please try again later.</p>"
     '<p class="ml-25 pl-30">In the meantime you can still browse and search open access '
     "works and collections as a guest.</p>"
+    '<p class="ml-25 pl-30">Error message: {message}</p>'
 )
 
 REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_CONNECTION = (
@@ -80,6 +82,7 @@ REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_CONNECTION = (
     "try again later.</p>"
     '<p class="ml-25 pl-30">In the meantime you can still browse and search open access '
     "works and collections as a guest.</p>"
+    '<p class="ml-25 pl-30">Error message: {message}</p>'
 )
 
 REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_STATE = (
@@ -89,6 +92,7 @@ REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_STATE = (
     "authentication provider. Please try logging in again later.</p>"
     '<p class="ml-25 pl-30">In the meantime you can still browse and search open access '
     "works and collections as a guest.</p>"
+    '<p class="ml-25 pl-30">Error message: {message}</p>'
 )
 
 REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_TOKEN = (

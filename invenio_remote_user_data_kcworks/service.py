@@ -424,13 +424,14 @@ class RemoteUserDataService(Service):
                 self.logger.debug(
                     f"updated basic information: {user.username}, {user.full_name}, {user.email}"
                 )
+                self.logger.debug(f"begore group changes: user.roles are {user.roles}")
 
                 group_changes = CILogonHelpers.calculate_group_changes(profile, user)
-                self.logger.debug(f"group_changes: {pformat(group_changes)})
+                self.logger.debug(f"group_changes: {pformat(group_changes)}")
                 user_changes, new_data = CILogonHelpers.calculate_user_changes(
                     profile, user
                 )
-                self.logger.debug(f"user_changes: {pformat(user_changes)})
+                self.logger.debug(f"user_changes: {pformat(user_changes)}")
 
                 updated_data = CILogonHelpers.update_local_user_data(
                     user,
@@ -440,7 +441,7 @@ class RemoteUserDataService(Service):
                     remote_service,
                     **kwargs,
                 )
-                self.logger.debug(f"updated_data: {pformat(updated_data)})
+                self.logger.debug(f"updated_data: {pformat(updated_data)}")
 
                 return (
                     user,

@@ -25,7 +25,7 @@ class StateTokenInvalid(Exception):
 
     def __init__(self, description=None, header=None):
         description_fragment = description or "OAuth state token validation failed."
-        self.description = app.config(
+        self.description = app.config.get(
             "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_STATE"
         ).format(message=description_fragment)
         self.header = header or "We couldn't log you in"
@@ -35,7 +35,7 @@ class StateTokenInvalid(Exception):
 class IDTokenInvalid(Exception):
     def __init__(self, message=None, header=None):
         message_fragment = message or "Returned OAuth id token validation failed."
-        self.message = app.config(
+        self.message = app.config.get(
             "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_TOKEN"
         ).format(message=message_fragment)
         self.header = header or "We couldn't log you in"
@@ -47,7 +47,7 @@ class UserDataRequestFailed(Exception):
         message_fragment = (
             message or "Connection with the user data API endpoint failed."
         )
-        self.message = app.config(
+        self.message = app.config.get(
             "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_CONNECTION"
         ).format(message=message_fragment)
         app.logger.debug(f"DEBUG: {self.message}")

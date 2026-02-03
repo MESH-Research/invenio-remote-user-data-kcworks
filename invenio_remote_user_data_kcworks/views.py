@@ -231,7 +231,6 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs) -> Response:
     user = CILogonHelpers.get_user_from_account_info(account_info)
 
     if profile_response:
-        app.logger.debug("Got profile")
         # if the profile lookup succeeds...
         # get the first user matching user and log the user in or create a user
         if profile_response.data and len(profile_response.data) > 0:
@@ -307,69 +306,27 @@ def authorized(remote_app: str | None = None):
         return _authorized(remote_app)
     except OAuthRemoteNotFound:
         abort(
-            404,
+            401,
             description=(
                 f"A remote oauth response was received for an app that is not "
                 f"in current_oauthclient.handlers: {remote_app}"
             ),
         )
-    # except StateTokenInvalid:
-    #     if app.config.get("OAUTHCLIENT_STATE_ENABLED", True) or (
-    #         not (app.debug or app.testing)
-    #     ):
-    #         abort(
-    #             403,
-    #             description=app.config.get(
-    #                 "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_STATE"
-    #             ).format(message=e.message),
-    #         )
-    #     else:
-    #         raise
-    # except IDTokenInvalid as e:
-    #     app.logger.warning(
-    #         f"Returned id_token from {remote_app} failed validation: {e.message}"
-    #     )
-    #     abort(
-    #         403,
-    #         description=app.config.get(
-    #             "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_TOKEN"
-    #         ).format(message=e.message),
-    #     )
-    # except UserDataRequestFailed as e:
-    #     app.logger.warning(e.message)
-    #     if "Bearer token" in e.message:
-    #         abort(
-    #             403,
-    #             description=app.config.get(
-    #                 "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
-    #             ).format(message=e.message),
-    #         )
-    #     else:
-    #         abort(
-    #             403,
-    #             description=app.config.get(
-    #                 "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_CONNECTION"
-    #             ).format(message=e.message),
-    #         )
-    # except UserDataRequestTimeout as e:
-    #     app.logger.warning(e.message)
-    #     abort(
-    #         403,
-    #         description=app.config.get(
-    #             "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_TIMEOUT"
-    #         ).format(message=e.message),
-    #     )
     except OAuthException as e:
         if e.type == "invalid_response":
-            app.logger.warning(f"{e.message} ({e.data})")
+            app.logger.error(f"{e.message} ({e.data})")
             abort(
-                500,
+                401,
                 description=app.config.get(
                     "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
                 ).format(message=e.message),
             )
         else:
-            raise
+            raise e
+    except Exception as e:
+        app.logger.error(
+            f"Unhandled error raised during OAuth login: {e}", exc_info=True
+        )
 
 
 """View for an invenio-remote-user-data-kcworks webhook receiver.

@@ -232,21 +232,30 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs) -> Response:
     user = CILogonHelpers.get_user_from_account_info(account_info)
 
     if profile_response:
+        app.logger.debug("_authorized_handler: profile_response")
+        app.logger.debug(pformat(profile_response))
         # if the profile lookup succeeds...
         # get the first user matching user and log the user in or create a user
         if profile_response.data and len(profile_response.data) > 0:
             if not user:
+                app.logger.debug("_authorized_handler: no user found, creating")
                 user = CILogonHelpers.create_new_user(profile_response)
 
             # link the user to the external id from cilogon
             with contextlib.suppress(AlreadyLinkedError):
+                app.logger.debug(
+                    f"_authorized_handler: linking user {user} with sub {sub}"
+                )
+                # No change if already linked
                 CILogonHelpers.link_user_to_oauth_identifier(user, "cilogon", sub)
 
             # send the tokens to the storage API so that on logout they can be
             # revoked
+            app.logger.debug("_authorized_handler: updating token data")
             CILogonHelpers.update_token_data(resp, profile_response)
 
             # update user data with pre-fetched remote response
+            app.logger.debug("_authorized_handler: updating user from remote")
             current_remote_user_data_service.update_user_from_remote(
                 system_identity,
                 user.id,
@@ -288,7 +297,7 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs) -> Response:
     else:
         if profile_fetch_error == "timeout":
             raise UserDataRequestTimeout
-        else
+        else:
             raise UserDataRequestFailed
 
 

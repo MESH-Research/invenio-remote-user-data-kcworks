@@ -366,17 +366,22 @@ class CILogonHelpers:
     ) -> None:
         """Ensure that a user has a linked identity with the  external ID."""
         # TODO: deduplicate this function
+        current_app.logger.debug(
+            f"linking {user.id} with {external_method}, {external_id}"
+        )
         existing_identity = UserIdentity.query.filter_by(
-            method=external_method, id=external_id
+            method=external_method, id=external_id, id_user=user.id
         ).first()
+        current_app.logger.debug(f"existing_identity: {existing_identity}")
 
         if existing_identity:
             current_app.logger.debug("User already has identity linked to CILogon")
             # Update existing record if needed
-            if existing_identity.user != user:
-                existing_identity.user = user
-                db.session.commit()
-            _ = existing_identity
+
+            # if existing_identity.user != user:
+            #     existing_identity.user = user
+            #     db.session.commit()
+            # _ = existing_identity
         else:
             current_app.logger.debug("Creating new identity for CILogon")
             # Create new UserIdentity
@@ -384,6 +389,7 @@ class CILogonHelpers:
                 user=user, method=external_method, external_id=external_id
             )
             db.session.commit()
+            current_app.logger.debug("New identity created")
 
     @staticmethod
     def _update_invenio_group_memberships(

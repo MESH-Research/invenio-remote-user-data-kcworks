@@ -418,7 +418,7 @@ class RemoteUserDataService(Service):
                 self.logger.debug(f"profile found: {pformat(profile)}")
 
                 # update the user profile
-                user.username = f"{remote_service}-{profile.username}"
+                user.username = profile.username
                 user.full_name = profile.name
                 user.email = profile.email
                 self.logger.debug(

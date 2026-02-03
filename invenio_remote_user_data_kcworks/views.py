@@ -204,13 +204,14 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs) -> Response:
 
     # Get user profile APIResponse
     # contains: data, meta, next, previous
+    profile_fetch_error: str | None = None
     profile_response: APIResponse | None = None
     try:
         profile_response = fetch_user_profile(sub_id=sub)
     except requests.Timeout as e:
-        raise UserDataRequestTimeout from e
+        profile_fetch_error = "timeout"
     except requests.RequestException as e:
-        raise UserDataRequestFailed from e
+        profile_fetch_error = "failure"
 
     # If the static bearer token is not authorized
     if (
@@ -285,10 +286,10 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs) -> Response:
         return redirect(data["next"])
 
     else:
-        abort(
-            401,
-            description=error_message,
-        )
+        if profile_fetch_error == "timeout":
+            raise UserDataRequestTimeout
+        else
+            raise UserDataRequestFailed
 
 
 def authorized(remote_app: str | None = None):
@@ -324,9 +325,9 @@ def authorized(remote_app: str | None = None):
         else:
             raise e
     except Exception as e:
-        app.logger.error(
-            f"Unhandled error raised during OAuth login: {e}", exc_info=True
-        )
+        # Other kinds of errors are handled directly by error handlers
+        # registered in kcworks.ext
+        raise e
 
 
 """View for an invenio-remote-user-data-kcworks webhook receiver.

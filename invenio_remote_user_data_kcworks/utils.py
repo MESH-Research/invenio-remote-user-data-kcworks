@@ -335,6 +335,13 @@ class CILogonHelpers:
                 current_app.logger.debug(
                     f"user with username as kc id with prefix: {user}"
                 )
+            if external_method and not user:
+                user = User.query.filter_by(
+                    username=f"knowledgecommons-{kc_username}"
+                ).one_or_none()
+                current_app.logger.debug(
+                    f"user with username as kc id with prefix: {user}"
+                )
             if user:
                 return user
         except Exception:

@@ -250,7 +250,7 @@ class CILogonHelpers:
             return user
 
         # Try KC username lookup before email (more reliable)
-        user = CILogonHelpers._try_get_user_by_kc_username(
+        user = CILogonHelpers.try_get_user_by_kc_username(
             user_profile.get("identifier_kc_username"),
             account_info.get("external_method"),
         )
@@ -298,12 +298,12 @@ class CILogonHelpers:
         return None
 
     @staticmethod
-    def _try_get_user_by_kc_username(
+    def try_get_user_by_kc_username(
         kc_username: str | None, external_method: str | None
     ) -> User | None:
         """Try to get user by KC username."""
         current_app.logger.debug(
-            f"in _try_get_user_by_kc_username: looking for {kc_username} with {external_method}"
+            f"in try_get_user_by_kc_username: looking for {kc_username} with {external_method}"
         )
         if not kc_username:
             return None

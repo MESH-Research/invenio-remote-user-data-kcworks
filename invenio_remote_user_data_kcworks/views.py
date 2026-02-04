@@ -34,6 +34,7 @@ from flask_oauthlib.client import OAuthException, OAuthRemoteApp
 from invenio_access.permissions import system_identity
 from invenio_accounts.errors import AlreadyLinkedError
 from invenio_accounts.models import UserIdentity
+from invenio_accounts.sessions import delete_user_sessions
 from invenio_db import db
 from invenio_oauthclient import current_oauthclient
 from invenio_oauthclient._compat import _create_identifier
@@ -339,104 +340,89 @@ def authorized(remote_app: str | None = None):
         raise e
 
 
-"""View for an invenio-remote-user-data-kcworks webhook receiver.
-
-This view is used to receive webhook notifications from a remote IDP when
-user or group data has been updated on the remote server. The view is
-registered via an API blueprint on the Invenio instance.
-
-This endpoint is not used to receive the actual data updates. It only receives
-notifications that data has been updated. The actual data updates are
-handled by a callback to the remote IDP's API.
-
-One endpoint is exposed: https://example.org/api/webhooks/user_data_update/
-
-Request methods
----------------
-
-GET
-
-A GET request to this endpoint will return a simple 200 response confirming
-that the endpoint is active. No other action will be taken.
-
-.. code-block:: bash
-
-    curl -k -X GET https://example.org/api/webhooks/user_data_update
-    --referer https://127.0.0.1 -H "Authorization: Bearer
-    my-token-string"
-
-POST
-
-An update signal must be sent via a POST request to either endpoint. If
-the signal is received successfully, the endpoint will return a 202 response
-indicating that the notification has been accepted. This does NOT mean that the
-data has been updated within Invenio. It only means that the notification has
-been received. The actual data update is delegated to a background task which
-may take some time to complete.
-
-.. code-block:: bash
-
-    curl -k -X POST https://example.org/api/webhooks/user_data_update
-    --referer https://127.0.0.1 -d '{"users": [{"id": "1234",
-    "event": "updated"}], "groups": [{"id": "4567", "event":
-    "created"}]}' -H "Content-type: application/json" -H
-    "Authorization: Bearer
-    my-token-string"
-
-
-Signal content
---------------
-
-Notifications can be sent for multiple updates to multiple entities in a
-single request. The signal body must be a JSON object whose top-level keys are
-
-:idp: The name of the remote IDP that is sending the signal. This is a
-      string that must match one of the keys in the
-      REMOTE_USER_DATA_API_ENDPOINTS configuration variable.
-
-:updates: A JSON object whose top-level keys are the types of data object that
-          have been updated on the remote IDP. The value of each key is an
-          array of objects representing the updated entities. Each of these
-          objects should include an "id" property whose value is the entity's
-          string identifier on the remote IDP. It should also include the
-          "event" property, whose value is the type of event that is being
-          signalled (e.g., "updated", "created", "deleted", etc.).
-
-For example:
-
-.. code-block:: json
-
-    {
-        "idp": "knowledgeCommons",
-        "updates": {
-            "users": [{"id": "1234", "event": "updated"},
-                    {"id": "5678", "event": "created"}],
-            "groups": [{"id": "1234", "event": "deleted"}]
-        }
-    }
-
-Logging
--------
-
-The view will log each POST request to the endpoint, each signal received,
-and each task initiated to update the data. These logs will be written to a
-dedicated log file, `logs/remote_data_updates.log`.
-
-Endpoint security
------------------
-
-The endpoint is secured by a token that must be obtained by the remote IDP
-and included in the request header.
-
-"""
-
-
 class RemoteUserDataUpdateWebhook(MethodView):
     """
-    View class for the remote-user-data-kcworks webhook api endpoint.
+    View class for the user/group data update webhook receiver.
+
+    This view is used to receive webhook notifications from a remote IDP when
+    user or group data has been updated on the remote server.
+
+    This endpoint is not used to receive the actual data updates. It only receives
+    notifications that data has been updated. The actual data updates are
+    handled by a callback to the remote IDP's API.
+
+    Request methods
+    ---------------
+
+    GET
+
+    A GET request to this endpoint will return a simple 200 response confirming
+    that the endpoint is active. No other action will be taken.
+
+    .. code-block:: bash
+
+        curl -k -X GET https://example.org/api/webhooks/user_data_update
+        --referer https://127.0.0.1 -H "Authorization: Bearer
+        my-token-string"
+
+    POST
+
+    An update signal must be sent via a POST request to either endpoint. If
+    the signal is received successfully, the endpoint will return a 202 response
+    indicating that the notification has been accepted. This does NOT mean that the
+    data has been updated within Invenio. It only means that the notification has
+    been received. The actual data update is delegated to a background task which
+    may take some time to complete.
+
+    .. code-block:: bash
+
+        curl -k -X POST https://example.org/api/webhooks/user_data_update
+        --referer https://127.0.0.1 -d '{"users": [{"id": "1234",
+        "event": "updated"}], "groups": [{"id": "4567", "event":
+        "created"}]}' -H "Content-type: application/json" -H
+        "Authorization: Bearer
+        my-token-string"
+
+
+    Signal content
+    --------------
+
+    Notifications can be sent for multiple updates to multiple entities in a
+    single request. The signal body must be a JSON object whose top-level keys are
+
+    :idp: The name of the remote IDP that is sending the signal. This is a
+          string that must match one of the keys in the
+          REMOTE_USER_DATA_API_ENDPOINTS configuration variable.
+
+    :updates: A JSON object whose top-level keys are the types of data object that
+              have been updated on the remote IDP. The value of each key is an
+              array of objects representing the updated entities. Each of these
+              objects should include an "id" property whose value is the entity's
+              string identifier on the remote IDP. It should also include the
+              "event" property, whose value is the type of event that is being
+              signalled (e.g., "updated", "created", "deleted", etc.).
+
+    For example:
+
+    .. code-block:: json
+
+        {
+            "idp": "knowledgeCommons",
+            "updates": {
+                "users": [{"id": "1234", "event": "updated"},
+                        {"id": "5678", "event": "created"}],
+                "groups": [{"id": "1234", "event": "deleted"}]
+            }
+        }
+
+    Endpoint security
+    -----------------
+
+    The endpoint is secured by a token that must be obtained by the remote IDP
+    and included in the request header.
+
     """
 
-    # init_every_request = False  # FIXME: is this right?
     view_name = "remote_user_data_kcworks_webhook"
 
     def __init__(self):
@@ -580,6 +566,124 @@ class RemoteUserDataUpdateWebhook(MethodView):
         raise MethodNotAllowed
 
 
+class RemoteUserLogoutView(MethodView):
+    """
+    View class for the user logout signal receiver.
+
+    This view is used to receive the webhook signal from the central
+    KC IDMS to log a user out from KCWorks when they have been logged out on
+    another app in the network.
+
+    Request methods
+    ---------------
+
+    GET
+
+    A GET request to this endpoint will return a simple 200 response confirming
+    that the endpoint is active. No other action will be taken.
+
+    .. code-block:: bash
+
+        curl -k -X GET https://example.org/api/webhooks/users/logout
+        --referer https://127.0.0.1 -H "Authorization: Bearer
+        my-token-string"
+
+    POST
+
+    An actual logout signal must be sent via a POST request with a `username` query
+    parameter. If the signal is received successfully, the endpoint will return a
+    202 response indicating that the user has been logged out.
+
+    .. code-block:: bash
+
+        curl -k -X POST https://example.org/api/webhooks/users/logout?username=john_doe
+        --referer https://127.0.0.1 -H "Content-type: application/json" -H
+        "Authorization: Bearer my-token-string"
+
+    Endpoint security
+    -----------------
+
+    The endpoint is secured by a Bearer token that must be provided in the `Authorization`
+    request header.
+
+    """
+
+    view_name = "remote_user_data_kcworks_logout_webhook"
+
+    def __init__(self):
+        self.logger = app.logger
+
+    def post(self):
+        """
+        Handle POST requests to the user logout webhook endpoint.
+        Invalidates all KCWorks sessions for the given user.
+        Returns 200 with confirmation when sessions were deleted, 404 when user
+        is unknown, or 500 on server error.
+        """
+        current_remote_user_data_service.require_permission(
+            g.identity, "trigger_logout_user"
+        )
+
+        kc_username = request.args.get("username")
+        if not kc_username:
+            raise BadRequest("Missing required query parameter: username")
+
+        user = CILogonHelpers.try_get_user_by_kc_username(kc_username, "cilogon")
+        if not user:
+            self.logger.warning(
+                f"Logout webhook: no user found for username={kc_username!r}"
+            )
+            return (
+                jsonify({
+                    "message": f"User {kc_username} not found in KCWorks; no sessions invalidated",
+                    "status": "not found",
+                }),
+                404,
+            )
+
+        try:
+            sessions_count = len(user.active_sessions)
+            delete_user_sessions(user)
+            db.session.commit()
+        except Exception as e:
+            self.logger.exception(
+                f"Logout webhook: failed to invalidate sessions for "
+                f"username={kc_username!r}: {e}"
+            )
+            db.session.rollback()
+            return (
+                jsonify({
+                    "message": f"Failed to log out {kc_username}",
+                    "status": "error",
+                }),
+                500,
+            )
+
+        self.logger.debug(
+            f"Logout webhook: invalidated {sessions_count} session(s) for user "
+            f"id={user.id} (username={kc_username!r})"
+        )
+        return (
+            jsonify({
+                "message": f"User {kc_username} logged out",
+                "status": "success",
+            }),
+            200,
+        )
+
+    def get(self):
+        return (
+            jsonify({"message": "Webhook receiver is active", "status": 200}),
+            200,
+        )
+
+    def put(self):
+        raise MethodNotAllowed
+
+    def delete(self):
+        raise MethodNotAllowed
+
+
 def create_api_blueprint(app):
     """Register blueprint on api app."""
 
@@ -598,6 +702,12 @@ def create_api_blueprint(app):
             view_func=RemoteUserDataUpdateWebhook.as_view(
                 RemoteUserDataUpdateWebhook.view_name
             ),
+            methods=["GET", "POST"],
+        )
+
+        blueprint.add_url_rule(
+            "/webhooks/users/logout",
+            view_func=RemoteUserLogoutView.as_view(RemoteUserLogoutView.view_name),
             methods=["GET", "POST"],
         )
 

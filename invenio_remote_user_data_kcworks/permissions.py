@@ -54,11 +54,6 @@ class CustomCommunitiesPermissionPolicy(CommunityPermissionPolicy):
     ]
 
 
-# trigger_update_action = action_factory("trigger-update")
-
-# can_trigger_update = Permission(trigger_update_action)
-
-
 class RemoteUserDataPermissionPolicy(BasePermissionPolicy):
     """Communities permission policy of Datasafe."""
 
@@ -78,6 +73,11 @@ class RemoteUserDataPermissionPolicy(BasePermissionPolicy):
     ]
 
     can_disown_collection = [
+        Administration(),
+        SystemProcess(),
+    ]
+
+    can_logout_user = [
         Administration(),
         SystemProcess(),
     ]

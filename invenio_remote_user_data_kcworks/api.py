@@ -2,7 +2,7 @@
 
 import os
 import requests
-from flask import current_app, request
+from flask import current_app as app, request
 from pydantic import BaseModel, HttpUrl
 
 
@@ -59,6 +59,13 @@ class APIResponse(BaseModel):
     previous: str | None
 
 
+class LogoutRequest(BaseModel):
+    """A Pydantic model representing the signal to be sent for global logout."""
+
+    user_name: str
+    user_agent: str
+
+
 def fetch_user_profile(
     sub_id: str | None = None,
     kc_username: str | None = None,
@@ -89,7 +96,7 @@ def fetch_user_profile(
             fails or the response cannot be parsed.
     """
     if not timeout:
-        timeout = current_app.config.get("REMOTE_USER_DATA_API_TIMEOUT", 5)
+        timeout = app.config.get("REMOTE_USER_DATA_API_TIMEOUT", 5)
 
     if not sub_id and not kc_username:
         raise ValueError("sub_id or kc_username must be provided")
@@ -110,7 +117,7 @@ def fetch_user_profile(
     }
 
     # Build the API endpoint URL
-    base_api_url = current_app.config.get("IDMS_BASE_API_URL")
+    base_api_url = app.config.get("IDMS_BASE_API_URL")
 
     if sub_id:
         url = f"{base_api_url}subs/?sub={sub_id}"
@@ -136,15 +143,15 @@ def fetch_user_profile(
 
     except requests.Timeout as e:
         message = f"API request for user data timed out after {timeout} seconds"
-        current_app.logger.error(message)
+        app.logger.error(message)
         raise e
     except requests.RequestException as e:
         message = "API request for user data failed"
-        current_app.logger.error(message)
+        app.logger.error(message)
         raise e
     except Exception:
         message = "Error parsing api response from user data endpoint"
-        current_app.logger.error(message)
+        app.logger.error(message)
         return None
 
 
@@ -171,12 +178,12 @@ def update_token_information(
         requests.RequestException: If the request fails
     """
     if not timeout:
-        timeout = current_app.config.get("IDMS_TOKEN_UPDATE_TIMEOUT", 5)
+        timeout = app.config.get("IDMS_TOKEN_UPDATE_TIMEOUT", 5)
 
     # Get user agent from current request
     user_agent = request.headers.get("User-Agent", "Unknown")
 
-    base_api_url = current_app.config.get("IDMS_BASE_API_URL")
+    base_api_url = app.config.get("IDMS_BASE_API_URL")
     api_url = f"{base_api_url}tokens/"
 
     # Get bearer token from environment variable
@@ -206,3 +213,97 @@ def update_token_information(
     response.raise_for_status()
 
     return response
+
+
+def send_logout_to_profiles(user_name: str, timeout: int | None = None) -> bool:
+    """
+    Notify Profiles API that a user has logged out.
+
+    For a successful request, the API should return 200:
+
+        {
+            "message": "Action successfully triggered.",
+            "data": {
+                "user": {
+                    "user": "john_doe",
+                    "url": "/profiles/john_doe/"
+                },
+                "user_agent": "Mozilla/5.0 ...",
+                "app": ["Profiles", "Works", "WordPress"]
+            }
+        }
+
+    Error responses can include:
+
+        HTTP 400 - Validation Error:
+
+        {
+            "error": "Validation failed",
+            "details": {
+                "user_name": ["Username cannot be empty"],
+                "user_agent": ["User agent cannot be empty"]
+            }
+        }
+        HTTP 401 - Unauthorized: Missing or invalid Bearer token.
+
+        HTTP 500 - Server Error:
+
+        {
+            "error": "An unexpected error occurred"
+        }
+
+    Args:
+        user_name: The username of the user logging out
+        timeout: The timeout duration in seconds for the logout signal request. (Optional)
+
+    Returns:
+        True if successful, False otherwise
+    """
+    if not timeout:
+        timeout = 15
+    endpoint = f"{app.config.get('IDMS_BASE_API_URL')}actions/logout/"
+
+    headers = {
+        "Authorization": f"Bearer {os.getenv('COMMONS_PROFILES_API_TOKEN')}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+    user_agent = request.headers.get("User-Agent")
+    body = LogoutRequest(
+        user_name=user_name,
+        user_agent=user_agent,
+    )
+
+    try:
+        response = requests.post(
+            endpoint,
+            headers=headers,
+            json=body.model_dump(),
+            timeout=timeout,
+        )
+
+        if 200 <= response.status_code < 300:
+            try:
+                resp_json = response.json()
+                assert resp_json["data"]["user"]["user"] == user_name
+                assert resp_json["data"]["user_agent"] == user_agent
+                assert "successful" in resp_json["message"]
+                return True
+
+            except (AssertionError, KeyError) as e:
+                app.logger.error(
+                    f"Profiles logout API returned unexpected response logging out user {user_name}: {response.text}",
+                    exc_info=True,
+                )
+                return False
+
+        else:
+            app.logger.error(
+                f"Profiles logout API returned HTTP {response.status_code}: {response.text[:400]}"
+            )
+            return False
+
+    except requests.RequestException as e:
+        app.logger.error(f"Error sending logout to Profiles API: {e}", exc_info=True)
+        return False

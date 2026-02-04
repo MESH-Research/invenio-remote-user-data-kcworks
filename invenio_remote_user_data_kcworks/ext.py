@@ -9,13 +9,15 @@
 """Main extension class for invenio-remote-user-data-kcworks."""
 
 import arrow
+import re
 from flask import current_app, request, session
-from flask_login import user_logged_in
+from flask_login import user_logged_in, user_logged_out
 
 # from flask_principal import  identity_changed, Identity
 from invenio_accounts.models import User
 
 from . import config
+from .api import send_logout_to_profiles
 from .service import RemoteGroupDataService, RemoteUserDataService
 from .tasks import do_user_data_update
 from .views import (
@@ -38,12 +40,20 @@ OAUTH_ROUTE_REWRITES = {
 }
 
 
+def on_user_logged_out(_, user: User) -> None:
+    """Send global logout signal to profiles API when user logs out."""
+    current_app.logger.debug("DEBUG: logged_out_received")
+    kc_username = user.user_profile.get("identifier_kc_username")
+    if not kc_username:
+        kc_username = re.sub("knowledgeCommons", "", user.username, flags=re.IGNORECASE)
+    send_logout_to_profiles(kc_username)
+
+
 def on_user_logged_in(_, user: User) -> None:
     """Update user data from remote server when current user is
     changed.
     """
     # FIXME: Do we need this check now that we're using webhooks?
-    # with current_app.app_context():
 
     with current_app.app_context():
         current_app.logger.info(
@@ -133,6 +143,7 @@ class InvenioRemoteUserData:
             app (_type_): _description_
         """
         user_logged_in.connect(on_user_logged_in, app)
+        user_logged_out.connect(on_user_logged_out, app)
 
 
 def finalize_app(app):

@@ -31,7 +31,7 @@ from invenio_queues.proxies import current_queues
 from invenio_records_resources.services import Service
 from werkzeug.local import LocalProxy
 
-from .api import APIResponse, Profile, fetch_user_profile
+from .api import APIResponse, Profile, fetch_user_profile, send_logout_to_profiles
 from .components.groups import GroupRolesComponent
 from .signals import remote_data_updated
 from .tasks import do_group_data_update, do_user_data_update
@@ -461,3 +461,7 @@ class RemoteUserDataService(Service):
             self.logger.error(f"Error updating user data from remote server: {repr(e)}")
             self.logger.error(traceback.format_exc())
             return None, None, [], {}
+
+    def log_user_out_global(self, kc_username: str):
+        """Send global logout signal to central IDMS service."""
+        send_logout_to_profiles(kc_username)

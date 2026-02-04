@@ -289,6 +289,7 @@ def send_logout_to_profiles(user_name: str, timeout: int | None = None) -> bool:
                 assert resp_json["data"]["user"]["user"] == user_name
                 assert resp_json["data"]["user_agent"] == user_agent
                 assert "successful" in resp_json["message"]
+                app.logger.debug(f"DEBUG: received successful response: {resp_json}")
                 return True
 
             except (AssertionError, KeyError) as e:

@@ -13,11 +13,10 @@ import re
 from flask import current_app, request, session
 from flask_login import user_logged_in, user_logged_out
 
-# from flask_principal import  identity_changed, Identity
 from invenio_accounts.models import User
 
 from . import config
-from .api import send_logout_to_profiles
+from .proxies import current_remote_user_data_service
 from .service import RemoteGroupDataService, RemoteUserDataService
 from .tasks import do_user_data_update
 from .views import (
@@ -46,7 +45,7 @@ def on_user_logged_out(_, user: User) -> None:
     kc_username = user.user_profile.get("identifier_kc_username")
     if not kc_username:
         kc_username = re.sub("knowledgeCommons", "", user.username, flags=re.IGNORECASE)
-    send_logout_to_profiles(kc_username)
+    current_remote_user_data_service.log_user_out_global(kc_username)
 
 
 def on_user_logged_in(_, user: User) -> None:

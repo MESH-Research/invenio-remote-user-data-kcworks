@@ -711,7 +711,18 @@ def create_api_blueprint(app):
             methods=["GET", "POST"],
         )
 
-        # Register error handlers
+        # Register error handlers (JSON responses for API)
+        blueprint.register_error_handler(
+            NotFound,
+            lambda e: make_response(
+                jsonify({
+                    "error": "Not Found",
+                    "message": getattr(e, "description", str(e)),
+                    "status": 404,
+                }),
+                404,
+            ),
+        )
         blueprint.register_error_handler(
             Forbidden,
             lambda e: make_response(

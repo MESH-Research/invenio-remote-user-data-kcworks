@@ -81,3 +81,8 @@ class RemoteUserDataPermissionPolicy(BasePermissionPolicy):
         Administration(),
         SystemProcess(),
     ]
+
+    can_trigger_logout_user = [
+        Administration(),
+        SystemProcess(),
+    ]

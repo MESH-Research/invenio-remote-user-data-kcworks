@@ -11,6 +11,7 @@ import base64
 import contextlib
 import json
 from pprint import pformat
+from secrets import compare_digest
 
 import requests
 from flask import (
@@ -67,7 +68,7 @@ from werkzeug.exceptions import (
 
 from .api import APIResponse, fetch_user_profile
 from .signals import remote_data_updated
-from .utils import CILogonHelpers
+from .utils import CILogonHelpers, extract_bearer_token
 
 
 def _login(remote_app, authorized_view_name):
@@ -233,30 +234,22 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs) -> Response:
     user = CILogonHelpers.get_user_from_account_info(account_info)
 
     if profile_response:
-        app.logger.debug("_authorized_handler: profile_response")
-        app.logger.debug(pformat(profile_response))
         # if the profile lookup succeeds...
         # get the first user matching user and log the user in or create a user
         if profile_response.data and len(profile_response.data) > 0:
             if not user:
-                app.logger.debug("_authorized_handler: no user found, creating")
                 user = CILogonHelpers.create_new_user(profile_response)
 
             # link the user to the external id from cilogon
             with contextlib.suppress(AlreadyLinkedError):
-                app.logger.debug(
-                    f"_authorized_handler: linking user {user} with sub {sub}"
-                )
                 # No change if already linked
                 CILogonHelpers.link_user_to_oauth_identifier(user, "cilogon", sub)
 
             # send the tokens to the storage API so that on logout they can be
             # revoked
-            app.logger.debug("_authorized_handler: updating token data")
             CILogonHelpers.update_token_data(resp, profile_response)
 
             # update user data with pre-fetched remote response
-            app.logger.debug("_authorized_handler: updating user from remote")
             current_remote_user_data_service.update_user_from_remote(
                 system_identity,
                 user.id,
@@ -325,7 +318,7 @@ def authorized(remote_app: str | None = None):
         )
     except OAuthException as e:
         if e.type == "invalid_response":
-            app.logger.error(f"{e.message} ({e.data})")
+            app.logger.error(f"{e.message} ({e.data})", exc_info=True)
             abort(
                 401,
                 description=app.config.get(
@@ -426,8 +419,8 @@ class RemoteUserDataUpdateWebhook(MethodView):
     view_name = "remote_user_data_kcworks_webhook"
 
     def __init__(self):
-        # FIXME: Is the webhook token used?
-        # self.webhook_token = os.getenv("REMOTE_USER_DATA_WEBHOOK_TOKEN")
+        #  NOTE: The old static webhook token is no longer used.
+        # The endpoint is protected by account-related OAuth tokens.
         self.logger = app.logger
 
     def post(self):
@@ -620,9 +613,11 @@ class RemoteUserLogoutView(MethodView):
         Returns 200 with confirmation when sessions were deleted, 404 when user
         is unknown, or 500 on server error.
         """
-        current_remote_user_data_service.require_permission(
-            g.identity, "trigger_logout_user"
-        )
+        try:
+            token = extract_bearer_token(request.headers.get("Authorization"))
+            assert compare_digest(token, os.getenv("COMMONS_PROFILES_API_TOKEN")):
+        except (AssertionError, ValueError) as e:
+            raise Unauthorized
 
         kc_username = request.args.get("username")
         if not kc_username:
@@ -712,6 +707,17 @@ def create_api_blueprint(app):
         )
 
         # Register error handlers (JSON responses for API)
+        blueprint.register_error_handler(
+            Unauthorized,
+            lambda e: make_response(
+                jsonify({
+                    "error": "Unauthorized",
+                    "message": "Invalid, missing, or expired token.",
+                    "status": 401,
+                }),
+                401,
+            ),
+        )
         blueprint.register_error_handler(
             NotFound,
             lambda e: make_response(

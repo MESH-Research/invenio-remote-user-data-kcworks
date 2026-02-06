@@ -41,7 +41,6 @@ OAUTH_ROUTE_REWRITES = {
 
 def on_user_logged_out(_, user: User) -> None:
     """Send global logout signal to profiles API when user logs out."""
-    current_app.logger.debug("DEBUG: logged_out_received")
     kc_username = user.user_profile.get("identifier_kc_username")
     if not kc_username:
         kc_username = re.sub("knowledgeCommons", "", user.username, flags=re.IGNORECASE)
@@ -55,11 +54,6 @@ def on_user_logged_in(_, user: User) -> None:
     # FIXME: Do we need this check now that we're using webhooks?
 
     with current_app.app_context():
-        current_app.logger.info(
-            "invenio_remote_user_data_kcworks.ext: user_logged_in "
-            "signal received "
-            f"for user {user.id}"
-        )
         # current_app.logger.debug(f"current_user: {current_user}")
         # if self._data_is_stale(identity.id) and not self.update_in_progress:
         # my_user_identity = UserIdentity.query.filter_by(
@@ -75,7 +69,6 @@ def on_user_logged_in(_, user: User) -> None:
         #
         if user.id:
             last_timestamp = session.get("user-data-updated", {}).get(user.id)
-            current_app.logger.debug(f"last_updated: {last_timestamp}")
             last_updated = arrow.get(last_timestamp) if last_timestamp else None
             update_interval = current_app.config.get(
                 "INVENIO_REMOTE_USER_DATA_UPDATE_INTERVAL", 10
@@ -147,8 +140,6 @@ class InvenioRemoteUserData:
 
 def finalize_app(app):
     """Finalize app."""
-    app.logger.debug("User data: finalize_app fired")
-
     for rule in app.url_map.iter_rules():
         route_str = str(rule)
 
@@ -156,7 +147,7 @@ def finalize_app(app):
             if rule.endpoint in app.view_functions:
                 app.view_functions[rule.endpoint] = OAUTH_ROUTE_REWRITES[route_str]
             else:
-                app.logger.debug(
+                app.logger.warning(
                     f"Warning: Endpoint '{rule.endpoint}' not "
                     f"found for overwriting route '{route_str}'"
                 )

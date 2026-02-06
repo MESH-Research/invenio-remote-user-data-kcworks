@@ -461,12 +461,12 @@ class RemoteUserDataUpdateWebhook(MethodView):
                                 ).one_or_none()
                                 if user_identity is None:
                                     bad_users.append(u["id"])
-                                    self.logger.error(
+                                    self.logger.debug(
                                         f"Received update signal from {idp} "
                                         f"for unknown user: external id {u['id']}"
                                     )
                                 else:
-                                    self.logger.error(
+                                    self.logger.debug(
                                         f"user_identity: {user_identity.id_user}, {user_identity.id}"
                                     )
                                     users.append(u["id"])
@@ -487,15 +487,15 @@ class RemoteUserDataUpdateWebhook(MethodView):
                                 })
                         else:
                             bad_events.append(u)
-                            self.logger.error(
+                            self.logger.warning(
                                 f"{idp} Received update signal for unknown event: {u}"
                             )
                 else:
                     bad_entity_types.append(e)
-                    self.logger.error(
+                    self.logger.warning(
                         f"{idp} Received update signal for unknown entity type: {e}"
                     )
-                    self.logger.error(data)
+                    self.logger.warning(data)
 
             if len(events) > 0:
                 current_queues.queues["user-data-updates"].publish(events)
@@ -509,20 +509,20 @@ class RemoteUserDataUpdateWebhook(MethodView):
                         if entity_string:
                             entity_string += " and "
                         entity_string += "groups"
-                    self.logger.error(
+                    self.logger.info(
                         f"{idp} requested updates for {entity_string} that do not exist"
                     )
-                    self.logger.error(data["updates"])
+                    self.logger.info(data["updates"])
                     raise NotFound("Updates attempted for unknown users or groups")
                 elif not groups and bad_groups:
-                    self.logger.error(
+                    self.logger.info(
                         f"{idp} requested updates for groups that do not exist"
                     )
-                    self.logger.error(data["updates"])
+                    self.logger.info(data["updates"])
                     raise NotFound("Updates attempted for unknown groups")
                 else:
-                    self.logger.error(f"{idp} No valid events received")
-                    self.logger.error(data["updates"])
+                    self.logger.warning(f"{idp} No valid events received")
+                    self.logger.warning(data["updates"])
                     raise BadRequest("No valid events received")
 
             # return error message after handling signals that are
@@ -625,7 +625,7 @@ class RemoteUserLogoutView(MethodView):
 
         user = CILogonHelpers.try_get_user_by_kc_username(kc_username, "cilogon")
         if not user:
-            self.logger.warning(
+            self.logger.info(
                 f"Logout webhook: no user found for username={kc_username!r}"
             )
             return (
@@ -641,9 +641,10 @@ class RemoteUserLogoutView(MethodView):
             delete_user_sessions(user)
             db.session.commit()
         except Exception as e:
-            self.logger.exception(
+            self.logger.error(
                 f"Logout webhook: failed to invalidate sessions for "
-                f"username={kc_username!r}: {e}"
+                f"username={kc_username!r}: {e}",
+                exc_info=True,
             )
             db.session.rollback()
             return (

@@ -68,7 +68,6 @@ class RemoteGroupDataService(Service):
             """Update group roles and metadata data from remote server
             when webhook is triggered.
             """
-
             self.logger.debug("RemoteGroupDataService: webhook update signal received")
 
             for event in current_queues.queues["user-data-updates"].consume():
@@ -189,7 +188,7 @@ class RemoteGroupDataService(Service):
         # use slugs from existing group collections if they exist
         # otherwise make new slug(s)
         if community_list.to_dict()["hits"]["total"] == 0:
-            self.logger.error(
+            self.logger.debug(
                 f"No group collection found for {idp} group {remote_group_id}"
             )
         else:
@@ -318,7 +317,7 @@ class RemoteUserDataService(Service):
         @remote_data_updated.connect_via(app)
         def on_webhook_update_signal(_, events: list) -> None:
             """Update user data from remote when webhook is triggered."""
-            self.logger.info("%%%%% webhook signal received")
+            self.logger.debug("User data update webhook signal received")
 
             for event in current_queues.queues["user-data-updates"].consume():
                 if event["entity_type"] == "users" and event["event"] == "updated":
@@ -327,7 +326,7 @@ class RemoteUserDataService(Service):
                             event["user_id"], event["idp"], event["oauth_id"]
                         )  # noqa
                     except AssertionError:
-                        self.logger.error(
+                        self.logger.info(
                             f"Cannot update: user {event['id']} does not exist"
                             " in Invenio."
                         )
@@ -387,22 +386,19 @@ class RemoteUserDataService(Service):
 
         try:
             user: User = current_accounts.datastore.get_user_by_id(user_id)
-            self.logger.debug(f"Updating for retrieved user: {pformat(user)}")
 
             if not remote_data or len(remote_data.data) == 0:
-                self.logger.debug(f"Fetching fresh data for sub_id: {remote_id}")
                 remote_data: APIResponse = fetch_user_profile(sub_id=remote_id)
 
             if not remote_data.data or len(remote_data.data) == 0:
-                self.logger.debug(f"Fetching fresh data for kc_username")
                 kc_username = user.user_profile.get("identifier_kc_username")
-                self.logger.debug(f"found kc_username {kc_username}")
                 remote_data: Profile = fetch_user_profile(kc_username=kc_username)
             else:
                 if not remote_data.meta.authorized:
-                    self.logger.error("Problem with static bearer key")
+                    self.logger.error(
+                        "Problem with static bearer key for user data update."
+                    )
                     return user, remote_data, [], {}
-            self.logger.debug(f"remote_data is {pformat(remote_data)}")
 
             if (
                 hasattr(remote_data, "data")
@@ -417,23 +413,16 @@ class RemoteUserDataService(Service):
                     profile = remote_data.data[0].profile
                 except AttributeError:
                     profile = remote_data.results[0].profile
-                self.logger.debug(f"profile found: {pformat(profile)}")
 
                 # update the user profile
                 user.username = profile.username
                 user.full_name = profile.name
                 user.email = profile.email
-                self.logger.debug(
-                    f"updated basic information: {user.username}, {user.full_name}, {user.email}"
-                )
-                self.logger.debug(f"begore group changes: user.roles are {user.roles}")
 
                 group_changes = CILogonHelpers.calculate_group_changes(profile, user)
-                self.logger.debug(f"group_changes: {pformat(group_changes)}")
                 user_changes, new_data = CILogonHelpers.calculate_user_changes(
                     profile, user
                 )
-                self.logger.debug(f"user_changes: {pformat(user_changes)}")
 
                 updated_data = CILogonHelpers.update_local_user_data(
                     user,
@@ -458,8 +447,9 @@ class RemoteUserDataService(Service):
                 return user, remote_data, [], {}
 
         except Exception as e:
-            self.logger.error(f"Error updating user data from remote server: {repr(e)}")
-            self.logger.error(traceback.format_exc())
+            self.logger.error(
+                f"Error updating user data from remote server: {repr(e)}", exc_info=True
+            )
             return None, None, [], {}
 
     def log_user_out_global(self, kc_username: str):

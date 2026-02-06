@@ -33,9 +33,7 @@ class GroupRolesComponent(ServiceComponent):
         if service is not None:
             super().__init__(service, *args, **kwargs)
 
-    def get_roles_for_remote_group(
-        self, remote_group_id: str, idp: str
-    ) -> list[Role]:
+    def get_roles_for_remote_group(self, remote_group_id: str, idp: str) -> list[Role]:
         """Get the Invenio roles for a remote group."""
         query_string = f"{idp}---{remote_group_id}|"
 
@@ -51,7 +49,6 @@ class GroupRolesComponent(ServiceComponent):
     def get_current_members_of_group(group_name: str) -> list[User]:
         """Fetch a list of the users assigned the given group role."""
         my_group_role = current_accounts.datastore.find_role(group_name)
-        # app.logger.debug(f"got group role {my_group_role}")
         return [user for user in my_group_role.users]
 
     def get_current_user_roles(self, user: str | User) -> list:
@@ -77,13 +74,9 @@ class GroupRolesComponent(ServiceComponent):
         )
         current_accounts.datastore.commit()
         if my_group_role is not None:
-            app.logger.debug(
-                f'Role for group "{group_name}" found or created.'
-            )
+            app.logger.debug(f'Role for group "{group_name}" found or created.')
         else:
-            raise RuntimeError(
-                f'Role for group "{group_name}" not found or created.'
-            )
+            raise RuntimeError(f'Role for group "{group_name}" not found or created.')
         return my_group_role
 
     def create_new_group(self, group_name: str, **kwargs) -> Role | None:
@@ -118,7 +111,7 @@ class GroupRolesComponent(ServiceComponent):
             # is thrown when the deleted role is not found in the post-commit
             # cleanup.
             except AttributeError as a:
-                app.logger.error(a)
+                app.logger.error(a, exc_info=True)
                 deleted = True
             except Exception as e:
                 message = f'Role "{group_name}" not deleted. {pformat(e)}'
@@ -127,10 +120,7 @@ class GroupRolesComponent(ServiceComponent):
 
     def add_user_to_group(self, group_name: str, user: User, **kwargs) -> bool:
         """Add a user to a group."""
-        app.logger.debug(f"got group name {group_name}")
-        user_added = current_accounts.datastore.add_role_to_user(
-            user, group_name
-        )
+        user_added = current_accounts.datastore.add_role_to_user(user, group_name)
         current_accounts.datastore.commit()
         if user_added is False:
             raise RuntimeError("Cannot add user to group role.")
@@ -167,22 +157,15 @@ class GroupRolesComponent(ServiceComponent):
             if isinstance(user, User)
             else current_accounts.datastore.get_user_by_id(user)
         )
-        group_name = (
-            group_name if isinstance(group_name, str) else group_name.id
-        )
-        # app.logger.debug(f"removing from user {user.email}")
-        # app.logger.debug(user.roles)
+        group_name = group_name if isinstance(group_name, str) else group_name.id
         removed_user = current_accounts.datastore.remove_role_from_user(
             user, group_name
         )
         current_accounts.datastore.commit()
         if removed_user is False:
-            app.logger.debug(
-                "Role {group_name} could not be removed from user."
-            )
+            app.logger.debug("Role {group_name} could not be removed from user.")
         else:
             app.logger.info(
-                f'Role "{group_name}" removed from user "{user.email}"'
-                "successfully."
+                f'Role "{group_name}" removed from user "{user.email}"successfully.'
             )
         return removed_user

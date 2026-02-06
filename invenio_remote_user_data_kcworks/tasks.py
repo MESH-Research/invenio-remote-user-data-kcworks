@@ -10,7 +10,6 @@
 """Celery task to update user data from remote API."""
 
 from celery import shared_task
-from celery.utils.log import get_task_logger
 from flask import current_app as app
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import UserIdentity, User
@@ -20,8 +19,6 @@ from .proxies import (
 )
 from .errors import NoIDPFoundError
 from typing import Optional
-
-task_logger = get_task_logger(__name__)
 
 
 @shared_task(ignore_result=False)
@@ -71,7 +68,6 @@ def do_user_data_update(
                     system_identity, user_id, idp, remote_id
                 )
             )
-            task_logger.info(f"updated_data: {updated_data}")
             return user, updated_data, groups, groups_changes
         else:
             raise NoIDPFoundError(f"No IDP found for user {user_id}")

@@ -615,7 +615,7 @@ class RemoteUserLogoutView(MethodView):
         """
         try:
             token = extract_bearer_token(request.headers.get("Authorization"))
-            assert compare_digest(token, os.getenv("COMMONS_PROFILES_API_TOKEN")):
+            assert compare_digest(token, os.getenv("COMMONS_PROFILES_API_TOKEN"))
         except (AssertionError, ValueError) as e:
             raise Unauthorized
 

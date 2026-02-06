@@ -34,6 +34,29 @@ from .errors import IDTokenInvalid
 from .groups import GroupRolesComponent
 
 
+def extract_bearer_token(header_string: str) -> str:
+    """
+    Extract the actual bearer token from an Authorization header.
+
+    Raises:
+        ValueError: If the header string is None, malformed, or
+          the token itself is empty.
+
+    Returns:
+        str: The bearer token.
+    """
+    header_parts = header_string.split(None, 1)
+    if not header_string:
+        raise ValueError("Authorization header was empty.")
+    if len(header_parts) < 2 or header_parts[0] != "Bearer":
+        raise ValueError("Authorization header was malformed.")
+    token = header_parts[1].strip()
+    if not token:
+        raise ValueError("Authorization token was empty.")
+    else:
+        return token
+
+
 class SecureParamEncoder:
     """Encrypt and encode data for URL transmission."""
 

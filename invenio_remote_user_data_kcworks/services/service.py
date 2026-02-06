@@ -15,11 +15,7 @@ from pprint import pformat
 from typing import Optional
 
 import requests
-
-# from pprint import pprint
 from flask import current_app
-
-# frm pprint import pformat
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import User, UserIdentity
 from invenio_accounts.proxies import current_accounts
@@ -31,14 +27,14 @@ from invenio_queues.proxies import current_queues
 from invenio_records_resources.services import Service
 from werkzeug.local import LocalProxy
 
-from .api import APIResponse, Profile, fetch_user_profile, send_logout_to_profiles
-from .components.groups import GroupRolesComponent
-from .signals import remote_data_updated
-from .tasks import do_group_data_update, do_user_data_update
-from .utils import (
+from ..api import APIResponse, Profile, fetch_user_profile, send_logout_to_profiles
+from ..signals import remote_data_updated
+from ..tasks import do_group_data_update, do_user_data_update
+from ..utils import (
     CILogonHelpers,
     diff_between_nested_dicts,
 )
+from .group_roles import GroupRolesService
 
 
 class RemoteGroupDataService(Service):
@@ -51,7 +47,7 @@ class RemoteGroupDataService(Service):
         self.config.permission_policy_cls = config.get(
             "REMOTE_USER_DATA_PERMISSION_POLICY"
         )
-        self.endpoints_config = config.get("REMOTE_USER_DATA_API_ENDPOINTS")
+        self.endpoints_config = config["REMOTE_USER_DATA_API_ENDPOINTS"]
         self.logger = app.logger
         self.updated_data = {}
         self.communities_service = LocalProxy(
@@ -61,7 +57,7 @@ class RemoteGroupDataService(Service):
             minutes=config["REMOTE_USER_DATA_UPDATE_INTERVAL"]
         )
         self.group_data_stale = True
-        self.group_role_component = GroupRolesComponent(self)
+        self.group_roles_service = GroupRolesService(self)
 
         @remote_data_updated.connect_via(app)
         def on_webhook_update_signal(_, events: list) -> None:
@@ -247,9 +243,6 @@ class RemoteGroupDataService(Service):
 
         Once any group collections have been disowned, any dangling Invenio
         roles will be deleted.
-
-        # FIXME: What about the case of an orphaned group collection that is
-        # soft-deleted? restored?
         """
         disowned_communities = []
         deleted_roles = []
@@ -276,13 +269,11 @@ class RemoteGroupDataService(Service):
                 )
                 disowned_communities.append(disowned_community["slug"])
 
-        stranded_roles = self.group_role_component.get_roles_for_remote_group(
+        stranded_roles = self.group_roles_service.get_roles_for_remote_group(
             remote_group_id=remote_group_id, idp=idp
         )
         for role in stranded_roles:
-            # the query above returns a list of GroupItem objects that
-            # can't be used to delete the roles straightforwardly
-            if self.group_role_component.delete_group(role.id):
+            if self.group_roles_service.delete_group(role.id):
                 deleted_roles.append(role.id)
             else:
                 self.logger.error(
@@ -311,7 +302,6 @@ class RemoteUserDataService(Service):
         self.communities_service = LocalProxy(
             lambda: app.extensions["invenio-communities"].service
         )
-        # TODO: Is there a risk of colliding operations?
         self.update_in_progress = False
 
         @remote_data_updated.connect_via(app)
@@ -365,12 +355,9 @@ class RemoteUserDataService(Service):
                 4. A dictionary of the changes to the user's group
                 memberships (with the keys "added_groups", "dropped_groups",
                 and "unchanged_groups").
-
         """
         self.require_permission(identity, "trigger_update")
 
-        # TODO: Can we refresh the user's identity if they're currently
-        # logged in?
         self.logger.debug(
             f"Updating data from remote server -- user: {user_id}; "
             f"idp: {idp};"

@@ -31,7 +31,7 @@ from jwt.algorithms import RSAAlgorithm
 
 from .api import update_token_information, APIResponse, Profile
 from .errors import IDTokenInvalid
-from .components.groups import GroupRolesComponent
+from .services.group_roles import GroupRolesService
 
 
 def extract_bearer_token(header_string: str) -> str:
@@ -428,7 +428,7 @@ class CILogonHelpers:
         Returns:
             list: The updated list of group role names.
         """
-        grouper = GroupRolesComponent(None)
+        grouper = GroupRolesService(None)
         updated_local_groups = [r.name for r in user.roles]
 
         for group_name in changed_memberships["added_groups"]:

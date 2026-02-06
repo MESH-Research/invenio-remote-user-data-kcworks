@@ -17,7 +17,7 @@ from invenio_accounts.models import User
 
 from . import config
 from .proxies import current_remote_user_data_service
-from .service import RemoteGroupDataService, RemoteUserDataService
+from .services.service import RemoteGroupDataService, RemoteUserDataService
 from .tasks import do_user_data_update
 from .views import (
     login,

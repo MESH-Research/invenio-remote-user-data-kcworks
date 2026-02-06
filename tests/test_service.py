@@ -15,9 +15,7 @@ from invenio_search.engine import dsl
 from invenio_search.utils import build_alias_name
 from invenio_users_resources.proxies import current_users_service
 from invenio_utilities_tuw.utils import get_identity_for_user
-from invenio_remote_user_data_kcworks.components.groups import (
-    GroupRolesComponent,
-)
+from invenio_remote_user_data_kcworks.services import GroupRolesService
 from invenio_remote_user_data_kcworks.proxies import (
     current_remote_user_data_service as user_data_service,
     current_remote_group_service as group_data_service,
@@ -110,7 +108,7 @@ def test_compare_remote_with_local(
     db,
 ):
     """Test comparison of remote and local user data."""
-    grouper = GroupRolesComponent(user_data_service)
+    grouper = GroupRolesService(user_data_service)
     myuser = user_factory(**starting_data["user"])
     grouper.create_new_group(group_name="admin")
     grouper.add_user_to_group(group_name="admin", user=myuser)
@@ -146,7 +144,7 @@ def test_update_invenio_group_memberships(app, user_factory, db):
     my_identity = get_identity_for_user(myuser.email)
 
     # set up starting roles and memberships
-    grouper = GroupRolesComponent(user_data_service)
+    grouper = GroupRolesService(user_data_service)
     grouper.create_new_group(group_name="cool-group")
     grouper.create_new_group(group_name="admin")
     grouper.add_user_to_group("cool-group", myuser)
@@ -485,7 +483,7 @@ def test_update_group_from_remote_with_community(
     )
 
     # create the group collection/community in the database
-    GroupRolesComponent(user_data_service).create_new_group(
+    GroupRolesService(user_data_service).create_new_group(
         group_name="administrator"
     )
     existing_collection = current_communities.service.create(
@@ -642,7 +640,7 @@ def test_update_group_from_remote_with_deleted_community(
         json=return_payload,
     )
 
-    GroupRolesComponent(user_data_service).create_new_group(
+    GroupRolesService(user_data_service).create_new_group(
         group_name="administrator"
     )
 
@@ -740,7 +738,7 @@ def test_delete_group_from_remote(
     db,
     search_clear,
 ):
-    grouper = GroupRolesComponent(user_data_service)
+    grouper = GroupRolesService(user_data_service)
     grouper.create_new_group(group_name="knowledgeCommons---1004290|admin")
     grouper.create_new_group(group_name="knowledgeCommons---1004290|member")
 
@@ -940,7 +938,7 @@ def test_delete_group_from_remote_with_community(
     )
 
     # create the group collection/community
-    grouper = GroupRolesComponent(user_data_service)
+    grouper = GroupRolesService(user_data_service)
     grouper.create_new_group(group_name="administrator")
     existing_collection = current_group_collections_service.create(
         system_identity, remote_group_id, idp
@@ -1187,7 +1185,7 @@ def test_on_user_logged_in(
     myuser1 = user_factory(confirmed_at=arrow.utcnow().datetime)
     UserIdentity.create(myuser1, "knowledgeCommons", "testuser")
     db.session.commit()
-    grouper = GroupRolesComponent(user_data_service)
+    grouper = GroupRolesService(user_data_service)
     grouper.create_new_group(group_name="knowledgeCommons---222222|admin")
     grouper.create_new_group(group_name="admin")
     grouper.add_user_to_group(

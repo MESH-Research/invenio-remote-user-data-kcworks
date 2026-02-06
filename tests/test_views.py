@@ -11,10 +11,8 @@ import pytest
 import json
 import os
 
-from invenio_remote_user_data_kcworks.components.groups import (
-    GroupRolesComponent,
-)
-from invenio_remote_user_data_kcworks.service import (
+from invenio_remote_user_data_kcworks.services import (
+    GroupRolesService,
     RemoteUserDataService,
 )
 
@@ -205,7 +203,7 @@ def test_webhook_post(
                     user_roles = [r.name for r in myuser.roles]
                     for g in user_roles:
                         groupid = g.split("---")[1].split("|")[0]
-                        group_roles = GroupRolesComponent(
+                        group_roles = GroupRolesService(
                             RemoteUserDataService
                         ).get_roles_for_remote_group(
                             groupid, "knowledgeCommons"

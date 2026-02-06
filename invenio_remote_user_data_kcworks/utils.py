@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-#
 # This file is part of the invenio-remote-user-data-kcworks package.
 # Copyright (C) 2023-2026, MESH Research.
 #
@@ -29,7 +27,7 @@ from invenio_accounts.models import User, UserIdentity
 from invenio_db import db
 from jwt.algorithms import RSAAlgorithm
 
-from .api import update_token_information, APIResponse, Profile
+from .client import APIResponse, Profile, UserDataAPIClient
 from .errors import IDTokenInvalid
 from .services.group_roles import GroupRolesService
 
@@ -624,7 +622,7 @@ class CILogonHelpers:
         all services (Single Sign Out).
         """
         try:
-            update_token_information(
+            UserDataAPIClient.update_token_information(
                 resp.get("access_token"),
                 resp.get("refresh_token"),
                 result.data[0].profile.username,

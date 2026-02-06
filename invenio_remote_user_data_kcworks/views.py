@@ -1,7 +1,5 @@
-# -*- coding: utf-8 -*-
-#
 # This file is part of the invenio-remote-user-data-kcworks package.
-# Copyright (C) 2023, MESH Research.
+# Copyright (C) 2023-2026, MESH Research.
 #
 # invenio-remote-user-data-kcworks is free software; you can redistribute it
 # and/or modify it under the terms of the MIT License; see
@@ -66,7 +64,7 @@ from werkzeug.exceptions import (
     Unauthorized,
 )
 
-from .api import APIResponse, fetch_user_profile
+from .client import APIResponse, UserDataAPIClient
 from .signals import remote_data_updated
 from .utils import CILogonHelpers, extract_bearer_token
 
@@ -209,7 +207,7 @@ def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs) -> Response:
     profile_fetch_error: str | None = None
     profile_response: APIResponse | None = None
     try:
-        profile_response = fetch_user_profile(sub_id=sub)
+        profile_response = UserDataAPIClient.fetch_user_profile(sub_id=sub)
     except requests.Timeout as e:
         profile_fetch_error = "timeout"
     except requests.RequestException as e:

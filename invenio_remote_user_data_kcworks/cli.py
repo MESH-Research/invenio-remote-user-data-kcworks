@@ -1,3 +1,14 @@
+# -*- coding: utf-8 -*-
+#
+# This file is part of the invenio-remote-user-data-kcworks package.
+# Copyright (C) 2023-2026, MESH Research.
+#
+# invenio-remote-user-data-kcworks is free software; you can redistribute it
+# and/or modify it under the terms of the MIT License; see
+# LICENSE file for more details.
+
+"""CLI commands for user data-related actions."""
+
 import click
 from flask.cli import with_appcontext
 from invenio_access.permissions import system_identity
@@ -197,8 +208,7 @@ def update_user_data(
                     print(f"Invalid response updating {u.id}")
                     invalid_responses.append(u.id)
                 elif (
-                    len(update_result[1].keys()) == 0
-                    and len(update_result[2]) == 0
+                    len(update_result[1].keys()) == 0 and len(update_result[2]) == 0
                 ) and "error" not in update_result[1].keys():
                     print(f"No new data on remote server for {u.id}")
                     unchanged.append(u.id)
@@ -213,9 +223,7 @@ def update_user_data(
     if len(successes):
         print(f"Successfully updated {len(successes)} records.")
     if len(unchanged):
-        print(
-            f"No updates necessary for {len(unchanged)} records: {unchanged}"
-        )
+        print(f"No updates necessary for {len(unchanged)} records: {unchanged}")
     if len(not_found_local):
         print(
             f"No remote registration found in Invenio for "
@@ -235,10 +243,7 @@ def update_user_data(
             f"{invalid_responses}"
         )
     if len(failures):
-        print(
-            f"{len(failures)} updates failed for the following records: "
-            f"{failures}"
-        )
+        print(f"{len(failures)} updates failed for the following records: {failures}")
 
 
 if __name__ == "__main__":

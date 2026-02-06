@@ -1,3 +1,10 @@
+# This file is part of the invenio-remote-user-data-kcworks package.
+# Copyright (C) 2023-2026, MESH Research.
+#
+# invenio-remote-user-data-kcworks is free software; you can redistribute it
+# and/or modify it under the terms of the MIT License; see
+# LICENSE file for more details.
+
 """Custom permission policy to allow direct adding of users to communities."""
 
 from invenio_access import action_factory, Permission

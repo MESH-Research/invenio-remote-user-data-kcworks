@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of the invenio-remote-user-data-kcworks package.
-# Copyright (C) 2023, MESH Research.
+# Copyright (C) 2023-2026, MESH Research.
 #
 # invenio-remote-user-data-kcworks is free software; you can redistribute it
 # and/or modify it under the terms of the MIT License; see
@@ -15,7 +15,11 @@ from pprint import pformat
 from typing import Optional
 
 import requests
+
+# from pprint import pprint
 from flask import current_app
+
+# frm pprint import pformat
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import User, UserIdentity
 from invenio_accounts.proxies import current_accounts
@@ -27,14 +31,14 @@ from invenio_queues.proxies import current_queues
 from invenio_records_resources.services import Service
 from werkzeug.local import LocalProxy
 
-from ..api import APIResponse, Profile, fetch_user_profile, send_logout_to_profiles
+from ..client import APIResponse, Profile, UserDataAPIClient
+from .group_roles import GroupRolesService
 from ..signals import remote_data_updated
 from ..tasks import do_group_data_update, do_user_data_update
 from ..utils import (
     CILogonHelpers,
     diff_between_nested_dicts,
 )
-from .group_roles import GroupRolesService
 
 
 class RemoteGroupDataService(Service):
@@ -47,7 +51,7 @@ class RemoteGroupDataService(Service):
         self.config.permission_policy_cls = config.get(
             "REMOTE_USER_DATA_PERMISSION_POLICY"
         )
-        self.endpoints_config = config["REMOTE_USER_DATA_API_ENDPOINTS"]
+        self.endpoints_config = config.get("REMOTE_USER_DATA_API_ENDPOINTS")
         self.logger = app.logger
         self.updated_data = {}
         self.communities_service = LocalProxy(
@@ -243,6 +247,9 @@ class RemoteGroupDataService(Service):
 
         Once any group collections have been disowned, any dangling Invenio
         roles will be deleted.
+
+        # FIXME: What about the case of an orphaned group collection that is
+        # soft-deleted? restored?
         """
         disowned_communities = []
         deleted_roles = []
@@ -273,6 +280,8 @@ class RemoteGroupDataService(Service):
             remote_group_id=remote_group_id, idp=idp
         )
         for role in stranded_roles:
+            # the query above returns a list of GroupItem objects that
+            # can't be used to delete the roles straightforwardly
             if self.group_roles_service.delete_group(role.id):
                 deleted_roles.append(role.id)
             else:
@@ -302,6 +311,7 @@ class RemoteUserDataService(Service):
         self.communities_service = LocalProxy(
             lambda: app.extensions["invenio-communities"].service
         )
+        # TODO: Is there a risk of colliding operations?
         self.update_in_progress = False
 
         @remote_data_updated.connect_via(app)
@@ -355,9 +365,12 @@ class RemoteUserDataService(Service):
                 4. A dictionary of the changes to the user's group
                 memberships (with the keys "added_groups", "dropped_groups",
                 and "unchanged_groups").
+
         """
         self.require_permission(identity, "trigger_update")
 
+        # TODO: Can we refresh the user's identity if they're currently
+        # logged in?
         self.logger.debug(
             f"Updating data from remote server -- user: {user_id}; "
             f"idp: {idp};"
@@ -375,11 +388,15 @@ class RemoteUserDataService(Service):
             user: User = current_accounts.datastore.get_user_by_id(user_id)
 
             if not remote_data or len(remote_data.data) == 0:
-                remote_data: APIResponse = fetch_user_profile(sub_id=remote_id)
+                remote_data: APIResponse = UserDataAPIClient.fetch_user_profile(
+                    sub_id=remote_id
+                )
 
             if not remote_data.data or len(remote_data.data) == 0:
                 kc_username = user.user_profile.get("identifier_kc_username")
-                remote_data: Profile = fetch_user_profile(kc_username=kc_username)
+                remote_data: Profile = UserDataAPIClient.fetch_user_profile(
+                    kc_username=kc_username
+                )
             else:
                 if not remote_data.meta.authorized:
                     self.logger.error(
@@ -441,4 +458,4 @@ class RemoteUserDataService(Service):
 
     def log_user_out_global(self, kc_username: str):
         """Send global logout signal to central IDMS service."""
-        send_logout_to_profiles(kc_username)
+        UserDataAPIClient.send_logout_to_profiles(kc_username)

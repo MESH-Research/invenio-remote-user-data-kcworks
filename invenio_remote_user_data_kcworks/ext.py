@@ -1,4 +1,3 @@
-#
 # This file is part of the invenio-remote-user-data-kcworks package.
 # Copyright (C) 2023-2026, MESH Research.
 #

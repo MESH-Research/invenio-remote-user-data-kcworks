@@ -433,7 +433,10 @@ class CILogonHelpers:
 
         for group_name in changed_memberships["added_groups"]:
             group_role = grouper.find_or_create_group(group_name)
-            if group_role and grouper.add_user_to_group(group_role, user) is not None:
+            if (
+                group_role
+                and grouper.add_user_to_group(group_role.name, user) is not None
+            ):
                 updated_local_groups.append(group_role.name)
 
         for group_name in changed_memberships["dropped_groups"]:

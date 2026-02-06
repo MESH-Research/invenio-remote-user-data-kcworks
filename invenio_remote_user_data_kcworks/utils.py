@@ -31,7 +31,7 @@ from jwt.algorithms import RSAAlgorithm
 
 from .api import update_token_information, APIResponse, Profile
 from .errors import IDTokenInvalid
-from .groups import GroupRolesComponent
+from .components.groups import GroupRolesComponent
 
 
 def extract_bearer_token(header_string: str) -> str:

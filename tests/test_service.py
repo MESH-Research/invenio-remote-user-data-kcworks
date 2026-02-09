@@ -210,7 +210,7 @@ def test_update_invenio_group_memberships(app, user_factory, db):
                 "user_profile": {
                     "full_name": "My User",
                     "name_parts": '{"first": "My", "last": "User"}',
-                    "identifier_orcid": "0000-0002-1825-0097"
+                    "identifier_orcid": "0000-0002-1825-0097",
                     "affiliations": "Michigan State University",
                 },
                 "username": "knowledgeCommons-myuser",

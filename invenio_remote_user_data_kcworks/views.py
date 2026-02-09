@@ -8,6 +8,7 @@
 import base64
 import contextlib
 import json
+import os
 from pprint import pformat
 from secrets import compare_digest
 
@@ -46,6 +47,7 @@ from invenio_oauthclient.utils import (
     serializer,
 )
 from invenio_queues.proxies import current_queues
+from invenio_records_resources.services.errors import PermissionDeniedError
 from invenio_remote_user_data_kcworks.errors import (
     IDTokenInvalid,
     StateTokenInvalid,
@@ -335,8 +337,10 @@ class RemoteUserDataUpdateWebhook(MethodView):
     """
     View class for the user/group data update webhook receiver.
 
-    This view is used to receive webhook notifications from a remote IDP when
-    user or group data has been updated on the remote server.
+    This view is registered for both ``/api/webhooks/users/update`` (preferred)
+    and ``/api/webhooks/user_data_update`` (deprecated, still operational). It
+    receives webhook notifications from a remote IDP when user or group data has
+    been updated on the remote server.
 
     This endpoint is not used to receive the actual data updates. It only receives
     notifications that data has been updated. The actual data updates are
@@ -347,12 +351,12 @@ class RemoteUserDataUpdateWebhook(MethodView):
 
     GET
 
-    A GET request to this endpoint will return a simple 200 response confirming
+    A GET request to either URL will return a simple 200 response confirming
     that the endpoint is active. No other action will be taken.
 
     .. code-block:: bash
 
-        curl -k -X GET https://example.org/api/webhooks/user_data_update
+        curl -k -X GET https://example.org/api/webhooks/users/update
         --referer https://127.0.0.1 -H "Authorization: Bearer
         my-token-string"
 
@@ -363,11 +367,12 @@ class RemoteUserDataUpdateWebhook(MethodView):
     indicating that the notification has been accepted. This does NOT mean that the
     data has been updated within Invenio. It only means that the notification has
     been received. The actual data update is delegated to a background task which
-    may take some time to complete.
+    may take some time to complete. Prefer ``/api/webhooks/users/update``; use of
+    ``/api/webhooks/user_data_update`` is deprecated.
 
     .. code-block:: bash
 
-        curl -k -X POST https://example.org/api/webhooks/user_data_update
+        curl -k -X POST https://example.org/api/webhooks/users/update
         --referer https://127.0.0.1 -d '{"users": [{"id": "1234",
         "event": "updated"}], "groups": [{"id": "4567", "event":
         "created"}]}' -H "Content-type: application/json" -H
@@ -610,12 +615,16 @@ class RemoteUserLogoutView(MethodView):
         Invalidates all KCWorks sessions for the given user.
         Returns 200 with confirmation when sessions were deleted, 404 when user
         is unknown, or 500 on server error.
+
+        Authentication is by static bearer token, handled by the configurable
+        routes in STATIC_API_TOKEN_ROUTES and the before_request handler
+        registered by kcworks.ext.
         """
-        try:
-            token = extract_bearer_token(request.headers.get("Authorization"))
-            assert compare_digest(token, os.getenv("COMMONS_PROFILES_API_TOKEN"))
-        except (AssertionError, ValueError) as e:
-            raise Unauthorized
+        app.logger.debug(f"DEBUG: identity: {g.identity}")
+        current_remote_user_data_service.require_permission(
+            g.identity, "trigger_logout_user"
+        )
+        app.logger.debug("DEBUG: POST view starting")
 
         kc_username = request.args.get("username")
         if not kc_username:
@@ -689,10 +698,17 @@ def create_api_blueprint(app):
             # on the api app
         )
 
-        # routes = app.config.get("APP_RDM_ROUTES")
-
+        # DEPRECATED: legacy webhook route
         blueprint.add_url_rule(
             "/webhooks/user_data_update",
+            view_func=RemoteUserDataUpdateWebhook.as_view(
+                f"{RemoteUserDataUpdateWebhook.view_name}_deprecated"
+            ),
+            methods=["GET", "POST"],
+        )
+
+        blueprint.add_url_rule(
+            "/webhooks/users/update",
             view_func=RemoteUserDataUpdateWebhook.as_view(
                 RemoteUserDataUpdateWebhook.view_name
             ),
@@ -718,6 +734,19 @@ def create_api_blueprint(app):
             ),
         )
         blueprint.register_error_handler(
+            PermissionDeniedError,
+            lambda e: make_response(
+                jsonify({
+                    "error": "Forbidden",
+                    "message": (
+                        "The user does not have permission to perform this action."
+                    ),
+                    "status": 403,
+                }),
+                403,
+            ),
+        )
+        blueprint.register_error_handler(
             NotFound,
             lambda e: make_response(
                 jsonify({
@@ -731,13 +760,13 @@ def create_api_blueprint(app):
         blueprint.register_error_handler(
             Forbidden,
             lambda e: make_response(
-                jsonify({"error": "Forbidden", "status": 403}), 403
+                jsonify({"error": "Forbidden", "message": str(e), "status": 403}), 403
             ),
         )
         blueprint.register_error_handler(
             BadRequest,
             lambda e: make_response(
-                jsonify({"error": "Bad Request", "status": 400}), 400
+                jsonify({"error": "Bad Request", "message": str(e), "status": 400}), 400
             ),
         )
         blueprint.register_error_handler(

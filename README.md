@@ -32,7 +32,7 @@ Only user metadata updates take place automatically at login. These include upda
 
 ### Manual update via webhook signal
 
-Updates operations can also be triggered by the remote service via a webhook signal sent to the `/api/webhooks/user_data_update` endpoint. This signal is a minimalist JSON object simply indicating that updates to one or more users or groups have taken place on the remote service. This extension then sends API requests to the remote service to retrieve the updated data, and it updates the corresponding Invenio user accounts and group collections (communities).
+Updates operations can also be triggered by the remote service via a webhook signal sent to the `/api/webhooks/users/update` endpoint (or the deprecated `/api/webhooks/user_data_update` endpoint, which remains operational). This signal is a minimalist JSON object simply indicating that updates to one or more users or groups have taken place on the remote service. This extension then sends API requests to the remote service to retrieve the updated data, and it updates the corresponding Invenio user accounts and group collections (communities).
 
 A user's group membership information is updated whenever that user's remote metadata is updated. But
 
@@ -100,7 +100,7 @@ This procedure allows the Invenio collection to continue to exist and function, 
 
 ## Sending update notices to the webhook
 
-The service can also be triggered by a webhook signal from the remote ID provider. A webhook signal should be sent to the endpoint https://example.org/api/webhooks/user_data_update/ and the request must include a security token (provided by the Invenio admins) in the request header. This token is set in the REMOTE_USER_DATA_WEBHOOK_TOKEN configuration variable.
+The service can also be triggered by a webhook signal from the remote ID provider. A webhook signal should be sent to the endpoint ``https://example.org/api/webhooks/users/update`` (preferred) or the deprecated ``https://example.org/api/webhooks/user_data_update``; the request must include a security token (provided by the Invenio admins) in the request header. This token is set in the REMOTE_USER_DATA_WEBHOOK_TOKEN configuration variable.
 
 The webhook signal should be a POST request with a JSON body. The body should be a JSON object whose top-level keys are
 

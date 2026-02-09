@@ -66,8 +66,9 @@ Update webhook
 
 The service can be triggered by a webhook signal from the remote service. A
 webhook signal should be sent to the endpoint https://example.org/api/webhooks
-/user_data_update/ and the request must include a security token (provided by
-the Invenio instance admins) in the request header. This token is set in the
+/users/update (preferred) or the deprecated /api/webhooks/user_data_update; the
+request must include a security token (provided by the Invenio instance admins)
+in the request header. This token is set in the
 REMOTE_USER_DATA_WEBHOOK_TOKEN configuration variable for the InvenioRDM
 instance.
 

@@ -1,83 +1,64 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = ["setuptools>=61", "wheel"]
+
 [project]
 name = "invenio-remote-user-data-kcworks"
 version = "0.6.1-beta3"
 description = "An extension to draw user data from remote sources into the Knowledge Commons Works InvenioRDM instance"
 readme = "README.md"
-authors = [{ name = "Mesh Research", email = "scottia4@msu.edu" }]
+keywords = ["invenio", "inveniordm", "research", "users"]
+
 license = { file = "LICENSE" }
+authors = [{ name = "Mesh Research", email = "scottia4@msu.edu" }]
+requires-python = ">=3.12"
+
 classifiers = [
-    "License :: OSI Approved :: MIT License",
-    "Development Status :: 4 - Beta",
-    "Programming Language :: Python",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Environment :: Web Environment",
-    "Intended Audience :: Developers",
-    "Operating System :: OS Independent",
-    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
-    "Topic :: Software Development :: Libraries :: Python Modules"
+  "Development Status :: 4 - Beta",
+  "Environment :: Web Environment",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+  "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-keywords = ["invenio", "inveniordm", "users", "research"]
-
-requires-python = ">=3.9"
-
 dependencies = [
-    "invenio-group-collections-kcworks",
-    "celery",
-    "click",
-    "deepdiff",
-    "invenio-app-rdm<13.0.0",
-    "invenio-queues",
-    "invenio-search",
-    "invenio-utilities-tuw",
-    "opensearch-dsl",
+  "celery",
+  "click",
+  "deepdiff",
+  "invenio-app-rdm<14",
+  "invenio-group-collections-kcworks",
+  "invenio-queues",
+  "invenio-search",
+  "invenio-utilities-tuw",
+  "opensearch-dsl",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "check-manifest",
-    "pipenv",
-    "pip-tools",
-    "pytest>=7.3.2",
-    "pytest-invenio",
-    "pytest-runner",
-    "requests-mock",
+optional-dependencies.dev = [
+  "check-manifest",
+  "pip-tools",
+  "pipenv",
+  "pytest>=7.3.2",
+  "pytest-invenio",
+  "pytest-runner",
+  "requests-mock",
 ]
-test = ["coverage"]
-
-[project.urls]
-Homepage = "https://github.com/MESH-Research/invenio-remote-user-data-kcworks"
-
-[project.scripts]
-user-data = "invenio_remote_user_data_kcworks.cli:cli"
-
-[project.entry-points."flask.commands"]
-user-data = "invenio_remote_user_data_kcworks.cli:cli"
-
-[project.entry-points."invenio_base.apps"]
-invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:InvenioRemoteUserData"
-
-[project.entry-points."invenio_base.api_apps"]
-invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:InvenioRemoteUserData"
-
-[project.entry-points."invenio_base.api_blueprints"]
-invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.views:create_api_blueprint"
-
-[project.entry-points."invenio_queues.queues"]
-invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.queues:declare_queues"
-
-[project.entry-points."invenio_celery.tasks"]
-invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.tasks"
-
-[project.entry-points."invenio_base.finalize_app"]
-invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:finalize_app"
-
-[project.entry-points."invenio_base.api_finalize_app"]
-invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:finalize_app"
-
-[tool.pytest.ini_options]
-addopts = "--doctest-glob='*.rst' --doctest-modules"
-testpaths = [ "tests", "invenio_remote_user_data_kcworks" ]
+optional-dependencies.test = ["coverage"]
+urls.Homepage = "https://github.com/MESH-Research/invenio-remote-user-data-kcworks"
+scripts.user-data = "invenio_remote_user_data_kcworks.cli:cli"
+entry-points."flask.commands".user-data = "invenio_remote_user_data_kcworks.cli:cli"
+entry-points."invenio_base.api_apps".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:InvenioRemoteUserData"
+entry-points."invenio_base.api_blueprints".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.views:create_api_blueprint"
+entry-points."invenio_base.api_finalize_app".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:finalize_app"
+entry-points."invenio_base.apps".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:InvenioRemoteUserData"
+entry-points."invenio_base.finalize_app".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:finalize_app"
+entry-points."invenio_celery.tasks".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.tasks"
+entry-points."invenio_queues.queues".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.queues:declare_queues"
 
 [tool.check-manifest]
 ignore = [
@@ -104,10 +85,9 @@ ignore = [
   ".vscode/*",
 ]
 
-
-[build-system]
-requires = ["setuptools>=61.0.0", "wheel"]
-build-backend = "setuptools.build_meta"
+[tool.pytest.ini_options]
+addopts = "--doctest-glob='*.rst' --doctest-modules"
+testpaths = ["tests", "invenio_remote_user_data_kcworks"]
 
 [tool.bumpver]
 current_version = "0.6.1-beta3"
@@ -122,19 +102,10 @@ tag = false
 push = false
 
 [tool.bumpver.file_patterns]
-"pyproject.toml" = [
-    '^version = "{version}"',
-    '^current_version = "{version}"',
-]
-"README.md" = [
-    '^Version {version}',
-]
-VERSION = [
-    '^"{version}"',
-]
-"invenio_remote_user_data_kcworks/__init__.py" = [
-    '^__version__ = "{version}"',
-]
+"pyproject.toml" = ['^version = "{version}"', '^current_version = "{version}"']
+"README.md" = ['^Version {version}']
+VERSION = ['^"{version}"']
+"invenio_remote_user_data_kcworks/__init__.py" = ['^__version__ = "{version}"']
 
 [tool.pydocstyle]
 add_ignore = "D401"

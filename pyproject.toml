@@ -44,7 +44,7 @@ optional-dependencies.dev = [
   "pip-tools",
   "pipenv",
   "pytest>=7.3.2",
-  "pytest-invenio",
+  "pytest-invenio>=3.3,<4",
   "pytest-runner",
   "requests-mock",
 ]

@@ -7,34 +7,26 @@
 
 """Custom permission policy to allow direct adding of users to communities."""
 
-from invenio_access import action_factory, Permission
 from invenio_administration.generators import Administration
-
-# from invenio_administration.permissions import administration_access_action
-from invenio_communities.permissions import (
-    CommunityPermissionPolicy,
-)
 from invenio_communities.generators import (
     AllowedMemberTypes,
     CommunityCurators,
     CommunityManagersForRole,
+    CommunityMembers,
     CommunityOwners,
-    IfPolicyClosed,
+    ReviewPolicy,
 )
-
-# FIXME: This is a temporary hack since the GroupsEnabled generator
-# has moved
-try:
-    from invenio_users_resources.services.generators import (
-        GroupsEnabled,
-    )
-except ImportError:
-    from invenio_communities.generators import GroupsEnabled
+from invenio_communities.permissions import (
+    CommunityPermissionPolicy,
+)
 from invenio_records_permissions import BasePermissionPolicy
 from invenio_records_permissions.generators import (
-    AnyUser,
-    Disable,
+    # AnyUser,
+    # Disable,
     SystemProcess,
+)
+from invenio_users_resources.services.generators import (
+    GroupsEnabled,
 )
 
 
@@ -50,14 +42,15 @@ class CustomCommunitiesPermissionPolicy(CommunityPermissionPolicy):
 
     # who can include a record directly, without a review
     can_include_directly = [
-        IfPolicyClosed(
-            "review_policy",
-            then_=[
+        ReviewPolicy(
+            closed_=[
                 SystemProcess(),
                 CommunityOwners(),
             ],  # default policy has Disable(),
-            else_=[CommunityCurators(), SystemProcess()],
+            open_=[CommunityCurators()],
+            members_=[CommunityMembers()],
         ),
+        SystemProcess(),
     ]
 
 

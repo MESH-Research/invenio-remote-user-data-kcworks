@@ -7,16 +7,18 @@
 
 """Celery task to update user data from remote API."""
 
+from typing import Optional
+
 from celery import shared_task
 from flask import current_app as app
 from invenio_access.permissions import system_identity
-from invenio_accounts.models import UserIdentity, User
-from .proxies import (
-    current_remote_user_data_service,
-    current_remote_group_service,
-)
+from invenio_accounts.models import User, UserIdentity
+
 from .errors import NoIDPFoundError
-from typing import Optional
+from .proxies import (
+    current_remote_group_service,
+    current_remote_user_data_service,
+)
 
 
 @shared_task(ignore_result=False)

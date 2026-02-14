@@ -8,9 +8,7 @@
 # LICENSE file for more details.
 
 import datetime
-import json
 import os
-import traceback
 from pprint import pformat
 from typing import Optional
 
@@ -21,9 +19,8 @@ from flask import current_app
 
 # frm pprint import pformat
 from invenio_access.permissions import system_identity
-from invenio_accounts.models import User, UserIdentity
+from invenio_accounts.models import User
 from invenio_accounts.proxies import current_accounts
-from invenio_db import db
 from invenio_group_collections_kcworks.proxies import (
     current_group_collections_service,
 )  # noqa
@@ -32,13 +29,10 @@ from invenio_records_resources.services import Service
 from werkzeug.local import LocalProxy
 
 from ..client import APIResponse, Profile, UserDataAPIClient
-from .group_roles import GroupRolesService
 from ..signals import remote_data_updated
 from ..tasks import do_group_data_update, do_user_data_update
-from ..utils import (
-    CILogonHelpers,
-    diff_between_nested_dicts,
-)
+from ..utils import CILogonHelpers
+from .group_roles import GroupRolesService
 
 
 class RemoteGroupDataService(Service):

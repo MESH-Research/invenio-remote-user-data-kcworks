@@ -9,12 +9,12 @@
 
 """Group roles service for Invenio accounts (roles as groups)."""
 
-from flask import current_app as app
-from invenio_accounts.models import Role, User
-from invenio_accounts.proxies import current_accounts
 from pprint import pformat
 from typing import Optional, Union
 
+from flask import current_app as app
+from invenio_accounts.models import Role, User
+from invenio_accounts.proxies import current_accounts
 
 # TODO: Most of these operations use the invenio_accounts datastore
 # directly. The invenio-users-resources groups service may be appropriate,
@@ -28,9 +28,7 @@ class GroupRolesService:
         """Initialize. Service argument is optional and unused (for API compatibility)."""
         pass
 
-    def get_roles_for_remote_group(
-        self, remote_group_id: str, idp: str
-    ) -> list[Role]:
+    def get_roles_for_remote_group(self, remote_group_id: str, idp: str) -> list[Role]:
         """Get the Invenio roles for a remote group."""
         query_string = f"{idp}---{remote_group_id}|"
 
@@ -57,22 +55,16 @@ class GroupRolesService:
             raise RuntimeError(f'User "{user}" not found.')
         return return_user.roles
 
-    def find_or_create_group(
-        self, group_name: str, **kwargs
-    ) -> Optional[Role]:
+    def find_or_create_group(self, group_name: str, **kwargs) -> Optional[Role]:
         """Search for a group with a given name and create it if it doesn't exist."""
         my_group_role = current_accounts.datastore.find_or_create_role(
             name=group_name, **kwargs
         )
         current_accounts.datastore.commit()
         if my_group_role is not None:
-            app.logger.debug(
-                f'Role for group "{group_name}" found or created.'
-            )
+            app.logger.debug(f'Role for group "{group_name}" found or created.')
         else:
-            raise RuntimeError(
-                f'Role for group "{group_name}" not found or created.'
-            )
+            raise RuntimeError(f'Role for group "{group_name}" not found or created.')
         return my_group_role
 
     def create_new_group(self, group_name: str, **kwargs) -> Optional[Role]:
@@ -107,17 +99,13 @@ class GroupRolesService:
                 app.logger.error(a)
                 deleted = True
             except Exception as e:
-                raise RuntimeError(
-                    f'Role "{group_name}" not deleted. {pformat(e)}'
-                )
+                raise RuntimeError(f'Role "{group_name}" not deleted. {pformat(e)}')
         return deleted
 
     def add_user_to_group(self, group_name: str, user: User, **kwargs) -> bool:
         """Add a user to a group."""
         app.logger.debug(f"got group name {group_name}")
-        user_added = current_accounts.datastore.add_role_to_user(
-            user, group_name
-        )
+        user_added = current_accounts.datastore.add_role_to_user(user, group_name)
         current_accounts.datastore.commit()
         if user_added is False:
             raise RuntimeError("Cannot add user to group role.")
@@ -152,20 +140,15 @@ class GroupRolesService:
             if isinstance(user, User)
             else current_accounts.datastore.get_user_by_id(user)
         )
-        group_name = (
-            group_name if isinstance(group_name, str) else group_name.id
-        )
+        group_name = group_name if isinstance(group_name, str) else group_name.id
         removed_user = current_accounts.datastore.remove_role_from_user(
             user, group_name
         )
         current_accounts.datastore.commit()
         if removed_user is False:
-            app.logger.debug(
-                "Role {group_name} could not be removed from user."
-            )
+            app.logger.debug("Role {group_name} could not be removed from user.")
         else:
             app.logger.info(
-                f'Role "{group_name}" removed from user "{user.email}"'
-                "successfully."
+                f'Role "{group_name}" removed from user "{user.email}"successfully.'
             )
         return removed_user

@@ -8,8 +8,10 @@
 """Functions and classes for interacting with the IDMS API."""
 
 import os
+
 import requests
-from flask import current_app as app, request
+from flask import current_app as app
+from flask import request
 from pydantic import BaseModel, HttpUrl
 
 

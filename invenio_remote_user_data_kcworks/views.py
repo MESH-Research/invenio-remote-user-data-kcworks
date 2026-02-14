@@ -8,21 +8,17 @@
 import base64
 import contextlib
 import json
-import os
-from pprint import pformat
-from secrets import compare_digest
 
 import requests
 from flask import (
     Blueprint,
+    Response,
     abort,
     g,
     jsonify,
     make_response,
     redirect,
-    render_template,
     request,
-    Response,
     url_for,
 )
 from flask import (
@@ -49,7 +45,6 @@ from invenio_oauthclient.utils import (
 from invenio_queues.proxies import current_queues
 from invenio_records_resources.services.errors import PermissionDeniedError
 from invenio_remote_user_data_kcworks.errors import (
-    IDTokenInvalid,
     StateTokenInvalid,
     UserDataRequestFailed,
     UserDataRequestTimeout,
@@ -68,7 +63,7 @@ from werkzeug.exceptions import (
 
 from .client import APIResponse, UserDataAPIClient
 from .signals import remote_data_updated
-from .utils import CILogonHelpers, extract_bearer_token
+from .utils import CILogonHelpers
 
 
 def _login(remote_app, authorized_view_name):

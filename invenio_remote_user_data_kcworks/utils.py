@@ -12,16 +12,15 @@ import datetime
 import hashlib
 import json
 import os
-
 from pprint import pformat
-from urllib.parse import urlencode, urlunparse, urlparse
+from urllib.parse import urlencode, urlparse, urlunparse
 
 import invenio_oauthclient
 import jwt
 import requests
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from flask import current_app, abort
+from flask import current_app
 from invenio_accounts import current_accounts
 from invenio_accounts.models import User, UserIdentity
 from invenio_db import db

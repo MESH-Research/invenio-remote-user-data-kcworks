@@ -7,11 +7,11 @@
 
 """Main extension class for invenio-remote-user-data-kcworks."""
 
-import arrow
 import re
-from flask import current_app, request, session
-from flask_login import user_logged_in, user_logged_out
 
+import arrow
+from flask import current_app, session
+from flask_login import user_logged_in, user_logged_out
 from invenio_accounts.models import User
 
 from . import config
@@ -19,18 +19,9 @@ from .proxies import current_remote_user_data_service
 from .services.service import RemoteGroupDataService, RemoteUserDataService
 from .tasks import do_user_data_update
 from .views import (
-    login,
     authorized,
+    login,
 )
-from werkzeug.exceptions import (
-    BadRequest,
-    Forbidden,
-    InternalServerError,
-    MethodNotAllowed,
-    NotFound,
-    Unauthorized,
-)
-
 
 OAUTH_ROUTE_REWRITES = {
     "/oauth/login/<remote_app>/": login,

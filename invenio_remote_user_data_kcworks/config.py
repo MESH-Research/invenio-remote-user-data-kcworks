@@ -8,6 +8,7 @@
 # LICENSE file for more details.
 
 from kombu import Exchange
+
 from .permissions import (
     CustomCommunitiesPermissionPolicy,
     RemoteUserDataPermissionPolicy,

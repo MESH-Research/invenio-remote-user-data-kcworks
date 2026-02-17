@@ -43,10 +43,7 @@ class CustomCommunitiesPermissionPolicy(CommunityPermissionPolicy):
     # who can include a record directly, without a review
     can_include_directly = [
         ReviewPolicy(
-            closed_=[
-                SystemProcess(),
-                CommunityOwners(),
-            ],  # default policy has Disable(),
+            closed_=[CommunityOwners()],  # default policy has Disable(),
             open_=[CommunityCurators()],
             members_=[CommunityMembers()],
         ),

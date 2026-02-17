@@ -11,10 +11,8 @@ import pytest
 import json
 import os
 
-from invenio_remote_user_data_kcworks.services import (
-    GroupRolesService,
-    RemoteUserDataService,
-)
+from invenio_remote_user_data_kcworks.services.service import RemoteUserDataService
+from invenio_remote_user_data_kcworks.services.group_roles import GroupRolesService
 
 
 def test_webhook_get(client, app, search_clear):
@@ -69,9 +67,7 @@ def test_webhook_get(client, app, search_clear):
                         "name": "Joe User",
                         "first_name": "Joe",
                         "last_name": "User",
-                        "institutional_affiliation": (
-                            "Michigan State University"
-                        ),
+                        "institutional_affiliation": ("Michigan State University"),
                         "orcid": "0000-0002-1825-0097",
                         "groups": [
                             {
@@ -142,7 +138,6 @@ def test_webhook_post(
     )
 
     with app.test_client() as client:
-
         for key, value in callback_responses.items():
             for v in value:
                 requests_mock.get(
@@ -159,15 +154,12 @@ def test_webhook_post(
                     email=v["email"], confirmed_at=arrow.utcnow().datetime
                 )
                 new_user.roles
-                UserIdentity.create(
-                    new_user, "knowledgeCommons", v["username"]
-                )
+                UserIdentity.create(new_user, "knowledgeCommons", v["username"])
 
         app.logger.debug(f"admin roles: {admin.user.roles}")
         response = client.post(
             url_for(
-                "invenio_remote_user_data_kcworks."
-                "remote_user_data_kcworks_webhook",
+                "invenio_remote_user_data_kcworks.remote_user_data_kcworks_webhook",
             ),
             data=json.dumps(payload),
             headers=headers,
@@ -183,38 +175,26 @@ def test_webhook_post(
                     # myuser = current_users.search(
                     #     system_identity, q=f"email:{v['email']}"
                     # ).to_dict()["hits"]["hits"]
-                    myuser = current_accounts.datastore.find_user(
-                        email=v["email"]
-                    )
+                    myuser = current_accounts.datastore.find_user(email=v["email"])
                     app.logger.debug(f"myuser: {myuser}")
                     assert myuser.email == v["email"]
                     assert myuser.user_profile["full_name"] == v["name"]
-                    assert myuser.user_profile["affiliations"] == (
-                        v["institutional_affiliation"]
+                    assert (
+                        myuser.user_profile["affiliations"]
+                        == (v["institutional_affiliation"])
                     )
                     assert json.dumps(myuser.user_profile["name_parts"]) == {
                         "first": v["first_name"],
                         "last": v["last_name"],
                     }
-                    assert myuser.user_profile["identifier_orcid"] == (
-                        v["orcid"]
-                    )
+                    assert myuser.user_profile["identifier_orcid"] == (v["orcid"])
 
                     user_roles = [r.name for r in myuser.roles]
                     for g in user_roles:
                         groupid = g.split("---")[1].split("|")[0]
                         group_roles = GroupRolesService(
                             RemoteUserDataService
-                        ).get_roles_for_remote_group(
-                            groupid, "knowledgeCommons"
-                        )
+                        ).get_roles_for_remote_group(groupid, "knowledgeCommons")
                         assert (
-                            len(
-                                [
-                                    r
-                                    for r in group_roles
-                                    if r.name in user_roles
-                                ]
-                            )
-                            == 1
+                            len([r for r in group_roles if r.name in user_roles]) == 1
                         )

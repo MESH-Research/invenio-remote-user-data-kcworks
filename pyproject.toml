@@ -32,11 +32,15 @@ dependencies = [
   "click",
   "deepdiff",
   "invenio-app-rdm<14",
+  "invenio-communities",
   "invenio-group-collections-kcworks",
   "invenio-queues",
   "invenio-search",
   "invenio-utilities-tuw",
+  "marshmallow-utils>=0.12",           # EDTFLevel2DateString (used by invenio-rdm-records thesis)
   "opensearch-dsl",
+  "pydantic",
+  "standard-pkg-resources",            # pkg_resources required by fs (transitive) at runtime
 ]
 
 optional-dependencies.dev = [
@@ -48,8 +52,10 @@ optional-dependencies.dev = [
   "pytest-runner",
   "requests-mock",
 ]
-optional-dependencies.test = ["coverage"]
+optional-dependencies.test = ["coverage", "invenio-stats-dashboard"]
+
 urls.Homepage = "https://github.com/MESH-Research/invenio-remote-user-data-kcworks"
+
 scripts.user-data = "invenio_remote_user_data_kcworks.cli:cli"
 entry-points."flask.commands".user-data = "invenio_remote_user_data_kcworks.cli:cli"
 entry-points."invenio_base.api_apps".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:InvenioRemoteUserData"
@@ -59,6 +65,11 @@ entry-points."invenio_base.apps".invenio_remote_user_data_kcworks = "invenio_rem
 entry-points."invenio_base.finalize_app".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:finalize_app"
 entry-points."invenio_celery.tasks".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.tasks"
 entry-points."invenio_queues.queues".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.queues:declare_queues"
+
+[tool.uv.sources]
+invenio-group-collections-kcworks = { path = "../invenio-group-collections-kcworks", editable = true }
+invenio-stats-dashboard = { path = "../invenio-stats-dashboard", editable = true }
+invenio-communities = { path = "../invenio-communities", editable = true }
 
 [tool.check-manifest]
 ignore = [

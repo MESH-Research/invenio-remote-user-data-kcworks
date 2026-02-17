@@ -1,5 +1,5 @@
 # from invenio_utilities_tuw.utils import get_user_by_identifier
-from invenio_remote_user_data_kcworks.services import GroupRolesService
+from invenio_remote_user_data_kcworks.services.group_roles import GroupRolesService
 
 # from pprint import pprint
 
@@ -16,9 +16,9 @@ def test_get_current_user_roles(app, user_factory):
         myuser (_type_): _description_
     """
     myuser = user_factory()
-    roles = GroupRolesService(
-        current_remote_user_data_service
-    ).get_current_user_roles(user=myuser)
+    roles = GroupRolesService(current_remote_user_data_service).get_current_user_roles(
+        user=myuser
+    )
     assert roles == []
 
 
@@ -62,9 +62,7 @@ def test_add_user_to_group(app, user_factory, db):
 
     from werkzeug.local import LocalProxy
 
-    security_datastore = LocalProxy(
-        lambda: app.extensions["security"].datastore
-    )
+    security_datastore = LocalProxy(lambda: app.extensions["security"].datastore)
     my_user = security_datastore.find_user(email=myuser.email)
     # my_user = get_user_by_identifier(users[0].email)
     assert "my_group" in my_user.roles
@@ -86,8 +84,6 @@ def test_get_current_members_of_group(app, user_factory, db):
     myuser = user_factory()
     added_user = grouper.add_user_to_group(group_name="my_group", user=myuser)
     assert added_user is True
-    members_of_group = grouper.get_current_members_of_group(
-        group_name="my_group"
-    )
+    members_of_group = grouper.get_current_members_of_group(group_name="my_group")
 
     assert [u for u in members_of_group] == [myuser]

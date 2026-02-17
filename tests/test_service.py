@@ -15,7 +15,7 @@ from invenio_search.engine import dsl
 from invenio_search.utils import build_alias_name
 from invenio_users_resources.proxies import current_users_service
 from invenio_utilities_tuw.utils import get_identity_for_user
-from invenio_remote_user_data_kcworks.services import GroupRolesService
+from invenio_remote_user_data_kcworks.services.group_roles import GroupRolesService
 from invenio_remote_user_data_kcworks.proxies import (
     current_remote_user_data_service as user_data_service,
     current_remote_group_service as group_data_service,
@@ -150,10 +150,8 @@ def test_update_invenio_group_memberships(app, user_factory, db):
     grouper.add_user_to_group("cool-group", myuser)
     grouper.add_user_to_group("admin", myuser)
 
-    actual_updated_memberships = (
-        user_data_service.update_invenio_group_memberships(
-            myuser, test_changed_memberships
-        )
+    actual_updated_memberships = user_data_service.update_invenio_group_memberships(
+        myuser, test_changed_memberships
     )
 
     assert actual_updated_memberships == expected_updated_memberships
@@ -259,8 +257,7 @@ def test_update_user_from_remote_mock(
     if "groups" in return_payload.keys():
         for group in return_payload["groups"]:
             requests_mock.get(
-                f"https://hcommons-dev.org/wp-json/commons/v1/groups/"
-                f"{group['id']}",
+                f"https://hcommons-dev.org/wp-json/commons/v1/groups/{group['id']}",
                 json={
                     "id": group["id"],
                     "name": group["name"],
@@ -269,9 +266,7 @@ def test_update_user_from_remote_mock(
                 },
             )
 
-    myuser = user_factory(
-        email=user_email, confirmed_at=arrow.utcnow().datetime
-    )
+    myuser = user_factory(email=user_email, confirmed_at=arrow.utcnow().datetime)
     if not myuser.active:
         assert current_accounts.datastore.activate_user(myuser)
     UserIdentity.create(myuser, "knowledgeCommons", remote_id)
@@ -288,9 +283,7 @@ def test_update_user_from_remote_mock(
     assert actual[1] == user_changes
     assert sorted(actual[2]) == sorted(new_groups)
     assert actual[3] == group_changes
-    myuser_confirm = current_users_service.read(
-        system_identity, myuser.id
-    ).data
+    myuser_confirm = current_users_service.read(system_identity, myuser.id).data
     pprint(myuser_confirm)
     assert {
         "username": myuser_confirm["username"],
@@ -483,18 +476,14 @@ def test_update_group_from_remote_with_community(
     )
 
     # create the group collection/community in the database
-    GroupRolesService(user_data_service).create_new_group(
-        group_name="administrator"
-    )
+    GroupRolesService(user_data_service).create_new_group(group_name="administrator")
     existing_collection = current_communities.service.create(
         identity=system_identity, data=creation_data
     )
     Community.index.refresh()
 
     communities_index = dsl.Index(
-        build_alias_name(
-            current_communities.service.config.record_cls.index._name
-        ),
+        build_alias_name(current_communities.service.config.record_cls.index._name),
         using=current_search_client,  # type: ignore
     )
     app.logger.debug(f"Communities index: {communities_index}")
@@ -511,9 +500,7 @@ def test_update_group_from_remote_with_community(
 
     actual_md = {
         k: v
-        for k, v in actual[existing_collection["slug"]][
-            "metadata_updated"
-        ].items()
+        for k, v in actual[existing_collection["slug"]]["metadata_updated"].items()
         if k not in ["revision_id", "created", "updated", "links", "id"]
     }
     expected_md = {
@@ -541,9 +528,7 @@ def test_update_group_from_remote_with_community(
     )
     assert (
         search_result["custom_fields"]["kcr:commons_group_name"]
-        == expected["metadata_updated"]["custom_fields"][
-            "kcr:commons_group_name"
-        ]
+        == expected["metadata_updated"]["custom_fields"]["kcr:commons_group_name"]
     )
     assert (
         search_result["custom_fields"]["kcr:commons_group_description"]
@@ -640,9 +625,7 @@ def test_update_group_from_remote_with_deleted_community(
         json=return_payload,
     )
 
-    GroupRolesService(user_data_service).create_new_group(
-        group_name="administrator"
-    )
+    GroupRolesService(user_data_service).create_new_group(group_name="administrator")
 
     # create the group collection/community in the database
     existing_collection = current_communities.service.create(
@@ -654,9 +637,7 @@ def test_update_group_from_remote_with_deleted_community(
     Community.index.refresh()
 
     communities_index = dsl.Index(  # noqa:F841
-        build_alias_name(
-            current_communities.service.config.record_cls.index._name
-        ),
+        build_alias_name(current_communities.service.config.record_cls.index._name),
         using=current_search_client,  # type: ignore
     )
 
@@ -683,9 +664,7 @@ def test_update_group_from_remote_with_deleted_community(
         f"+custom_fields.kcr\:commons_group_id:"  # noqa
         f"{remote_group_id}"
     )
-    community_list = current_communities.service.search(
-        system_identity, q=query_params
-    )
+    community_list = current_communities.service.search(system_identity, q=query_params)
     app.logger.debug(
         f"Community list: {[c for c in community_list.to_dict()['hits']['hits']]}"
     )
@@ -696,9 +675,7 @@ def test_update_group_from_remote_with_deleted_community(
     app.logger.debug(f"Actual: {actual.keys()}")
 
     actual_md = actual[existing_collection["slug"]]["metadata_updated"]
-    expected_md = group_role_changes[existing_collection["slug"]][
-        "metadata_updated"
-    ]
+    expected_md = group_role_changes[existing_collection["slug"]]["metadata_updated"]
     assert actual_md == expected_md
 
 
@@ -742,9 +719,7 @@ def test_delete_group_from_remote(
     grouper.create_new_group(group_name="knowledgeCommons---1004290|admin")
     grouper.create_new_group(group_name="knowledgeCommons---1004290|member")
 
-    myuser = user_factory(
-        email=user_email, confirmed_at=arrow.utcnow().datetime
-    )
+    myuser = user_factory(email=user_email, confirmed_at=arrow.utcnow().datetime)
     if not myuser.active:
         assert current_accounts.datastore.activate_user(myuser)
     UserIdentity.create(myuser, "knowledgeCommons", "testuser")
@@ -759,21 +734,15 @@ def test_delete_group_from_remote(
     )
 
     assert (
-        current_accounts.datastore.find_role(
-            "knowledgeCommons---1004290|admin"
-        )
-        is None
+        current_accounts.datastore.find_role("knowledgeCommons---1004290|admin") is None
     )
     assert (
-        current_accounts.datastore.find_role(
-            "knowledgeCommons---1004290|member"
-        )
+        current_accounts.datastore.find_role("knowledgeCommons---1004290|member")
         is None
     )
 
-    assert (
-        "knowledgeCommons---1004290|admin"
-        not in grouper.get_current_user_roles(myuser)
+    assert "knowledgeCommons---1004290|admin" not in grouper.get_current_user_roles(
+        myuser
     )
 
     assert actual == {
@@ -965,9 +934,7 @@ def test_delete_group_from_remote_with_community(
     ]
 
     # create user and add to community via group
-    myuser = user_factory(
-        email=user_email, confirmed_at=arrow.utcnow().datetime
-    )
+    myuser = user_factory(email=user_email, confirmed_at=arrow.utcnow().datetime)
     if not myuser.active:
         assert current_accounts.datastore.activate_user(myuser)
     UserIdentity.create(myuser, "knowledgeCommons", "testuser")
@@ -992,62 +959,38 @@ def test_delete_group_from_remote_with_community(
 
     # confirm that the group roles were deleted
     assert (
-        current_accounts.datastore.find_role(
-            "knowledgeCommons---1004290|admin"
-        )
-        is None
+        current_accounts.datastore.find_role("knowledgeCommons---1004290|admin") is None
     )
     assert (
-        current_accounts.datastore.find_role(
-            "knowledgeCommons---1004290|member"
-        )
+        current_accounts.datastore.find_role("knowledgeCommons---1004290|member")
         is None
     )
 
     # confirm that the user was removed from the group
-    assert (
-        "knowledgeCommons---1004290|admin"
-        not in grouper.get_current_user_roles(myuser)
+    assert "knowledgeCommons---1004290|admin" not in grouper.get_current_user_roles(
+        myuser
     )
 
     # confirm that the user is an individual member of the community
-    user_memberships = current_communities.service.members.read_memberships(
-        myuser
-    )
+    user_memberships = current_communities.service.members.read_memberships(myuser)
     app.logger.debug(f"User memberships: {user_memberships}")
-    assert existing_collection["id"] in [
-        m[0] for m in user_memberships["memberships"]
-    ]
+    assert existing_collection["id"] in [m[0] for m in user_memberships["memberships"]]
 
     # confirm that the other individual member is still a member of
     # the community
-    user2_memberships = current_communities.service.members.read_memberships(
-        myuser2
-    )
-    assert existing_collection["id"] in [
-        m[0] for m in user2_memberships["memberships"]
-    ]
+    user2_memberships = current_communities.service.members.read_memberships(myuser2)
+    assert existing_collection["id"] in [m[0] for m in user2_memberships["memberships"]]
 
     # confirm that the community no longer has the group info
     final_collection_state = current_group_collections_service.read(
         system_identity, existing_collection["slug"]
     )
+    assert final_collection_state["custom_fields"]["kcr:commons_group_id"] == ""
+    assert final_collection_state["custom_fields"]["kcr:commons_group_name"] == ""
     assert (
-        final_collection_state["custom_fields"]["kcr:commons_group_id"] == ""
+        final_collection_state["custom_fields"]["kcr:commons_group_description"] == ""
     )
-    assert (
-        final_collection_state["custom_fields"]["kcr:commons_group_name"] == ""
-    )
-    assert (
-        final_collection_state["custom_fields"][
-            "kcr:commons_group_description"
-        ]
-        == ""
-    )
-    assert (
-        final_collection_state["custom_fields"]["kcr:commons_group_visibility"]
-        == ""
-    )
+    assert final_collection_state["custom_fields"]["kcr:commons_group_visibility"] == ""
 
     # confirm that the return value reporting the operations is correct
     assert actual == {
@@ -1150,9 +1093,7 @@ def test_update_user_from_remote_live(
 """
 
 
-def test_on_user_logged_in(
-    client, app, db, user_factory, requests_mock, myuser
-):
+def test_on_user_logged_in(client, app, db, user_factory, requests_mock, myuser):
     """Test service initialization and signal triggers."""
     assert "invenio-remote-user-data-kcworks" in app.extensions
     assert app.extensions["invenio-remote-user-data-kcworks"].service
@@ -1205,39 +1146,35 @@ def test_on_user_logged_in(
     # not dropped from the admin group because that's a locally managed
     # group (no idp prefix).
     assert (
-        len(
-            [
-                n.value
-                for n in my_identity.provides
-                if n.value
-                in [
-                    "knowledgeCommons---67891|member",
-                    "knowledgeCommons---12345|admin",
-                    "any_user",
-                    myuser1.id,
-                    "authenticated_user",
-                    "admin",
-                ]
+        len([
+            n.value
+            for n in my_identity.provides
+            if n.value
+            in [
+                "knowledgeCommons---67891|member",
+                "knowledgeCommons---12345|admin",
+                "any_user",
+                myuser1.id,
+                "authenticated_user",
+                "admin",
             ]
-        )
+        ])
         == 6
     )
     assert (
-        len(
-            [
-                n.value
-                for n in my_identity.provides
-                if n.value
-                not in [
-                    "knowledgeCommons---67891|member",
-                    "knowledgeCommons---12345|admin",
-                    "any_user",
-                    myuser1.id,
-                    "authenticated_user",
-                    "admin",
-                ]
+        len([
+            n.value
+            for n in my_identity.provides
+            if n.value
+            not in [
+                "knowledgeCommons---67891|member",
+                "knowledgeCommons---12345|admin",
+                "any_user",
+                myuser1.id,
+                "authenticated_user",
+                "admin",
             ]
-        )
+        ])
         == 0
     )
 
@@ -1266,19 +1203,9 @@ def test_on_user_logged_in(
     time.sleep(10)
     client.get("/api")
     my_identity = g.identity
+    assert len([n.value for n in my_identity.provides if n.value in ["any_user"]]) == 1
     assert (
-        len([n.value for n in my_identity.provides if n.value in ["any_user"]])
-        == 1
-    )
-    assert (
-        len(
-            [
-                n.value
-                for n in my_identity.provides
-                if n.value not in ["any_user"]
-            ]
-        )
-        == 0
+        len([n.value for n in my_identity.provides if n.value not in ["any_user"]]) == 0
     )
 
     # log a different user in without mocking SAML login (so like local)
@@ -1290,24 +1217,19 @@ def test_on_user_logged_in(
     client.get("/api")
     my_identity = g.identity
     assert (
-        len(
-            [
-                n.value
-                for n in my_identity.provides
-                if n.value in ["any_user", myuser2.id, "authenticated_user"]
-            ]
-        )
+        len([
+            n.value
+            for n in my_identity.provides
+            if n.value in ["any_user", myuser2.id, "authenticated_user"]
+        ])
         == 3
     )
     assert (
-        len(
-            [
-                n.value
-                for n in my_identity.provides
-                if n.value
-                not in ["any_user", myuser2.id, "authenticated_user"]
-            ]
-        )
+        len([
+            n.value
+            for n in my_identity.provides
+            if n.value not in ["any_user", myuser2.id, "authenticated_user"]
+        ])
         == 0
     )
     assert myuser2.username is None

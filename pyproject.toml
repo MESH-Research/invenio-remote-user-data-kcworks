@@ -227,5 +227,13 @@ push = false
 VERSION = ['^"{version}"']
 "invenio_remote_user_data_kcworks/__init__.py" = ['^__version__ = "{version}"']
 
+[tool.pylsp.plugins.jedi]
+extra_paths = [
+  "../../..",  # kcworks (site/)
+  "../invenio-communities",
+  "../invenio-group-collections-kcworks",
+  "../invenio-stats-dashboard",
+]
+
 [tool.pydocstyle]
 add_ignore = "D401"

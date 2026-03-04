@@ -47,7 +47,7 @@ class Profile(BaseModel):
 
 
 class SubData(BaseModel):
-    """SubData is a Pydantic model for the user profile."""
+    """SubData is a Pydantic model for the user data for a sub."""
 
     sub: str
     profile: Profile
@@ -83,6 +83,7 @@ class UserDataAPIClient:
         sub_id: str | None = None,
         kc_username: str | None = None,
         timeout: int | None = None,
+        use_sub_endpoint: bool | None = None,
     ) -> APIResponse | Profile | None:
         """Fetch user profile data from the API endpoint.
 
@@ -97,6 +98,10 @@ class UserDataAPIClient:
             sub_id: The subject ID to query for (exclusive of kc_username)
             kc_username: The username to query for (exclusive of sub_id)
             timeout: The timeout duration for the API request in seconds (default 10).
+            use_sub_endpoint: A flag to indicate that a request using the kc_username should
+              be made to the sub endpoint rather than the members endpoint. This does nothing
+              if a sub_id is supplied. If a kc_username is supplied it overrides the default
+              behaviour that uses the members endpoint.
 
         Raises:
             requests.Timeout: If the request to the profiles user data API fails to
@@ -136,9 +141,10 @@ class UserDataAPIClient:
 
         if sub_id:
             url = f"{base_api_url}subs/?sub={sub_id}"
+        elif use_sub_endpoint:
+            url = f"{base_api_url}subs/{kc_username}/"
         else:
             url = f"{base_api_url}members/{kc_username}/"
-
         try:
             response = requests.get(url, headers=headers, timeout=timeout)
             response.raise_for_status()  # Raises an HTTPError for bad responses
@@ -149,7 +155,7 @@ class UserDataAPIClient:
             # Parse with Pydantic
             # if we have a sub_id we expect an APIResponse object that has a
             # sub and profile. If we have a kc_username we expect a Profile object.
-            if sub_id:
+            if sub_id or use_sub_endpoint:
                 parsed_response = APIResponse(**json_data)
             else:
                 parsed_response = Profile(**json_data)

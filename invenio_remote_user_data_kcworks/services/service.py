@@ -413,7 +413,8 @@ class RemoteUserDataService(Service):
                     profile = remote_data.results[0].profile
 
                 # update the user profile
-                user.username = profile.username
+                if user.username != profile.username:
+                    user.username = profile.username
                 user.full_name = profile.name
                 user.email = profile.email
 
@@ -430,7 +431,6 @@ class RemoteUserDataService(Service):
                     remote_service,
                     **kwargs,
                 )
-                self.logger.debug(f"updated_data: {pformat(updated_data)}")
 
                 return (
                     user,

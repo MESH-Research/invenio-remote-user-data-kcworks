@@ -242,6 +242,18 @@ class CILogonHelpers:
         Uses either the access token or extracted account information to retrieve
         the user object.
 
+        Expects the account info to be shaped like:
+            {
+                "user": {
+                    "email": XXX,
+                    "profile": {
+                        "identifier_orcid": XXX,
+                        "identifier_kc_username": XXX
+                        }
+                    },
+                "external_method": "cilogon"
+            }
+
         Parameters:
             account_info (dict | None): The dictionary with the account info.
                 (Default: ``None``)
@@ -396,12 +408,6 @@ class CILogonHelpers:
 
         if existing_identity:
             current_app.logger.debug("User already has identity linked to CILogon")
-            # Update existing record if needed
-
-            # if existing_identity.user != user:
-            #     existing_identity.user = user
-            #     db.session.commit()
-            # _ = existing_identity
         else:
             current_app.logger.debug("Creating new identity for CILogon")
             # Create new UserIdentity

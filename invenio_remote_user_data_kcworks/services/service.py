@@ -27,6 +27,7 @@ from invenio_db import db
 from invenio_group_collections_kcworks.proxies import (
     current_group_collections_service,
 )  # noqa
+from invenio_group_collections_kcworks.service import remote_to_invenio_visibility
 from invenio_queues.proxies import current_queues
 from invenio_records_resources.services import Service
 from werkzeug.local import LocalProxy
@@ -95,7 +96,7 @@ class RemoteGroupDataService(Service):
         if "avatar" in new_data.keys() and new_data["avatar"]:
             try:
                 assert current_group_collections_service.update_avatar(
-                    starting_dict["id"], new_data["avatar"]
+                    new_data["avatar"], starting_dict["id"]
                 )
             except AssertionError:
                 self.logger.error(f"Error uploading avatar for {new_data['id']} group.")
@@ -107,6 +108,11 @@ class RemoteGroupDataService(Service):
             custom_fields_updates["kcr:commons_group_visibility"] = new_data[
                 "visibility"
             ]
+            if "access" not in starting_dict:
+                starting_dict["access"] = {}
+            starting_dict["access"]["visibility"] = remote_to_invenio_visibility(
+                new_data["visibility"]
+            )
         if "description" in new_data.keys():
             custom_fields_updates["kcr:commons_group_description"] = new_data[
                 "description"
@@ -173,7 +179,10 @@ class RemoteGroupDataService(Service):
             headers=headers,
             timeout=timeout,
         )
-        group_metadata = response.json()
+        response.raise_for_status()
+        raw_content = response.json()
+        # Same shape as GroupCollectionsService: group at top level or under "results"
+        group_metadata = raw_content.get("results", raw_content)
 
         # check if the group's collection(s) exists
         query_params = (

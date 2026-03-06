@@ -44,6 +44,7 @@ class Profile(BaseModel):
     academic_interests: list[AcademicInterest] | None = None
     groups: list[Group]
     url: HttpUrl | None = None
+    is_superadmin: bool = False
 
 
 class SubData(BaseModel):

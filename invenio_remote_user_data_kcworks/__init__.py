@@ -41,7 +41,7 @@ Note that the group membership updates are one-directional. If a user is
 added to or removed from a group (role) on the Invenio server, the service
 does not add the user to the corresponding group on the remote ID provider.
 There may also be groups (roles) in Invenio that are strictly internal and do
-not correspond with any groups on the remote ID provider (e.g., 'admin').
+not correspond with any groups on the remote ID provider (e.g., 'administration').
 
 Once a user has been assigned the Invenio role, the user's Invenio Identity
 object will be updated (on the next request) to provide role Needs

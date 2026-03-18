@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # This file is part of the invenio-remote-user-data-kcworks package.
 # Copyright (C) 2023-2026, MESH Research.
@@ -8,6 +7,7 @@
 # LICENSE file for more details.
 
 from kombu import Exchange
+
 from .permissions import (
     CustomCommunitiesPermissionPolicy,
     RemoteUserDataPermissionPolicy,
@@ -50,7 +50,15 @@ REMOTE_USER_DATA_PERMISSION_POLICY = RemoteUserDataPermissionPolicy
 
 IDMS_TOKEN_UPDATE_TIMEOUT = 5
 
-IDMS_CILOGON_PUBLIC_KEY_TIMEOUT = 30
+# SSO Broker Authentication
+# -------------------------
+SSO_BROKER_LOGIN_URL = None
+SSO_BROKER_SILENT_LOGIN_URL = None
+SSO_BROKER_VERIFY_NONCE_URL = None
+SSO_BROKER_COOKIE_NAME = "_sso_checked"
+SSO_BROKER_COOKIE_TTL = 1800  # 30 minutes in seconds
+SSO_BROKER_SESSION_COOKIE_NAME = None
+SSO_BROKER_SILENT_LOGIN_TIMEOUT = 3
 
 REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE = (
     "<p>Sorry, we "

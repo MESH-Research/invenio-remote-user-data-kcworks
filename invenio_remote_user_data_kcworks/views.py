@@ -5,24 +5,17 @@
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
-import base64
-import contextlib
-import json
-import os
-from pprint import pformat
-from secrets import compare_digest
+import time
+from urllib.parse import urlencode
 
-import requests
 from flask import (
-    Blueprint,
+    Response,
     abort,
     g,
     jsonify,
     make_response,
     redirect,
-    render_template,
     request,
-    Response,
     url_for,
 )
 from flask import (
@@ -30,58 +23,138 @@ from flask import (
 )
 from flask.views import MethodView
 from flask_login import login_user
-from flask_oauthlib.client import OAuthException, OAuthRemoteApp
-from invenio_access.permissions import system_identity
-from invenio_accounts.errors import AlreadyLinkedError
 from invenio_accounts.models import UserIdentity
 from invenio_accounts.sessions import delete_user_sessions
 from invenio_db import db
-from invenio_oauthclient import current_oauthclient
-from invenio_oauthclient._compat import _create_identifier
-from invenio_oauthclient.errors import OAuthRemoteNotFound
-from invenio_oauthclient.handlers import (
-    set_session_next_url,
-)
-from invenio_oauthclient.utils import (
-    get_safe_redirect_target,
-    serializer,
-)
+from invenio_oauthclient.utils import get_safe_redirect_target
 from invenio_queues.proxies import current_queues
-from invenio_records_resources.services.errors import PermissionDeniedError
-from invenio_remote_user_data_kcworks.errors import (
-    IDTokenInvalid,
-    StateTokenInvalid,
-    UserDataRequestFailed,
-    UserDataRequestTimeout,
-)
 from invenio_remote_user_data_kcworks.proxies import (
     current_remote_user_data_service,
 )
-from itsdangerous import BadData
+from uritools import uricompose, urisplit
 from werkzeug.exceptions import (
     BadRequest,
-    Forbidden,
     MethodNotAllowed,
     NotFound,
-    Unauthorized,
 )
 
-from .client import APIResponse, UserDataAPIClient
 from .signals import remote_data_updated
-from .utils import CILogonHelpers, extract_bearer_token
+from .utils import CILogonHelpers
+
+
+def _safe_redirect_target(target: str | None) -> str:
+    """Validate and normalize a redirect target to avoid open redirects."""
+    if not target:
+        return "/"
+
+    allowed_hosts = app.config.get("APP_ALLOWED_HOSTS") or []
+    redirect_uri = urisplit(target)
+    if redirect_uri.host in allowed_hosts:
+        return target
+
+    if redirect_uri.path:
+        return uricompose(
+            path=redirect_uri.getpath(),
+            query=redirect_uri.getquery(),
+            fragment=redirect_uri.getfragment(),
+        )
+
+    return "/"
+
+
+def broker_login(*args, **kwargs):
+    """Redirect the user to the Profiles broker login endpoint.
+
+    Flask-Security will send us here as `security.login` and supplies the
+    final destination in the `next` query parameter.
+    """
+    broker_login_url = app.config.get("SSO_BROKER_LOGIN_URL")
+    if not broker_login_url:
+        app.logger.error("SSO_BROKER_LOGIN_URL is not configured")
+        abort(500)
+
+    # `get_safe_redirect_target` validates against APP_ALLOWED_HOSTS.
+    final_redirect = get_safe_redirect_target(arg="next") or "/"
+
+    return_to = url_for(
+        "invenio_remote_user_data_kcworks_sso.broker_callback",
+        _external=True,
+        _scheme="https",
+    )
+
+    query = urlencode({"return_to": return_to, "final_redirect": final_redirect})
+    return redirect(f"{broker_login_url}?{query}")
+
+
+def sso_broker_callback() -> Response:
+    """Handle broker callback after explicit login or silent login.
+
+    Expects an encrypted `broker_token` query parameter.
+    """
+    from .utils import BrokerHelpers
+
+    broker_token = request.args.get("broker_token")
+    if not broker_token:
+        app.logger.error("Broker callback called without broker_token")
+        abort(400, description="Missing broker_token parameter")
+
+    try:
+        payload = BrokerHelpers.decrypt_broker_token(broker_token)
+    except Exception:
+        app.logger.exception("Failed to decrypt broker_token")
+        abort(400, description="Invalid broker_token")
+
+    # Reject expired payloads as requested.
+    exp = payload.get("exp")
+    if exp is not None:
+        try:
+            if int(float(exp)) < int(time.time()):
+                abort(403, description="Expired broker payload")
+        except (TypeError, ValueError):
+            abort(403, description="Invalid broker payload exp value")
+
+    nonce = payload.get("nonce")
+    if not nonce or not BrokerHelpers.validate_nonce(nonce):
+        app.logger.warning("Broker nonce validation failed")
+        abort(403, description="Nonce validation failed")
+
+    user, final_redirect = BrokerHelpers.process_broker_payload(payload)
+    if not user:
+        app.logger.error("Could not find or create user from broker payload")
+        abort(
+            401,
+            description=app.config.get(
+                "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE",
+                "Login failed",
+            ),
+        )
+
+    login_user(user)
+
+    cookie_name = app.config.get("SSO_BROKER_COOKIE_NAME", "_sso_checked")
+    cookie_ttl = app.config.get("SSO_BROKER_COOKIE_TTL", 1800)
+
+    resp = make_response(redirect(_safe_redirect_target(final_redirect)))
+    resp.set_cookie(
+        cookie_name,
+        str(int(time.time())),
+        max_age=cookie_ttl,
+        httponly=True,
+        secure=True,
+        samesite="Lax",
+    )
+    return resp
 
 
 def _login(remote_app, authorized_view_name):
-    """Send user to remote application for authentication."""
-    oauth = current_oauthclient.oauth
-    if remote_app not in oauth.remote_apps:
-        raise OAuthRemoteNotFound()
+    """Redirect user to the SSO broker (Profiles) for authentication."""
+    broker_login_url = app.config.get("SSO_BROKER_LOGIN_URL")
+    if not broker_login_url:
+        app.logger.error("SSO_BROKER_LOGIN_URL is not configured")
+        abort(500)
 
-    # Get redirect target in safe manner.
-    next_param = get_safe_redirect_target(arg="next")
+    next_param = get_safe_redirect_target(arg="next") or "/"
 
-    # Redirect URI - must be registered in the remote service.
-    # this will be used as a "next" parameter
     callback_url = url_for(
         authorized_view_name,
         remote_app=remote_app,
@@ -89,210 +162,76 @@ def _login(remote_app, authorized_view_name):
         _scheme="https",
     )
 
-    # Create a JSON Web Token that expires after OAUTHCLIENT_STATE_EXPIRES
-    # seconds.
-    state_token = base64.urlsafe_b64encode(
-        json.dumps({
-            "app": remote_app,
-            "next": next_param,
-            "sid": _create_identifier(),
-            "callback_next": callback_url,
-        }).encode()
+    redirect_url = (
+        f"{broker_login_url}?return_to={callback_url}"
+        f"&final_redirect={next_param}"
     )
-
-    # the path the user will take, here, will be:
-    # here -> cilogon
-    # cilogon -> https://profile.hcommons.org/cilogon/callback/
-    # https://profile.hcommons.org/cilogon/callback/ -> callback_url
-    # callback_url -> next_param
-    try:
-        return oauth.remote_apps[remote_app].authorize(
-            callback=app.config.get(
-                "IDMS_CALLBACK_URL",
-                f"{app.config.get('COMMONS_API_REQUEST_PROTOCOL')}://{app.config.get('KC_PROFILES_DOMAIN')}/cilogon/callback/",
-            ),
-            state=state_token,
-        )
-    except JSONDecodeError:
-        abort(500)
+    return redirect(redirect_url)
 
 
 def login(remote_app):
-    """Send user to remote application for authentication.
+    """Send user to the SSO broker for authentication.
 
     The blueprint for this view function is registered in invenio_oauthclient/
     views/client.py but we (in ext.py) override the route to lead to this
     function instead of the default function provided in invenio_oauthclient.
     """
-    if app.config["OAUTHCLIENT_REMOTE_APPS"].get(remote_app, {}).get("hide", False):
-        abort(404)
-
-    try:
-        return _login(remote_app, ".authorized")
-    except OAuthRemoteNotFound:
-        abort(404)
+    return _login(remote_app, ".authorized")
 
 
-def _authorized(remote_app: str | None = None) -> Response:
-    """Authorized handler callback.
+def _authorized_handler(remote_app: str | None = None) -> Response:
+    """SSO broker authorization handler.
 
-    Arguments:
-        remote_app (str): The name of the remote app returning the
-            authorized response, matching a key in the configuration
-            for oauth remote apps.
-
-    Raises:
-        OAuthRemoteNotFound: If the remote_app doesn't match any
-            configured remote oauth app.
-        StateTokenInvalid: If the state token returned is invalid,
-            either because it is malformed, its `app` doesn't match
-            the remote_app name, or the `sid` doesn't match the unique
-            session id that was sent with the token when the login
-            was initiated.
+    Decrypts the ``broker_token``, validates the nonce, finds or creates
+    the user, logs them in, and redirects to their original page.
 
     Returns:
-        Response: Redirects to a Flask/Werkzeug Response.
+        Response: A redirect to the user's ``final_redirect`` page.
     """
-    if remote_app not in current_oauthclient.handlers:
-        raise OAuthRemoteNotFound()
+    from .utils import BrokerHelpers
 
-    state_token = request.args.get("state")
+    broker_token = request.args.get("broker_token")
+    if not broker_token:
+        app.logger.error("Authorized callback called without broker_token")
+        abort(400, description="Missing broker_token parameter")
 
     try:
-        data = json.loads(base64.urlsafe_b64decode(state_token).decode())
+        payload = BrokerHelpers.decrypt_broker_token(broker_token)
+    except Exception:
+        app.logger.exception("Failed to decrypt broker_token")
+        abort(400, description="Invalid broker_token")
 
-        # repack the state token in a way that Invenio uses
-        state_token = serializer.dumps({
-            "next": data["next"],
-            "sid": data["sid"],
-            "app": data["app"],
-        })
+    nonce = payload.get("nonce")
+    if not nonce or not BrokerHelpers.validate_nonce(nonce):
+        app.logger.warning("Broker nonce validation failed")
+        abort(403, description="Nonce validation failed")
 
-        # Verify state parameter
-        assert state_token
-        # Checks authenticity and integrity of state and decodes the value.
-        state = serializer.loads(state_token)
-        # Verify that state is for this session, app and that next parameter
-        # have not been modified.
-        assert state["sid"] == _create_identifier()
-        assert state["app"] == remote_app
-        # Store next URL
-        set_session_next_url(remote_app, state["next"])
-    except (AssertionError, BadData) as e:
-        app.logger.warning("OAuth state token validation failed in authorized handler.")
-        raise StateTokenInvalid from e
+    user, final_redirect = BrokerHelpers.process_broker_payload(payload)
 
-    oauth = app.extensions.get("oauthlib.client")
-
-    return _authorized_handler(oauth.remote_apps[remote_app])
-
-
-def _authorized_handler(remote: OAuthRemoteApp, *args, **kwargs) -> Response:
-    """CILogon authorization handler.
-
-    Arguments:
-        remote (OAuthRemoteApp): The invenio_oauthclient app object that
-            carries the oauth configuration and token exchange method.
-
-    Returns:
-        Response: Redirects to a Flask/Werkzeug Response.
-    """
-    resp = remote.authorized_response()
-    # JSON response contains: access_token, refresh_token, refresh_token_lifetime,
-    # id_token, token_type, expires_in, refresh_token_iat
-
-    # Validate the token and extract the data fields
-    decoded_token, id_token, sub = CILogonHelpers.validate_token_and_extract_sub(resp)
-
-    # Get user profile APIResponse
-    # contains: data, meta, next, previous
-    profile_fetch_error: str | None = None
-    profile_response: APIResponse | None = None
-    try:
-        profile_response = UserDataAPIClient.fetch_user_profile(sub_id=sub)
-    except requests.Timeout as e:
-        profile_fetch_error = "timeout"
-    except requests.RequestException as e:
-        profile_fetch_error = "failure"
-
-    # If the static bearer token is not authorized
-    if (
-        profile_response
-        and profile_response.meta
-        and not profile_response.meta.authorized
-    ):
-        raise UserDataRequestFailed(
-            message="Bearer token for user data endpoint was not accepted."
+    if not user:
+        app.logger.error("Could not find or create user from broker payload")
+        abort(
+            401,
+            description=app.config.get(
+                "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE",
+                "Login failed",
+            ),
         )
 
-    # Combine account data available so we can look up user
-    account_info = CILogonHelpers.build_account_info(profile_response, sub)
+    login_user(user)
 
-    # See if we have an existing user
-    # If profile api request fails we can still get from
-    # sub and UserIdentity table
-    user = CILogonHelpers.get_user_from_account_info(account_info)
-
-    if profile_response:
-        # if the profile lookup succeeds...
-        # get the first user matching user and log the user in or create a user
-        if profile_response.data and len(profile_response.data) > 0:
-            if not user:
-                user = CILogonHelpers.create_new_user(profile_response)
-
-            # link the user to the external id from cilogon
-            with contextlib.suppress(AlreadyLinkedError):
-                # No change if already linked
-                CILogonHelpers.link_user_to_oauth_identifier(user, "cilogon", sub)
-
-            # send the tokens to the storage API so that on logout they can be
-            # revoked
-            CILogonHelpers.update_token_data(resp, profile_response)
-
-            # update user data with pre-fetched remote response
-            current_remote_user_data_service.update_user_from_remote(
-                system_identity,
-                user.id,
-                "knowledgeCommons",
-                sub,
-                remote_data=profile_response,
-            )
-
-            # log the user in!
-            state_token = request.args.get("state")
-            data = json.loads(base64.urlsafe_b64decode(state_token).decode())
-            login_user(user)
-
-            return redirect(data["next"])
-
-        else:
-            # No matching KC member was found. They need to associate their login
-            # with a KC account before logging in here and linking/creating a
-            # KCWorks account.
-            redirect_url = CILogonHelpers.build_association_url(id_token)
-
-            return redirect(redirect_url)
-
-    elif user:
-        # User has a valid KCWorks account but member API failed.
-        # If the profile lookup failed because the API call failed
-        # we don't send them to the association service because we
-        # don't know the status of their KC account. If the user was
-        # not *found* we will have a profile_response without data
-        # and end up in the other code path above.
-        state_token = request.args.get("state")
-        data = json.loads(base64.urlsafe_b64decode(state_token).decode())
-
-        # Log them in since they have a valid KCWorks account
-        login_user(user)
-
-        return redirect(data["next"])
-
-    else:
-        if profile_fetch_error == "timeout":
-            raise UserDataRequestTimeout
-        else:
-            raise UserDataRequestFailed
+    sso_cookie_name = app.config.get("SSO_BROKER_COOKIE_NAME", "_sso_checked")
+    sso_cookie_ttl = app.config.get("SSO_BROKER_COOKIE_TTL", 1800)
+    resp = make_response(redirect(final_redirect or "/"))
+    resp.set_cookie(
+        sso_cookie_name,
+        "1",
+        max_age=sso_cookie_ttl,
+        httponly=True,
+        secure=True,
+        samesite="Lax",
+    )
+    return resp
 
 
 def authorized(remote_app: str | None = None):
@@ -307,35 +246,14 @@ def authorized(remote_app: str | None = None):
             up in the config for oauth remote apps.
     """
     try:
-        return _authorized(remote_app)
-    except OAuthRemoteNotFound:
-        abort(
-            401,
-            description=(
-                f"A remote oauth response was received for an app that is not "
-                f"in current_oauthclient.handlers: {remote_app}"
-            ),
-        )
-    except OAuthException as e:
-        if e.type == "invalid_response":
-            app.logger.error(f"{e.message} ({e.data})", exc_info=True)
-            abort(
-                401,
-                description=app.config.get(
-                    "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
-                ).format(message=e.message),
-            )
-        else:
-            raise e
+        return _authorized_handler(remote_app)
     except Exception as e:
-        # Other kinds of errors are handled directly by error handlers
-        # registered in kcworks.ext
+        app.logger.exception("Error in authorized handler")
         raise e
 
 
 class RemoteUserDataUpdateWebhook(MethodView):
-    """
-    View class for the user/group data update webhook receiver.
+    """View class for the user/group data update webhook receiver.
 
     This view is registered for both ``/api/webhooks/users/update`` (preferred)
     and ``/api/webhooks/user_data_update`` (deprecated, still operational). It
@@ -427,8 +345,7 @@ class RemoteUserDataUpdateWebhook(MethodView):
         self.logger = app.logger
 
     def post(self):
-        """
-        Handle POST requests to the user data webhook endpoint.
+        """Handle POST requests to the user data webhook endpoint.
 
         These are requests from a remote IDP indicating that user or group
         data has been updated on the remote server.
@@ -470,7 +387,8 @@ class RemoteUserDataUpdateWebhook(MethodView):
                                     )
                                 else:
                                     self.logger.debug(
-                                        f"user_identity: {user_identity.id_user}, {user_identity.id}"
+                                        f"user_identity: {user_identity.id_user}, "
+                                        f"{user_identity.id}"
                                     )
                                     users.append(u["id"])
                                     events.append({
@@ -563,8 +481,7 @@ class RemoteUserDataUpdateWebhook(MethodView):
 
 
 class RemoteUserLogoutView(MethodView):
-    """
-    View class for the user logout signal receiver.
+    """View class for the user logout signal receiver.
 
     This view is used to receive the webhook signal from the central
     KC IDMS to log a user out from KCWorks when they have been logged out on
@@ -599,8 +516,8 @@ class RemoteUserLogoutView(MethodView):
     Endpoint security
     -----------------
 
-    The endpoint is secured by a Bearer token that must be provided in the `Authorization`
-    request header.
+    The endpoint is secured by a Bearer token that must be provided in the
+    `Authorization` request header.
 
     """
 
@@ -610,8 +527,7 @@ class RemoteUserLogoutView(MethodView):
         self.logger = app.logger
 
     def post(self):
-        """
-        Handle POST requests to the user logout webhook endpoint.
+        """Handle POST requests to the user logout webhook endpoint.
         Invalidates all KCWorks sessions for the given user.
         Returns 200 with confirmation when sessions were deleted, 404 when user
         is unknown, or 500 on server error.
@@ -637,7 +553,10 @@ class RemoteUserLogoutView(MethodView):
             )
             return (
                 jsonify({
-                    "message": f"User {kc_username} not found in KCWorks; no sessions invalidated",
+                    "message": (
+                        f"User {kc_username} not found in KCWorks; "
+                        "no sessions invalidated"
+                    ),
                     "status": "not found",
                 }),
                 404,
@@ -687,93 +606,5 @@ class RemoteUserLogoutView(MethodView):
         raise MethodNotAllowed
 
 
-def create_api_blueprint(app):
-    """Register blueprint on api app."""
-
-    with app.app_context():
-        blueprint = Blueprint(
-            "invenio_remote_user_data_kcworks",
-            __name__,
-            # /api prefix already added because blueprint is registered
-            # on the api app
-        )
-
-        # DEPRECATED: legacy webhook route
-        blueprint.add_url_rule(
-            "/webhooks/user_data_update",
-            view_func=RemoteUserDataUpdateWebhook.as_view(
-                f"{RemoteUserDataUpdateWebhook.view_name}_deprecated"
-            ),
-            methods=["GET", "POST"],
-        )
-
-        blueprint.add_url_rule(
-            "/webhooks/users/update",
-            view_func=RemoteUserDataUpdateWebhook.as_view(
-                RemoteUserDataUpdateWebhook.view_name
-            ),
-            methods=["GET", "POST"],
-        )
-
-        blueprint.add_url_rule(
-            "/webhooks/users/logout",
-            view_func=RemoteUserLogoutView.as_view(RemoteUserLogoutView.view_name),
-            methods=["GET", "POST"],
-        )
-
-        # Register error handlers (JSON responses for API)
-        blueprint.register_error_handler(
-            Unauthorized,
-            lambda e: make_response(
-                jsonify({
-                    "error": "Unauthorized",
-                    "message": "Invalid, missing, or expired token.",
-                    "status": 401,
-                }),
-                401,
-            ),
-        )
-        blueprint.register_error_handler(
-            PermissionDeniedError,
-            lambda e: make_response(
-                jsonify({
-                    "error": "Forbidden",
-                    "message": (
-                        "The user does not have permission to perform this action."
-                    ),
-                    "status": 403,
-                }),
-                403,
-            ),
-        )
-        blueprint.register_error_handler(
-            NotFound,
-            lambda e: make_response(
-                jsonify({
-                    "error": "Not Found",
-                    "message": getattr(e, "description", str(e)),
-                    "status": 404,
-                }),
-                404,
-            ),
-        )
-        blueprint.register_error_handler(
-            Forbidden,
-            lambda e: make_response(
-                jsonify({"error": "Forbidden", "message": str(e), "status": 403}), 403
-            ),
-        )
-        blueprint.register_error_handler(
-            BadRequest,
-            lambda e: make_response(
-                jsonify({"error": "Bad Request", "message": str(e), "status": 400}), 400
-            ),
-        )
-        blueprint.register_error_handler(
-            MethodNotAllowed,
-            lambda e: make_response(
-                jsonify({"message": "Method not allowed", "status": 405}), 405
-            ),
-        )
-
-    return blueprint
+# NOTE: API/UI blueprint factories live in
+# `invenio_remote_user_data_kcworks.blueprints`.

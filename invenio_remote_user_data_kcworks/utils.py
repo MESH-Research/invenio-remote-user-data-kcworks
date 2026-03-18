@@ -12,29 +12,24 @@ import datetime
 import hashlib
 import json
 import os
-
 from pprint import pformat
-from urllib.parse import urlencode, urlunparse, urlparse
+from urllib.parse import urlencode, urlparse, urlunparse
 
 import invenio_oauthclient
-import jwt
 import requests
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from flask import current_app, abort
+from flask import current_app
 from invenio_accounts import current_accounts
 from invenio_accounts.models import User, UserIdentity
 from invenio_db import db
-from jwt.algorithms import RSAAlgorithm
 
 from .client import APIResponse, Profile, UserDataAPIClient
-from .errors import IDTokenInvalid
 from .services.group_roles import GroupRolesService
 
 
 def extract_bearer_token(header_string: str) -> str:
-    """
-    Extract the actual bearer token from an Authorization header.
+    """Extract the actual bearer token from an Authorization header.
 
     Raises:
         ValueError: If the header string is None, malformed, or
@@ -135,68 +130,6 @@ class CILogonHelpers:
                         diff[key] = value
             diff = {k: v for k, v in diff.items() if v}
             return diff
-
-    @staticmethod
-    def _get_cilogon_public_key(kid):
-        """Fetch the specific public key from CILogon's JWKS endpoint."""
-        timeout = current_app.config.get("IDMS_CILOGON_PUBLIC_KEY_TIMEOUT", 30)
-        jwks_url = "https://cilogon.org/oauth2/certs"
-
-        try:
-            response = requests.get(jwks_url, timeout=timeout)
-            response.raise_for_status()
-            jwks = response.json()
-
-            # Find the key with matching kid (Key ID)
-            for key in jwks["keys"]:
-                if key["kid"] == kid:
-                    # Convert JWK to PEM format
-                    public_key = RSAAlgorithm.from_jwk(key)
-                    return public_key
-
-            raise ValueError(f"Key with kid '{kid}' not found in JWKS")
-
-        except requests.RequestException as e:
-            message = "Failed to fetch JWKS"
-            raise ValueError(message) from e
-
-    @staticmethod
-    def _verify_and_decode_cilogon_jwt(id_token, client_id):
-        """Verify and decode a CILogon JWT token."""
-        try:
-            # Get the key ID from the JWT header (without verification)
-            unverified_header = jwt.get_unverified_header(id_token)
-            kid = unverified_header["kid"]
-
-            # Fetch the corresponding public key
-            public_key = CILogonHelpers._get_cilogon_public_key(kid)
-
-            # Decode and verify the JWT
-            decoded_token = jwt.decode(
-                id_token,
-                public_key,
-                algorithms=["RS256"],
-                audience=f"cilogon:/client_id/{client_id}",
-                issuer="https://cilogon.org",
-                options={
-                    "verify_exp": True,  # Verify expiration
-                    "verify_aud": False,  # Verify audience
-                    "verify_iss": True,  # Verify issuer
-                },
-            )
-
-            return decoded_token
-
-        except jwt.ExpiredSignatureError as e:
-            raise IDTokenInvalid(message="Token has expired") from e
-        except jwt.InvalidAudienceError as e:
-            raise IDTokenInvalid(message="Invalid audience") from e
-        except jwt.InvalidIssuerError as e:
-            raise IDTokenInvalid(message="Invalid issuer") from e
-        except jwt.InvalidTokenError as e:
-            raise IDTokenInvalid(message="Invalid token") from e
-        except ValueError as e:
-            raise IDTokenInvalid(message=str(e)) from e
 
     @staticmethod
     def build_association_url(id_token):
@@ -598,44 +531,6 @@ class CILogonHelpers:
         return group_changes
 
     @staticmethod
-    def validate_token_and_extract_sub(resp):
-        """Validate token and extract the sub field from the CILogon response."""
-        if not resp or "id_token" not in resp:
-            raise IDTokenInvalid(message="No id_token returned from code exchange.")
-        id_token = resp.get("id_token")
-
-        # raises IDTokenInvalid for JWT validation errors
-        decoded_token = CILogonHelpers._verify_and_decode_cilogon_jwt(
-            id_token, os.getenv("CILOGON_CLIENT_ID")
-        )
-
-        if not decoded_token or "sub" not in decoded_token:
-            raise IDTokenInvalid
-
-        sub = decoded_token.get("sub")
-        return decoded_token, id_token, sub
-
-    @staticmethod
-    def update_token_data(resp, result):
-        """Update token data in the remote IDMS API.
-
-        The reason we do this is to ensure that the tokens are up to date
-        so that when the user does a logout, they can be logged out of
-        all services (Single Sign Out).
-        """
-        try:
-            UserDataAPIClient.update_token_information(
-                resp.get("access_token"),
-                resp.get("refresh_token"),
-                result.data[0].profile.username,
-            )
-        except Exception:  # noqa: BLE001
-            # semi-silently fail if we can't update the token
-            current_app.logger.error(
-                "Failed to update token information in central API"
-            )
-
-    @staticmethod
     def build_account_info(
         api_result: APIResponse | None, sub: str
     ) -> dict[str, str | dict]:
@@ -670,6 +565,128 @@ class CILogonHelpers:
             send_register_msg=True, **user_info
         )
         return user
+
+
+class BrokerHelpers:
+    """Helpers for SSO broker authentication."""
+
+    @staticmethod
+    def decrypt_broker_token(token: str) -> dict:
+        """Decrypt an AES-256-CBC broker token using the shared secret.
+
+        Args:
+            token: The base64url-encoded encrypted token string.
+
+        Returns:
+            The decrypted payload as a dict.
+
+        Raises:
+            ValueError: If the token cannot be decrypted or parsed.
+        """
+        secret = os.getenv("COMMONS_PROFILES_API_TOKEN")
+        if not secret:
+            raise ValueError("COMMONS_PROFILES_API_TOKEN environment variable not set")
+        encoder = SecureParamEncoder(secret)
+        return encoder.decode(token)
+
+    @staticmethod
+    def validate_nonce(nonce: str) -> bool:
+        """Validate a broker nonce via the Profiles microservice.
+
+        Args:
+            nonce: The nonce string extracted from the broker token payload.
+
+        Returns:
+            True if the nonce is valid, False otherwise.
+        """
+        verify_url = current_app.config.get("SSO_BROKER_VERIFY_NONCE_URL")
+        if not verify_url:
+            current_app.logger.error("SSO_BROKER_VERIFY_NONCE_URL not configured")
+            return False
+
+        bearer_token = os.getenv("COMMONS_PROFILES_API_TOKEN")
+        if not bearer_token:
+            current_app.logger.error("COMMONS_PROFILES_API_TOKEN not set")
+            return False
+
+        timeout = current_app.config.get("SSO_BROKER_SILENT_LOGIN_TIMEOUT", 3)
+        try:
+            resp = requests.post(
+                verify_url,
+                json={"nonce": nonce},
+                headers={
+                    "Authorization": f"Bearer {bearer_token}",
+                    "Content-Type": "application/json",
+                },
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            return resp.json().get("valid", False) is True
+        except Exception:
+            current_app.logger.exception("Nonce validation request failed")
+            return False
+
+    @staticmethod
+    def process_broker_payload(payload: dict) -> tuple[User | None, str | None]:
+        """Extract user identity from a decrypted broker token and find/create the user.
+
+        Args:
+            payload: The decrypted broker token dict. Expected keys include
+                ``nonce``, ``final_redirect`` and a nested ``userinfo`` object
+                (e.g. ``payload["userinfo"]["sub"]`` /
+                ``payload["userinfo"]["email"]``).
+
+                Some broker implementations also include top-level identity hints
+                such as ``kc_username``.
+
+        Returns:
+            A tuple of (user, final_redirect). ``user`` is None if the payload
+            did not contain enough information to identify or create a user.
+        """
+        userinfo = payload.get("userinfo") or {}
+        sub = payload.get("sub") or userinfo.get("sub")
+        final_redirect = payload.get("final_redirect", "/")
+
+        # The decrypted payload is expected to carry a stable external id.
+        if not sub:
+            return None, final_redirect
+
+        kc_username = payload.get("kc_username") or payload.get("username")
+        email = userinfo.get("email") or payload.get("email")
+        orcid = userinfo.get("orcid") or payload.get("orcid")
+
+        account_info: dict = {
+            "external_id": sub,
+            "external_method": "cilogon",
+        }
+        if email or kc_username:
+            account_info["user"] = {
+                "email": email or "",
+                "profile": {
+                    "identifier_orcid": orcid or "",
+                    "identifier_kc_username": kc_username or "",
+                },
+            }
+
+        user = CILogonHelpers.get_user_from_account_info(account_info)
+
+        # If we have an external subject but no local user yet, ask Profiles
+        # for the full profile and create the KCWorks user.
+        if not user and sub and (email or kc_username):
+            profile_response = UserDataAPIClient.fetch_user_profile(sub_id=sub)
+            if profile_response and getattr(profile_response, "data", None):
+                user = CILogonHelpers.create_new_user(profile_response)
+
+        # Ensure the external identity is linked (idempotent via suppression).
+        if user:
+            from invenio_accounts.errors import AlreadyLinkedError
+
+            try:
+                CILogonHelpers.link_user_to_oauth_identifier(user, "cilogon", sub)
+            except AlreadyLinkedError:
+                pass
+
+        return user, final_redirect
 
 
 def update_nested_dict(original, update):

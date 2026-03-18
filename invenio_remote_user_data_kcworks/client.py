@@ -8,8 +8,10 @@
 """Functions and classes for interacting with the IDMS API."""
 
 import os
+
 import requests
-from flask import current_app as app, request
+from flask import current_app as app
+from flask import request
 from pydantic import BaseModel, HttpUrl
 
 
@@ -72,6 +74,108 @@ class LogoutRequest(BaseModel):
 
     user_name: str
     user_agent: str
+
+
+class SessionBrokerAPIClient:
+    """Client for interacting with the Profiles session broker."""
+
+    @staticmethod
+    def silent_login_check(
+        cookies: dict,
+        *,
+        return_to: str,
+        final_redirect: str,
+    ) -> dict | None:
+        """Perform a server-side silent login check against the Profiles broker.
+
+        Forwards the user's session cookie so the Profiles microservice can
+        determine whether an active session exists.
+
+        Args:
+            cookies: A dict of cookies from the incoming request. The relevant
+                session cookie will be extracted based on config.
+            return_to: The KCWorks callback URL used for the explicit login flow.
+            final_redirect: The URL KCWorks should ultimately redirect to.
+
+        Returns:
+            The JSON response dict if an active session was found (contains
+            ``broker_token``), or None if there is no session or the request
+            fails.
+        """
+        silent_url = app.config.get("SSO_BROKER_SILENT_LOGIN_URL")
+        if not silent_url:
+            app.logger.error("SSO_BROKER_SILENT_LOGIN_URL not configured")
+            return None
+
+        bearer_token = os.getenv("COMMONS_PROFILES_API_TOKEN")
+        if not bearer_token:
+            app.logger.error("COMMONS_PROFILES_API_TOKEN not set")
+            return None
+
+        cookie_name = app.config.get("SSO_BROKER_SESSION_COOKIE_NAME")
+        forwarded_cookies = {}
+        if cookie_name and cookie_name in cookies:
+            forwarded_cookies[cookie_name] = cookies[cookie_name]
+
+        timeout = app.config.get("SSO_BROKER_SILENT_LOGIN_TIMEOUT", 3)
+        try:
+            resp = requests.get(
+                silent_url,
+                headers={
+                    "Authorization": f"Bearer {bearer_token}",
+                },
+                cookies=forwarded_cookies,
+                params={
+                    "return_to": return_to,
+                    "final_redirect": final_redirect,
+                },
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("no_session") or "broker_token" not in data:
+                return None
+            return data
+        except Exception:
+            app.logger.exception("Silent login check failed")
+            return None
+
+    @staticmethod
+    def verify_nonce(nonce: str) -> bool:
+        """Validate a broker nonce against the Profiles microservice.
+
+        Args:
+            nonce: The nonce string from the decrypted broker token.
+
+        Returns:
+            True if the nonce is valid, False otherwise.
+        """
+        verify_url = app.config.get("SSO_BROKER_VERIFY_NONCE_URL")
+        if not verify_url:
+            app.logger.error("SSO_BROKER_VERIFY_NONCE_URL not configured")
+            return False
+
+        bearer_token = os.getenv("COMMONS_PROFILES_API_TOKEN")
+        if not bearer_token:
+            app.logger.error("COMMONS_PROFILES_API_TOKEN not set")
+            return False
+
+        timeout = app.config.get("SSO_BROKER_SILENT_LOGIN_TIMEOUT", 3)
+        try:
+            resp = requests.post(
+                verify_url,
+                json={"nonce": nonce},
+                headers={
+                    "Authorization": f"Bearer {bearer_token}",
+                    "Content-Type": "application/json",
+                },
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            return resp.json().get("valid", False) is True
+        except Exception:
+            app.logger.exception("Nonce verification request failed")
+            return False
 
 
 class UserDataAPIClient:
@@ -169,73 +273,8 @@ class UserDataAPIClient:
             return None
 
     @staticmethod
-    def update_token_information(
-        access_token: str,
-        refresh_token: str,
-        user_name: str,
-        app: str = "Works",
-        timeout: int | None = None,
-    ) -> requests.Response:
-        """Make a POST API request with token data for storage and revocation.
-
-        Args:
-            access_token: User's access token
-            refresh_token: User's refresh token
-            user_name: Username to send
-            app: Application name (defaults to "Profiles")
-            timeout: Request timeout in seconds
-
-        Returns:
-            requests.Response object
-
-        Raises:
-            requests.RequestException: If the request fails
-        """
-        if not timeout:
-            timeout = app.config.get("IDMS_TOKEN_UPDATE_TIMEOUT", 5)
-
-        # Get user agent from current request
-        user_agent = request.headers.get("User-Agent", "Unknown")
-
-        base_api_url = app.config.get("IDMS_BASE_API_URL")
-        api_url = f"{base_api_url}tokens/"
-
-        # Get bearer token from environment variable
-        bearer_token = os.getenv("COMMONS_PROFILES_API_TOKEN")
-
-        if not bearer_token:
-            raise ValueError(
-                "COMMONS_PROFILES_API_TOKEN environment variable not found"
-            )
-
-        headers = {
-            "Authorization": f"Bearer {bearer_token}",
-            "Content-Type": "application/json",
-        }
-
-        # Prepare the payload
-        payload = {
-            "user_agent": user_agent,
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "app": app,
-            "user_name": user_name,
-        }
-
-        # Make the POST request
-        response = requests.post(
-            api_url, json=payload, headers=headers, timeout=timeout
-        )
-
-        # Raise an exception if the request fails
-        response.raise_for_status()
-
-        return response
-
-    @staticmethod
     def send_logout_to_profiles(user_name: str, timeout: int | None = None) -> bool:
-        """
-        Notify Profiles API that a user has logged out.
+        """Notify Profiles API that a user has logged out.
 
         For a successful request, the API should return 200:
 
@@ -312,7 +351,7 @@ class UserDataAPIClient:
                     )
                     return True
 
-                except (AssertionError, KeyError) as e:
+                except (AssertionError, KeyError):
                     app.logger.error(
                         f"Profiles logout API returned unexpected response logging out user {user_name}: {response.text}",
                         exc_info=True,

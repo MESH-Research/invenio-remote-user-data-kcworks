@@ -66,21 +66,12 @@ def sso_broker_login(next: str | None = None, silent: bool = False, **kwargs):
     broker_url = ""
     if silent:
         broker_url = app.config.get("SSO_BROKER_SILENT_LOGIN_URL")
-        if not silent_url:
-            app.logger.error("SSO_BROKER_SILENT_LOGIN_URL not configured")
-            return None
-                (
-                    dict(request.cookies),
-                    return_to=callback_url,
-                    final_redirect=request.url,
-                )
+        if not broker_url:
+            abort(500, message="SSO_BROKER_SILENT_LOGIN_URL not configured")
     else:
         broker_url = app.config.get("SSO_BROKER_LOGIN_URL")
-        if not broker_login_url:
-            app.logger.error("SSO_BROKER_LOGIN_URL is not configured")
-            abort(500)
-
-    # `get_safe_redirect_target` validates against APP_ALLOWED_HOSTS.
+        if not broker_url:
+            abort(500, message="SSO_BROKER_LOGIN_URL is not configured")
 
     final_redirect = safe_redirect_target(target=next, arg_name="next")
 
@@ -92,6 +83,7 @@ def sso_broker_login(next: str | None = None, silent: bool = False, **kwargs):
 
     query = urlencode({"return_to": return_to, "final_redirect": final_redirect})
     return redirect(f"{broker_login_url}?{query}")
+
 
 def _sso_broker_callback() -> Response:
     """Handle broker callback after explicit login or silent login.
@@ -138,10 +130,12 @@ def _sso_broker_callback() -> Response:
             raise e
         except UserDataRequestFailed as e:
             raise e
-    else:
-        BrokerHelpers.set_broker_refresh_cookie()
 
-    return redirect(_safe_redirect_target(final_redirect))
+        return redirect(_safe_redirect_target(final_redirect))
+    else:
+        response = redirect(_safe_redirect_target(final_redirect))
+        return BrokerHelpers.set_broker_refresh_cookie(response)
+
 
 def sso_broker_callback() -> Response:
     """Handle broker callback after explicit login or silent login.
@@ -171,6 +165,7 @@ def sso_broker_callback() -> Response:
     # Other errors handled automatically (see kcworks.ext)
     except Exception as e:
         raise e
+
 
 class RemoteUserDataUpdateWebhook(MethodView):
     """View class for the user/group data update webhook receiver.

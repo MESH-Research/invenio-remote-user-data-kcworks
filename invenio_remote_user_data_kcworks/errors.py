@@ -62,7 +62,7 @@ class BrokerNonceValidationError(Exception):
     """Exception raised if the broker nonce validation fails."""
 
     def __init__(self, description=None, header=None):
-        message_fragment = message "Nonce validation failed"
+        message_fragment = message or "Nonce validation failed"
         self.message = app.config.get(
             "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
         ).format(message=message_fragment)

@@ -1,8 +1,10 @@
 # Invenio Remote User Data Service for Knowledge Commons Works
 
-Version 0.6.1-beta3
+Version 1.0.0
 
-* Beta release *
+- First post-beta release \*
+
+**NOTE: This documentation has not yet been updated for v1.0.0. Updates should be coming soon.**
 
 This extension for the Knowledge Commons Works installation of InvenioRDM provides a service to draw user and groups data from a remote service associated with a SAML login ID provider. This is user data that cannot be derived from the SAML response itself at login, but must be pulled separately from an API endpoint exposed by the same service. This extension assumes the existence of two API endpoints exposed by the remote service: one for user data and one for group data.
 
@@ -100,7 +102,7 @@ This procedure allows the Invenio collection to continue to exist and function, 
 
 ## Sending update notices to the webhook
 
-The service can also be triggered by a webhook signal from the remote ID provider. A webhook signal should be sent to the endpoint ``https://example.org/api/webhooks/users/update`` (preferred) or the deprecated ``https://example.org/api/webhooks/user_data_update``; the request must include a security token (provided by the Invenio admins) in the request header. This token is set in the REMOTE_USER_DATA_WEBHOOK_TOKEN configuration variable.
+The service can also be triggered by a webhook signal from the remote ID provider. A webhook signal should be sent to the endpoint `https://example.org/api/webhooks/users/update` (preferred) or the deprecated `https://example.org/api/webhooks/user_data_update`; the request must include a security token (provided by the Invenio admins) in the request header. This token is set in the REMOTE_USER_DATA_WEBHOOK_TOKEN configuration variable.
 
 The webhook signal should be a POST request with a JSON body. The body should be a JSON object whose top-level keys are
 

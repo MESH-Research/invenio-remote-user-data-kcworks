@@ -230,6 +230,6 @@ Other environment variables
 from __future__ import absolute_import, print_function
 from .ext import InvenioRemoteUserData
 
-__version__ = "0.6.1-beta3"
+__version__ = "1.0.0"
 
 __all__ = ("__version__", "InvenioRemoteUserData")

@@ -1,5 +1,9 @@
 # Changes
 
+## 1.0.0 (2026-03-19)
+
+- First release of major rewrite to support Knowledge Commons' new IDMS based on Cilogon and the new KCProfiles app.
+
 ## 0.6.1-beta3 (2025-02-25)
 
 - Fixed bug where user profile data was not being updated because comparison with initial data was not being made correctly.
@@ -12,3 +16,4 @@
 ## Version 0.0.1
 
 - Initial development version
+

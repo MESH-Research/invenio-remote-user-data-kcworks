@@ -16,15 +16,10 @@ from flask_login import current_user, login_user, user_logged_in, user_logged_ou
 from invenio_accounts.models import User
 
 from . import config
-from .client import SessionBrokerAPIClient
 from .proxies import current_remote_user_data_service
 from .services.service import RemoteGroupDataService, RemoteUserDataService
 from .tasks import do_user_data_update
 from .utils import BrokerHelpers
-from .views import (
-    authorized,
-    login,
-)
 
 
 def on_user_logged_out(_, user: User) -> None:

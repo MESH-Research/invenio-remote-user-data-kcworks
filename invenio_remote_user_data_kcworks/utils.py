@@ -19,7 +19,7 @@ import invenio_oauthclient
 import requests
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from flask import current_app, response
+from flask import current_app, Response
 from invenio_access.permissions import system_identity
 from invenio_accounts import current_accounts
 from invenio_accounts.errors import AlreadyLinkedError
@@ -48,7 +48,7 @@ def safe_redirect_target(target: str | None = None, arg_name: str | None = None)
     Returns:
         str: The safe target for the redirect.
     """
-    target = target if target else request.args.get(arg_name) if arg_name
+    target = target if target else request.args.get(arg_name, "")
     allowed_hosts = app.config.get("APP_ALLOWED_HOSTS") or []
 
     if not allowed_hosts:
@@ -652,7 +652,7 @@ class BrokerHelpers:
         return True
 
     @staticmethod
-    def set_broker_refresh_cookie():
+    def set_broker_refresh_cookie(response):
         response.set_cookie(
             cookie_name,
             str(int(time.time())),

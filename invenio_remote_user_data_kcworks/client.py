@@ -112,7 +112,7 @@ class SessionBrokerAPIClient:
             app.logger.error("COMMONS_PROFILES_API_TOKEN not set")
             return None
 
-        cookie_name = app.config.get("SSO_BROKER_SESSION_COOKIE_NAME")
+        cookie_name = app.config.get("SSO_BROKER_RETRY_COOKIE_NAME")
         forwarded_cookies = {}
         if cookie_name and cookie_name in cookies:
             forwarded_cookies[cookie_name] = cookies[cookie_name]

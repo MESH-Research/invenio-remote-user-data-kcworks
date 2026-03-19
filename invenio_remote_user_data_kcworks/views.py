@@ -39,42 +39,50 @@ from werkzeug.exceptions import (
 )
 
 from .signals import remote_data_updated
-from .utils import CILogonHelpers
+from .utils import CILogonHelpers, BrokerHelpers, safe_redirect_target
 
 
-def _safe_redirect_target(target: str | None) -> str:
-    """Validate and normalize a redirect target to avoid open redirects."""
-    if not target:
-        return "/"
-
-    allowed_hosts = app.config.get("APP_ALLOWED_HOSTS") or []
-    redirect_uri = urisplit(target)
-    if redirect_uri.host in allowed_hosts:
-        return target
-
-    if redirect_uri.path:
-        return uricompose(
-            path=redirect_uri.getpath(),
-            query=redirect_uri.getquery(),
-            fragment=redirect_uri.getfragment(),
-        )
-
-    return "/"
-
-
-def broker_login(*args, **kwargs):
+def sso_broker_login(next: str | None = None, silent: bool = False, **kwargs):
     """Redirect the user to the Profiles broker login endpoint.
 
     Flask-Security will send us here as `security.login` and supplies the
-    final destination in the `next` query parameter.
+    final destination in the `next` query parameter. The invenio-remote-user-
+    -data-kcworks silent login check (in ext.py) also sends an anonymous
+    user here before the request is handled.
+
+    In both cases, this function should be transparent and *does not
+    actually render any view template or expose any endpoint*. It simply passes
+    the request on to the Profiles broker to handle auth.
+
+    Parameters:
+        next (str | None): The url where the user should be redirected after a
+            successful session broker response. In the case of silent login the
+            user will be returned here on failure as well.
+        silent (bool): Whether the user should be offered a login page on Profiles
+            if they do not have an existing session, or whether they should be
+            silently returned without login.
+
     """
-    broker_login_url = app.config.get("SSO_BROKER_LOGIN_URL")
-    if not broker_login_url:
-        app.logger.error("SSO_BROKER_LOGIN_URL is not configured")
-        abort(500)
+    broker_url = ""
+    if silent:
+        broker_url = app.config.get("SSO_BROKER_SILENT_LOGIN_URL")
+        if not silent_url:
+            app.logger.error("SSO_BROKER_SILENT_LOGIN_URL not configured")
+            return None
+                (
+                    dict(request.cookies),
+                    return_to=callback_url,
+                    final_redirect=request.url,
+                )
+    else:
+        broker_url = app.config.get("SSO_BROKER_LOGIN_URL")
+        if not broker_login_url:
+            app.logger.error("SSO_BROKER_LOGIN_URL is not configured")
+            abort(500)
 
     # `get_safe_redirect_target` validates against APP_ALLOWED_HOSTS.
-    final_redirect = get_safe_redirect_target(arg="next") or "/"
+
+    final_redirect = safe_redirect_target(target=next, arg_name="next")
 
     return_to = url_for(
         "invenio_remote_user_data_kcworks_sso.broker_callback",
@@ -85,172 +93,84 @@ def broker_login(*args, **kwargs):
     query = urlencode({"return_to": return_to, "final_redirect": final_redirect})
     return redirect(f"{broker_login_url}?{query}")
 
+def _sso_broker_callback() -> Response:
+    """Handle broker callback after explicit login or silent login.
+
+    Expects an encrypted `broker_token` query parameter.
+    """
+    broker_token = request.args.get("broker_token")
+    no_session = request.args.get("no_session")
+    final_redirect = request.args.get("final_redirect")
+
+    if not broker_token or no_session:
+        app.logger.error("Broker callback called without broker_token")
+        raise BrokerTokenMissingError
+
+    if broker_token and not no_session:
+        try:
+            payload = BrokerHelpers.decrypt_broker_token(broker_token)
+        except Exception as e:
+            app.logger.exception("Failed to decrypt broker_token")
+            raise BrokerTokenDecryptionError from e
+
+        expiration = payload.get("exp")
+        if expiration is not None:
+            try:
+                if int(float(expiration)) < int(time.time()):
+                    raise BrokerPayloadExpiredError
+            except (TypeError, ValueError) as e:
+                raise BrokerExpiryValueError from e
+
+        nonce = payload.get("nonce")
+        if not nonce or not BrokerHelpers.validate_nonce(nonce):
+            app.logger.warning("Broker nonce validation failed")
+            raise BrokerNonceValidationError
+
+        try:
+            user, final_redirect = BrokerHelpers.process_broker_payload(payload)
+
+            if not user:
+                app.logger.error("Could not find or create user from broker payload")
+                raise BrokerPayloadProcessingError
+
+            login_user(user)
+        except UserDataRequestTimeout as e:
+            raise e
+        except UserDataRequestFailed as e:
+            raise e
+    else:
+        BrokerHelpers.set_broker_refresh_cookie()
+
+    return redirect(_safe_redirect_target(final_redirect))
 
 def sso_broker_callback() -> Response:
     """Handle broker callback after explicit login or silent login.
 
     Expects an encrypted `broker_token` query parameter.
     """
-    from .utils import BrokerHelpers
-
-    broker_token = request.args.get("broker_token")
-    if not broker_token:
-        app.logger.error("Broker callback called without broker_token")
-        abort(400, description="Missing broker_token parameter")
-
     try:
-        payload = BrokerHelpers.decrypt_broker_token(broker_token)
-    except Exception:
-        app.logger.exception("Failed to decrypt broker_token")
-        abort(400, description="Invalid broker_token")
-
-    # Reject expired payloads as requested.
-    exp = payload.get("exp")
-    if exp is not None:
-        try:
-            if int(float(exp)) < int(time.time()):
-                abort(403, description="Expired broker payload")
-        except (TypeError, ValueError):
-            abort(403, description="Invalid broker payload exp value")
-
-    nonce = payload.get("nonce")
-    if not nonce or not BrokerHelpers.validate_nonce(nonce):
-        app.logger.warning("Broker nonce validation failed")
-        abort(403, description="Nonce validation failed")
-
-    user, final_redirect = BrokerHelpers.process_broker_payload(payload)
-    if not user:
-        app.logger.error("Could not find or create user from broker payload")
+        return _sso_broker_callback()
+    except BrokerTokenMissingError as e:
+        abort(403, message="Missing broker_token parameter")
+    except BrokerTokenDecryptionError as e:
+        abort(403, message="Invalid broker_token")
+    except BrokerPayloadExpiredError:
+        abort(403, message="Expired broker payload")
+    except BrokerExpiryValueError as e:
+        abort(403, message="Invalid broker payload expiry value")
+    except BrokerNonceValidationError:
+        abort(403, message="Nonce validation failed")
+    except BrokerPayloadProcessingError:
         abort(
             401,
-            description=app.config.get(
+            message=app.config.get(
                 "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE",
                 "Login failed",
             ),
         )
-
-    login_user(user)
-
-    cookie_name = app.config.get("SSO_BROKER_COOKIE_NAME", "_sso_checked")
-    cookie_ttl = app.config.get("SSO_BROKER_COOKIE_TTL", 1800)
-
-    resp = make_response(redirect(_safe_redirect_target(final_redirect)))
-    resp.set_cookie(
-        cookie_name,
-        str(int(time.time())),
-        max_age=cookie_ttl,
-        httponly=True,
-        secure=True,
-        samesite="Lax",
-    )
-    return resp
-
-
-def _login(remote_app, authorized_view_name):
-    """Redirect user to the SSO broker (Profiles) for authentication."""
-    broker_login_url = app.config.get("SSO_BROKER_LOGIN_URL")
-    if not broker_login_url:
-        app.logger.error("SSO_BROKER_LOGIN_URL is not configured")
-        abort(500)
-
-    next_param = get_safe_redirect_target(arg="next") or "/"
-
-    callback_url = url_for(
-        authorized_view_name,
-        remote_app=remote_app,
-        _external=True,
-        _scheme="https",
-    )
-
-    redirect_url = (
-        f"{broker_login_url}?return_to={callback_url}"
-        f"&final_redirect={next_param}"
-    )
-    return redirect(redirect_url)
-
-
-def login(remote_app):
-    """Send user to the SSO broker for authentication.
-
-    The blueprint for this view function is registered in invenio_oauthclient/
-    views/client.py but we (in ext.py) override the route to lead to this
-    function instead of the default function provided in invenio_oauthclient.
-    """
-    return _login(remote_app, ".authorized")
-
-
-def _authorized_handler(remote_app: str | None = None) -> Response:
-    """SSO broker authorization handler.
-
-    Decrypts the ``broker_token``, validates the nonce, finds or creates
-    the user, logs them in, and redirects to their original page.
-
-    Returns:
-        Response: A redirect to the user's ``final_redirect`` page.
-    """
-    from .utils import BrokerHelpers
-
-    broker_token = request.args.get("broker_token")
-    if not broker_token:
-        app.logger.error("Authorized callback called without broker_token")
-        abort(400, description="Missing broker_token parameter")
-
-    try:
-        payload = BrokerHelpers.decrypt_broker_token(broker_token)
-    except Exception:
-        app.logger.exception("Failed to decrypt broker_token")
-        abort(400, description="Invalid broker_token")
-
-    nonce = payload.get("nonce")
-    if not nonce or not BrokerHelpers.validate_nonce(nonce):
-        app.logger.warning("Broker nonce validation failed")
-        abort(403, description="Nonce validation failed")
-
-    user, final_redirect = BrokerHelpers.process_broker_payload(payload)
-
-    if not user:
-        app.logger.error("Could not find or create user from broker payload")
-        abort(
-            401,
-            description=app.config.get(
-                "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE",
-                "Login failed",
-            ),
-        )
-
-    login_user(user)
-
-    sso_cookie_name = app.config.get("SSO_BROKER_COOKIE_NAME", "_sso_checked")
-    sso_cookie_ttl = app.config.get("SSO_BROKER_COOKIE_TTL", 1800)
-    resp = make_response(redirect(final_redirect or "/"))
-    resp.set_cookie(
-        sso_cookie_name,
-        "1",
-        max_age=sso_cookie_ttl,
-        httponly=True,
-        secure=True,
-        samesite="Lax",
-    )
-    return resp
-
-
-def authorized(remote_app: str | None = None):
-    """Authorized handler callback.
-
-    The blueprint for this view function is registered in invenio_oauthclient/
-    views/client.py but we (in ext.py) override the route to lead to this
-    function instead of the default function provided in invenio_oauthclient.
-
-    Arguments:
-        remote_app (str): The name of the oauth remote app set
-            up in the config for oauth remote apps.
-    """
-    try:
-        return _authorized_handler(remote_app)
+    # Other errors handled automatically (see kcworks.ext)
     except Exception as e:
-        app.logger.exception("Error in authorized handler")
         raise e
-
 
 class RemoteUserDataUpdateWebhook(MethodView):
     """View class for the user/group data update webhook receiver.

@@ -19,13 +19,61 @@ import invenio_oauthclient
 import requests
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from flask import current_app
+from flask import current_app, response
+from invenio_access.permissions import system_identity
 from invenio_accounts import current_accounts
+from invenio_accounts.errors import AlreadyLinkedError
 from invenio_accounts.models import User, UserIdentity
 from invenio_db import db
 
 from .client import APIResponse, Profile, UserDataAPIClient
+from .errors import UserDataRequestFailed, UserDataRequestTimeout
+from .proxies import current_remote_user_data_service
 from .services.group_roles import GroupRolesService
+
+
+def safe_redirect_target(target: str | None = None, arg_name: str | None = None) -> str:
+    """Validate and normalize a redirect target to avoid open redirects.
+
+    If no redirect target is specified, returns the validated request referrer
+    if possible.
+
+    Default fallback is to return the root path ("/").
+
+    Arguments:
+        target (str|None): A url string for the redirect target.
+        arg_name (str|None): A string name for a request argument that carries the
+          redirect url.
+
+    Returns:
+        str: The safe target for the redirect.
+    """
+    target = target if target else request.args.get(arg_name) if arg_name
+    allowed_hosts = app.config.get("APP_ALLOWED_HOSTS") or []
+
+    if not allowed_hosts:
+        current_app.logger.error(
+            "APP_ALLOWED_HOSTS not configred. Cannot validate redirects."
+        )
+        return "/"
+
+    for redirect_target in (target, request.referrer):
+        if not redirect_target:
+            continue
+
+        redirect_uri = urisplit(redirect_target)
+        # Check if full url is allowed
+        if redirect_uri.host and redirect_uri.host in allowed_hosts:
+            return redirect_target
+        # Handle relative paths safely
+        elif redirect_uri.path:
+            return uricompose(
+                path=redirect_uri.getpath(),
+                query=redirect_uri.getquery(),
+                fragment=redirect_uri.getfragment(),
+            )
+
+    return "/"
 
 
 def extract_bearer_token(header_string: str) -> str:
@@ -571,6 +619,51 @@ class BrokerHelpers:
     """Helpers for SSO broker authentication."""
 
     @staticmethod
+    def _get_broker_cookie_name():
+        """Retrieve the broker refresh cookie name from config."""
+        return current_app.config.get("SSO_BROKER_RETRY_COOKIE_NAME", "_sso_checked")
+
+    @staticmethod
+    def _get_broker_cookie_ttl():
+        """Retrieve the broker refresh cookie ttl from config."""
+        return current_app.config.get("SSO_BROKER_COOKIE_TTL", 1800)
+
+    @staticmethod
+    def ready_for_login_broker_check() -> bool:
+        """Check whether it's time to check broker for a login again.
+
+        Returns:
+            True if it's time to check the login broker for an active
+            session, False if it's not.
+        """
+        cookie_ttl = BrokerHelpers._get_broker_cookie_ttl()
+        cookie_name = BrokerHelpers._get_broker_cookie_name()
+        cookie_val = request.cookies.get(cookie_name)
+        if cookie_val:
+            # Server-side TTL validation so we don't rely solely on
+            # browser cookie expiry behavior.
+            try:
+                checked_at = int(float(cookie_val))
+                if time.time() - checked_at < int(cookie_ttl):
+                    return False
+            except (TypeError, ValueError):
+                # If the cookie value is unexpected, treat it as expired.
+                pass
+        return True
+
+    @staticmethod
+    def set_broker_refresh_cookie():
+        response.set_cookie(
+            cookie_name,
+            str(int(time.time())),
+            max_age=cookie_ttl,
+            httponly=True,
+            secure=True,
+            samesite="Strict",
+        )
+        return response
+
+    @staticmethod
     def decrypt_broker_token(token: str) -> dict:
         """Decrypt an AES-256-CBC broker token using the shared secret.
 
@@ -628,16 +721,13 @@ class BrokerHelpers:
 
     @staticmethod
     def process_broker_payload(payload: dict) -> tuple[User | None, str | None]:
-        """Extract user identity from a decrypted broker token and find/create the user.
+        """Extract user identity, find/create th KCWorks user, and update their data.
 
         Args:
             payload: The decrypted broker token dict. Expected keys include
-                ``nonce``, ``final_redirect`` and a nested ``userinfo`` object
+                ``kc_username``, ``nonce``, ``final_redirect`` and a nested ``userinfo`` object
                 (e.g. ``payload["userinfo"]["sub"]`` /
                 ``payload["userinfo"]["email"]``).
-
-                Some broker implementations also include top-level identity hints
-                such as ``kc_username``.
 
         Returns:
             A tuple of (user, final_redirect). ``user`` is None if the payload
@@ -647,7 +737,6 @@ class BrokerHelpers:
         sub = payload.get("sub") or userinfo.get("sub")
         final_redirect = payload.get("final_redirect", "/")
 
-        # The decrypted payload is expected to carry a stable external id.
         if not sub:
             return None, final_redirect
 
@@ -669,22 +758,35 @@ class BrokerHelpers:
             }
 
         user = CILogonHelpers.get_user_from_account_info(account_info)
+        try:
+            profile_response = UserDataAPIClient.fetch_user_profile(sub_id=sub)
+        except requests.Timeout as e:
+            profile_fetch_error = "timeout"
+        except requests.RequestException as e:
+            profile_fetch_error = "failure"
 
         # If we have an external subject but no local user yet, ask Profiles
         # for the full profile and create the KCWorks user.
-        if not user and sub and (email or kc_username):
-            profile_response = UserDataAPIClient.fetch_user_profile(sub_id=sub)
-            if profile_response and getattr(profile_response, "data", None):
-                user = CILogonHelpers.create_new_user(profile_response)
+        if not user and sub and profile_response.get("data"):
+            user = CILogonHelpers.create_new_user(profile_response)
 
         # Ensure the external identity is linked (idempotent via suppression).
         if user:
-            from invenio_accounts.errors import AlreadyLinkedError
-
-            try:
+            with contextlib.suppress(AlreadyLinkedError):
                 CILogonHelpers.link_user_to_oauth_identifier(user, "cilogon", sub)
-            except AlreadyLinkedError:
-                pass
+
+            current_remote_user_data_service.update_user_from_remote(
+                system_identity,
+                user.id,
+                "knowledgeCommons",
+                sub,
+                remote_date=profile_response,
+            )
+        else:
+            if profile_fetch_error == "timeout":
+                raise UserDataRequestTimeout
+            else:
+                raise UserDataRequestFailed
 
         return user, final_redirect
 

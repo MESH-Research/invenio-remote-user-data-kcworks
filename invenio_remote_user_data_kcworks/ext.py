@@ -26,11 +26,6 @@ from .views import (
     login,
 )
 
-OAUTH_ROUTE_REWRITES = {
-    "/oauth/login/<remote_app>/": login,
-    "/oauth/authorized/<remote_app>/": authorized,
-}
-
 
 def on_user_logged_out(_, user: User) -> None:
     """Send global logout signal to profiles API when user logs out."""
@@ -145,94 +140,11 @@ class InvenioRemoteUserData:
             if not getattr(cu, "is_anonymous", False):
                 return
 
-            cookie_name = current_app.config.get(
-                "SSO_BROKER_COOKIE_NAME", "_sso_checked"
-            )
-            cookie_ttl = current_app.config.get("SSO_BROKER_COOKIE_TTL", 1800)
-            cookie_val = request.cookies.get(cookie_name)
-            if cookie_val:
-                # Server-side TTL validation so we don't rely solely on
-                # browser cookie expiry behavior.
+            if BrokerHelpers.ready_for_login_broker_check():
                 try:
-                    checked_at = int(float(cookie_val))
-                    if time.time() - checked_at < int(cookie_ttl):
-                        return
-                except (TypeError, ValueError):
-                    # If the cookie value is unexpected, treat it as expired.
-                    pass
+                    sso_broker_login(next=request.url, silent=True)
 
-            def _set_sso_cookie(response):
-                response.set_cookie(
-                    cookie_name,
-                    str(int(time.time())),
-                    max_age=cookie_ttl,
-                    httponly=True,
-                    secure=True,
-                    samesite="Lax",
-                )
-                return response
-
-            try:
-                callback_url = url_for(
-                    "invenio_remote_user_data_kcworks_sso.broker_callback",
-                    _external=True,
-                    _scheme="https",
-                )
-                data = SessionBrokerAPIClient.silent_login_check(
-                    dict(request.cookies),
-                    return_to=callback_url,
-                    final_redirect=request.url,
-                )
-
-                if not data or "broker_token" not in data:
-                    after_this_request(_set_sso_cookie)
-                    return
-
-                payload = BrokerHelpers.decrypt_broker_token(data["broker_token"])
-
-                # Reject expired payloads as requested.
-                exp = payload.get("exp")
-                if exp is not None:
-                    try:
-                        if int(float(exp)) < int(time.time()):
-                            after_this_request(_set_sso_cookie)
-                            return
-                    except (TypeError, ValueError):
-                        after_this_request(_set_sso_cookie)
-                        return
-
-                nonce = payload.get("nonce")
-                if not nonce or not BrokerHelpers.validate_nonce(nonce):
-                    current_app.logger.warning("Silent login: nonce validation failed")
-                    after_this_request(_set_sso_cookie)
-                    return
-
-                user, _ = BrokerHelpers.process_broker_payload(payload)
-                if user:
-                    login_user(user)
-                    current_app.logger.info(
-                        "Silent SSO login succeeded for user %s", user.id
+                except Exception:
+                    current_app.logger.exception(
+                        "Silent SSO login check failed unexpectedly"
                     )
-
-                after_this_request(_set_sso_cookie)
-
-            except Exception:
-                current_app.logger.exception(
-                    "Silent SSO login check failed unexpectedly"
-                )
-                after_this_request(_set_sso_cookie)
-
-
-def finalize_app(app):
-    """Finalize app."""
-    for rule in app.url_map.iter_rules():
-        route_str = str(rule)
-
-        if route_str in OAUTH_ROUTE_REWRITES:
-            if rule.endpoint in app.view_functions:
-                app.view_functions[rule.endpoint] = OAUTH_ROUTE_REWRITES[route_str]
-            else:
-                app.logger.warning(
-                    f"Warning: Endpoint '{rule.endpoint}' not "
-                    f"found for overwriting route '{route_str}'"
-                )

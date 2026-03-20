@@ -16,10 +16,8 @@ from typing import Optional
 
 import requests
 
-# from pprint import pprint
 from flask import current_app
 
-# frm pprint import pformat
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import User, UserIdentity
 from invenio_accounts.proxies import current_accounts
@@ -426,11 +424,6 @@ class RemoteUserDataService(Service):
                     profile = remote_data.data[0].profile
                 except AttributeError:
                     profile = remote_data.results[0].profile
-
-                # update the user profile
-                user.username = profile.username
-                user.full_name = profile.name
-                user.email = profile.email
 
                 group_changes = CILogonHelpers.calculate_group_changes(profile, user)
                 user_changes, new_data = CILogonHelpers.calculate_user_changes(

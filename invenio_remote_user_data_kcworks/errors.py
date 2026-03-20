@@ -13,7 +13,7 @@ from flask import current_app as app
 class BrokerTokenMissingError(Exception):
     """Exception raised if the login broker token is missing."""
 
-    def __init__(self, description=None, header=None):
+    def __init__(self, message=None, header=None):
         message_fragment = message or "Missing broker_token parameter"
         self.message = app.config.get(
             "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
@@ -25,7 +25,7 @@ class BrokerTokenMissingError(Exception):
 class BrokerTokenDecryptionError(Exception):
     """Exception raised if the login broker token decryption fails."""
 
-    def __init__(self, description=None, header=None):
+    def __init__(self, message=None, header=None):
         message_fragment = message or "Invalid broker_token"
         self.message = app.config.get(
             "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
@@ -37,7 +37,7 @@ class BrokerTokenDecryptionError(Exception):
 class BrokerPayloadExpiredError(Exception):
     """Exception raised if the broker payload has expired."""
 
-    def __init__(self, description=None, header=None):
+    def __init__(self, message=None, header=None):
         message_fragment = message or "Expired broker payload"
         self.message = app.config.get(
             "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
@@ -49,7 +49,7 @@ class BrokerPayloadExpiredError(Exception):
 class BrokerExpiryValueError(Exception):
     """Exception raised if the broker payload expiry period is unreadable."""
 
-    def __init__(self, description=None, header=None):
+    def __init__(self, message=None, header=None):
         message_fragment = message or "Invalid broker payload expiry value"
         self.message = app.config.get(
             "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
@@ -61,7 +61,7 @@ class BrokerExpiryValueError(Exception):
 class BrokerNonceValidationError(Exception):
     """Exception raised if the broker nonce validation fails."""
 
-    def __init__(self, description=None, header=None):
+    def __init__(self, message=None, header=None):
         message_fragment = message or "Nonce validation failed"
         self.message = app.config.get(
             "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
@@ -73,7 +73,7 @@ class BrokerNonceValidationError(Exception):
 class BrokerPayloadProcessingError(Exception):
     """Exception raised if the broker payload can't be processed."""
 
-    def __init__(self, description=None, header=None):
+    def __init__(self, message=None, header=None):
         message_fragment = message or "Problem processing broker payload"
         self.message = app.config.get(
             "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"

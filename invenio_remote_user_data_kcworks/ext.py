@@ -8,11 +8,10 @@
 """Main extension class for invenio-remote-user-data-kcworks."""
 
 import re
-import time
 
 import arrow
-from flask import after_this_request, current_app, request, session, url_for
-from flask_login import current_user, login_user, user_logged_in, user_logged_out
+from flask import Response, current_app, request, session
+from flask_login import current_user, user_logged_in, user_logged_out
 from invenio_accounts.models import User
 
 from . import config
@@ -20,6 +19,7 @@ from .proxies import current_remote_user_data_service
 from .services.service import RemoteGroupDataService, RemoteUserDataService
 from .tasks import do_user_data_update
 from .utils import BrokerHelpers
+from .views import sso_broker_login
 
 
 def on_user_logged_out(_, user: User) -> None:
@@ -32,22 +32,7 @@ def on_user_logged_out(_, user: User) -> None:
 
 def on_user_logged_in(_, user: User) -> None:
     """Update user data from remote server when current user is changed."""
-    # FIXME: Do we need this check now that we're using webhooks?
-
     with current_app.app_context():
-        # current_app.logger.debug(f"current_user: {current_user}")
-        # if self._data_is_stale(identity.id) and not self.update_in_progress:
-        # my_user_identity = UserIdentity.query.filter_by(
-        #     id_user=identity.id
-        # ).one_or_none()
-        # # will have a UserIdentity if the user has logged in via an IDP
-        # if my_user_identity is not None:
-        #     my_idp = my_user_identity.method
-        #     my_remote_id = my_user_identity.id
-
-        # TODO: For the moment we're not tracking the last update
-        # time because we're using logins and webhooks to trigger updates.
-        #
         if user.id:
             last_timestamp = session.get("user-data-updated", {}).get(user.id)
             last_updated = arrow.get(last_timestamp) if last_timestamp else None
@@ -117,7 +102,7 @@ class InvenioRemoteUserData:
         user_logged_out.connect(on_user_logged_out, app)
 
         @app.before_request
-        def _sso_silent_login_check() -> None:
+        def _sso_silent_login_check() -> Response | None:
             """Attempt transparent SSO login for anonymous users.
 
             If the user is anonymous and the TTL cookie has expired (or is
@@ -127,17 +112,33 @@ class InvenioRemoteUserData:
 
             Network errors or broker downtime are caught so they never
             block the original request.
+
+            Returns:
+                Response | None: If the user is anonymous and hasn't recently
+                  checked for a Profiles login, returns a Flask redirect
+                  response to send the user to the silent Profiles login check.
+                  Otherwise, returns None.
             """
-            if request.path.startswith(("/static/", "/api/", "/sso/broker-callback/")):
+            app.logger.debug("CHECKING FOR SSO LOGIN")
+            if request.path.startswith((
+                "/static/",
+                "/api/",
+                "/sso/broker-callback/",
+            )) or request.path.rstrip("/").endswith("/sso/broker-callback"):
                 return
 
             cu = current_user._get_current_object()
+            app.logger.debug(f"is_anonymous? {cu.is_anonymous}")
             if not getattr(cu, "is_anonymous", False):
                 return
 
             if BrokerHelpers.ready_for_login_broker_check():
+                app.logger.debug("ready_for_login_broker_check")
                 try:
-                    sso_broker_login(next=request.url, silent=True)
+                    # NOTE: This must return the redirect response to the browser.
+                    # If we don't return it, the redirect is constructed but never sent
+                    # to the client, so the broker callback won't be hit.
+                    return sso_broker_login(next=request.url, silent=True)
 
                 except Exception:
                     current_app.logger.exception(

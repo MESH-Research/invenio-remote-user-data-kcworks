@@ -26,18 +26,26 @@ from flask_login import login_user
 from invenio_accounts.models import UserIdentity
 from invenio_accounts.sessions import delete_user_sessions
 from invenio_db import db
-from invenio_oauthclient.utils import get_safe_redirect_target
 from invenio_queues.proxies import current_queues
 from invenio_remote_user_data_kcworks.proxies import (
     current_remote_user_data_service,
 )
-from uritools import uricompose, urisplit
 from werkzeug.exceptions import (
     BadRequest,
     MethodNotAllowed,
     NotFound,
 )
 
+from .errors import (
+    BrokerExpiryValueError,
+    BrokerNonceValidationError,
+    BrokerPayloadExpiredError,
+    BrokerPayloadProcessingError,
+    BrokerTokenDecryptionError,
+    BrokerTokenMissingError,
+    UserDataRequestFailed,
+    UserDataRequestTimeout,
+)
 from .signals import remote_data_updated
 from .utils import CILogonHelpers, BrokerHelpers, safe_redirect_target
 
@@ -82,7 +90,7 @@ def sso_broker_login(next: str | None = None, silent: bool = False, **kwargs):
     )
 
     query = urlencode({"return_to": return_to, "final_redirect": final_redirect})
-    return redirect(f"{broker_login_url}?{query}")
+    return redirect(f"{broker_url}?{query}")
 
 
 def _sso_broker_callback() -> Response:
@@ -94,7 +102,7 @@ def _sso_broker_callback() -> Response:
     no_session = request.args.get("no_session")
     final_redirect = request.args.get("final_redirect")
 
-    if not broker_token or no_session:
+    if not broker_token and not no_session:
         app.logger.error("Broker callback called without broker_token")
         raise BrokerTokenMissingError
 
@@ -131,9 +139,10 @@ def _sso_broker_callback() -> Response:
         except UserDataRequestFailed as e:
             raise e
 
-        return redirect(_safe_redirect_target(final_redirect))
+        response = redirect(safe_redirect_target(final_redirect))
+        return BrokerHelpers.clear_broker_refresh_cookie(response)
     else:
-        response = redirect(_safe_redirect_target(final_redirect))
+        response = redirect(safe_redirect_target(final_redirect))
         return BrokerHelpers.set_broker_refresh_cookie(response)
 
 
@@ -145,15 +154,15 @@ def sso_broker_callback() -> Response:
     try:
         return _sso_broker_callback()
     except BrokerTokenMissingError as e:
-        abort(403, message="Missing broker_token parameter")
+        raise
     except BrokerTokenDecryptionError as e:
-        abort(403, message="Invalid broker_token")
+        raise
     except BrokerPayloadExpiredError:
-        abort(403, message="Expired broker payload")
+        raise
     except BrokerExpiryValueError as e:
-        abort(403, message="Invalid broker payload expiry value")
+        raise
     except BrokerNonceValidationError:
-        abort(403, message="Nonce validation failed")
+        raise
     except BrokerPayloadProcessingError:
         abort(
             401,
@@ -301,10 +310,6 @@ class RemoteUserDataUpdateWebhook(MethodView):
                                         f"for unknown user: external id {u['id']}"
                                     )
                                 else:
-                                    self.logger.debug(
-                                        f"user_identity: {user_identity.id_user}, "
-                                        f"{user_identity.id}"
-                                    )
                                     users.append(u["id"])
                                     events.append({
                                         "idp": idp,
@@ -451,7 +456,6 @@ class RemoteUserLogoutView(MethodView):
         routes in STATIC_API_TOKEN_ROUTES and the before_request handler
         registered by kcworks.ext.
         """
-        app.logger.debug(f"DEBUG: identity: {g.identity}")
         current_remote_user_data_service.require_permission(
             g.identity, "trigger_logout_user"
         )

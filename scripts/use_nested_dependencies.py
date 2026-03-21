@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#
+# Copyright (C) 2023-2026 MESH Research
+#
+# Pre-install script: modifies pyproject.toml to use GitHub source for peer
+# dependencies if the peer directories don't exist. Allows the package to work
+# both in knowledge-commons-works (sibling peers) and standalone in CI (git sources).
+#
+# Usage: python scripts/use_nested_dependencies.py
+
+from pathlib import Path
+import sys
+
+try:
+    import tomli
+    import tomli_w
+except ImportError:
+    print(
+        "Error: tomli and tomli_w required. Run: uv pip install --system tomli tomli-w",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+PYPROJECT_TOML = PROJECT_ROOT / "pyproject.toml"
+PEER_GROUP_COLLECTIONS = PROJECT_ROOT / ".." / "invenio-group-collections-kcworks"
+
+GIT_SOURCES = {
+    "invenio-group-collections-kcworks": {
+        "git": "https://github.com/MESH-Research/invenio-group-collections-kcworks.git",
+        "branch": "main",
+    },
+}
+
+
+def main() -> None:
+    if not PYPROJECT_TOML.is_file():
+        print(f"Error: pyproject.toml not found at {PYPROJECT_TOML}", file=sys.stderr)
+        sys.exit(1)
+
+    peers_missing = []
+    if not PEER_GROUP_COLLECTIONS.resolve().is_dir():
+        print(f"Peer directory not found at {PEER_GROUP_COLLECTIONS}, will use GitHub source")
+        peers_missing.append("invenio-group-collections-kcworks")
+
+    if not peers_missing:
+        print("Peer directories found, keeping local paths in pyproject.toml")
+        return
+
+    print("Updating pyproject.toml to use GitHub sources for missing peer dependencies")
+
+    with open(PYPROJECT_TOML, "rb") as f:
+        data = tomli.load(f)
+
+    if "tool" in data and "uv" in data["tool"] and "sources" in data["tool"]["uv"]:
+        for name in peers_missing:
+            if name in GIT_SOURCES:
+                data["tool"]["uv"]["sources"][name] = GIT_SOURCES[name]
+
+    with open(PYPROJECT_TOML, "wb") as f:
+        tomli_w.dump(data, f)
+
+    print("Successfully updated pyproject.toml to use GitHub sources for peer dependencies")
+
+
+if __name__ == "__main__":
+    main()

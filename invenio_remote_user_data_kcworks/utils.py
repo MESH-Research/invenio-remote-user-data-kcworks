@@ -15,13 +15,14 @@ import json
 import os
 import time
 from pprint import pformat
+from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
 
 import invenio_oauthclient
 import requests
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from flask import request, Response
+from flask import Response, request
 from flask import current_app as app
 from invenio_access.permissions import system_identity
 from invenio_accounts import current_accounts
@@ -30,10 +31,19 @@ from invenio_accounts.models import User, UserIdentity
 from invenio_db import db
 from uritools import uricompose, urisplit
 
-from .client import APIResponse, Profile, UserDataAPIClient
+from .client import UserDataAPIClient
 from .errors import UserDataRequestFailed, UserDataRequestTimeout
 from .proxies import current_remote_user_data_service
 from .services.group_roles import GroupRolesService
+from .types import (
+    AccountInfoDict,
+    APIResponse,
+    CalculatedUserDataDict,
+    GroupChangesDict,
+    Profile,
+    UpdateLocalUserDataResultDict,
+    UserChangesDict,
+)
 
 
 def safe_redirect_target(target: str | None = None, arg_name: str | None = None) -> str:
@@ -42,7 +52,7 @@ def safe_redirect_target(target: str | None = None, arg_name: str | None = None)
     If no redirect target is specified, returns the validated request referrer
     if possible.
 
-    Default fallback is to return the root path ("/").
+    Default fallback is to return the root path ('/').
 
     Arguments:
         target (str|None): A url string for the redirect target.
@@ -113,7 +123,11 @@ class SecureParamEncoder:
         self.key = hashlib.sha256(shared_secret.encode()).digest()
 
     def encode(self, data: dict) -> str:
-        """Encrypt and encode data."""
+        """Encrypt and encode data.
+
+        Returns:
+            str: Encrypted data as a string.
+        """
         json_data = json.dumps(data).encode()
 
         # Generate random IV (init vector)
@@ -133,7 +147,11 @@ class SecureParamEncoder:
         return base64.urlsafe_b64encode(result).decode()
 
     def decode(self, encrypted_param: str) -> dict:
-        """Decrypt and decode data."""
+        """Decrypt and decode data.
+
+        Returns:
+            dict: The decrypted JSON data as a python dictionary.
+        """
         data = base64.urlsafe_b64decode(encrypted_param.encode())
 
         # Extract IV and encrypted data
@@ -182,8 +200,12 @@ class CILogonHelpers:
             return diff
 
     @staticmethod
-    def build_association_url(id_token):
-        """Build the association URL."""
+    def build_association_url(id_token) -> str:
+        """Build the association URL.
+
+        Returns:
+            str: The url with encoded params as a string.
+        """
         base_url = app.config.get("IDMS_BASE_ASSOCIATION_URL")
         params = {"userinfo": id_token}
 
@@ -205,8 +227,14 @@ class CILogonHelpers:
         ))
 
     @staticmethod
-    def _get_external_id(account_info):
-        """Get external id from account info."""
+    def _get_external_id(account_info: AccountInfoDict) -> dict[str, str] | None:
+        """Get external id from account info.
+
+        Returns:
+            dict[str, str]: A dictionary with 'id' and 'method' if the account
+              info contains the external account association.
+            None: If the account_info lacks the complete information.
+        """
         if all(k in account_info for k in ("external_id", "external_method")):
             return dict(
                 id=account_info["external_id"],
@@ -216,7 +244,7 @@ class CILogonHelpers:
 
     @staticmethod
     def get_user_from_account_info(
-        account_info: dict | None = None,
+        account_info: AccountInfoDict | None = None,
     ) -> User | None:
         """Retrieve user object for the given request.
 
@@ -227,11 +255,12 @@ class CILogonHelpers:
         the user object.
 
         Parameters:
-            account_info (dict | None): The dictionary with the account info.
-                (Default: ``None``)
+            account_info (AccountInfoDict | None): External account payload
+                ('external_id', 'external_method', optional nested 'user').
+                (Default: None)
 
         Returns:
-            A :class:`invenio_accounts.models.User` instance or ``None``.
+            An invenio_accounts.models.User instance or None.
         """
         if not account_info:
             return None
@@ -254,13 +283,18 @@ class CILogonHelpers:
             return user
 
         # Try KC username lookup before email (more reliable)
+        kc_username = user_profile.get("identifier_kc_username")
         user = CILogonHelpers.try_get_user_by_kc_username(
-            user_profile.get("identifier_kc_username"),
+            kc_username,
             account_info.get("external_method"),
         )
-        if user:
+        # kc_username check can return a list of Users,
+        # in which case we log an error and continue.
+        if user and isinstance(user, User):
             app.logger.debug("User found by KC username")
             return user
+        elif isinstance(user, list):
+            app.logger.error(f"Multiple users found with KC username {kc_username}")
 
         # Try email lookup
         email = account_info.get("user", {}).get("email")
@@ -277,8 +311,13 @@ class CILogonHelpers:
         return None
 
     @staticmethod
-    def _try_get_user_by_external_id(account_info: dict) -> User | None:
-        """Try to get user by external ID."""
+    def _try_get_user_by_external_id(account_info: AccountInfoDict) -> User | None:
+        """Try to get user by external ID.
+
+        Returns:
+            User: A matching User when one exists.
+            None: None when no matching user exists.
+        """
         try:
             external_id = CILogonHelpers._get_external_id(account_info)
             if external_id:
@@ -292,7 +331,12 @@ class CILogonHelpers:
 
     @staticmethod
     def _try_get_user_by_orcid(orcid: str | None) -> User | None:
-        """Try to get user by ORCID."""
+        """Try to get user by ORCID.
+
+        Returns:
+            User: A matching User when one exists.
+            None: None when no matching user exists.
+        """
         if not orcid:
             return None
 
@@ -307,10 +351,17 @@ class CILogonHelpers:
     @staticmethod
     def try_get_user_by_kc_username(
         kc_username: str | None, external_method: str | None
-    ) -> User | None:
-        """Try to get user by KC username."""
+    ) -> User | list[User] | None:
+        """Try to get user by KC username.
+
+        Returns:
+            User: if a matching user is found.
+            list[User]: if multiple matching users are found.
+            None: if no matching users are found.
+        """
         app.logger.debug(
-            f"in try_get_user_by_kc_username: looking for {kc_username} with {external_method}"
+            f"in try_get_user_by_kc_username: looking for {kc_username} with "
+            f"{external_method}"
         )
         if not kc_username:
             return None
@@ -319,7 +370,7 @@ class CILogonHelpers:
             # try profile field
             user = User.query.filter(
                 User._user_profile.op("->>")("identifier_kc_username") == kc_username
-            ).one_or_none()
+            ).all()
             app.logger.debug(f"user with kc id in profile field: {user}")
 
             # try legacy external identifier (used to use kc id as sub id)
@@ -351,7 +402,12 @@ class CILogonHelpers:
 
     @staticmethod
     def _try_get_user_by_email(email: str | None) -> User | None:
-        """Try to get user by email."""
+        """Try to get user by email.
+
+        Returns:
+            User: A matching User when one exists.
+            None: None when no matching user exists.
+        """
         if not email:
             return None
 
@@ -425,27 +481,38 @@ class CILogonHelpers:
     @staticmethod
     def update_local_user_data(
         user: User,
-        new_data: dict,
-        user_changes: dict,
+        new_data: CalculatedUserDataDict,
+        user_changes: UserChangesDict,
         group_changes: dict,
         remote_service: str,
         **kwargs,
-    ) -> dict:
+    ) -> UpdateLocalUserDataResultDict:
         """Update Invenio user data for the supplied identity.
 
         Parameters:
             user (User): The user to be updated.
-            new_data (dict): The new user data.
-            user_changes (dict): The changes to the user data.
-            group_changes (dict): The changes to the user's group memberships.
+            new_data (CalculatedUserDataDict): The new user data.
+            user_changes (UserChangesDict): Sparse diff of changed user fields.
+            group_changes (dict): Group membership delta with keys
+                'added_groups', 'dropped_groups', and 'unchanged_groups'.
             remote_service (str): The name of the remote service providing
                 the user data update.
+            **kwargs: Additional options forwarded to group-role update helpers.
 
         Returns:
-            dict: A dictionary of the updated user data with the keys "user"
-                  and "groups".
+            UpdateLocalUserDataResultDict: Result of applying updates. Has two
+              keys:
+
+            - user (UserChangesDict): Sparse diff of fields written to the
+                database when user_changes was non-empty; otherwise an empty dict.
+                May include top-level keys 'active', 'username', 'email',
+                'preferences', and nested 'user_profile' (see
+                UserChangesDict in types.py).
+            - groups (list[str]): Role names representing the user's group
+                memberships after this update (either from
+                _update_invenio_group_memberships or unchanged groups).
         """
-        updated_data = {}
+        updated_data: UpdateLocalUserDataResultDict = {"user": {}, "groups": []}
         if user_changes:
             if user.username != new_data["username"]:
                 # FIXME: Workaround for potential username collision
@@ -477,8 +544,6 @@ class CILogonHelpers:
                     )
             current_accounts.datastore.commit()
             updated_data["user"] = user_changes
-        else:
-            updated_data["user"] = []
         if group_changes.get("added_groups") or group_changes.get("dropped_groups"):
             updated_data["groups"] = CILogonHelpers._update_invenio_group_memberships(
                 user, group_changes, **kwargs
@@ -489,8 +554,30 @@ class CILogonHelpers:
         return updated_data
 
     @staticmethod
-    def calculate_user_changes(profile: APIResponse, user):
-        """Calculate the changes between the existing user and remote data."""
+    def calculate_user_changes(
+        profile: APIResponse | Profile, user: User
+    ) -> tuple[UserChangesDict, CalculatedUserDataDict]:
+        """Calculate user-field changes from remote profile data.
+
+        Parameters:
+            profile (APIResponse | Profile): Remote profile payload as either a full
+                API response wrapper or a direct profile object.
+            user (User): Local Invenio user to compare against.
+
+        Returns:
+            tuple[UserChangesDict, CalculatedUserDataDict]: A pair of dicts.
+
+            0 (UserChangesDict): Sparse diff between the local
+               user state and the desired remote-backed state. Only keys that
+               differ are present.
+
+            1 (CalculatedUserDataDict): Full normalized data for a user after
+               a successful application of the changes: Has the keys 'active',
+               'username', 'email', 'preferences' (including visibility
+               flags), and 'user_profile' nested dict with 'full_name', 'name_parts'
+               (JSON string), 'identifier_kc_username', optional 'affiliations' and
+               'identifier_orcid', etc. (see CalculatedUserDataDict in types.py).
+        """
         initial_user_data = {
             "username": user.username,
             "preferences": user.preferences,
@@ -542,12 +629,24 @@ class CILogonHelpers:
         return user_changes, new_data
 
     @staticmethod
-    def calculate_group_changes(profile: APIResponse | Profile, user):
-        """Calculate the changes between the existing user and the data."""
+    def calculate_group_changes(
+        profile: APIResponse | Profile, user
+    ) -> GroupChangesDict:
+        """Calculate the changes between the existing user and the data.
+
+        Note that only roles related to Knowledge Commons groups are compared to
+        calculate the changes. These are recognized by the prefix
+        `knowledgeCommons---`.
+
+        Returns:
+            GroupChangesDict: Dictionary with three keys: `dropped_groups`,
+              `added_groups`, and `unchanged_groups`. Each value is a list of
+              group role names (strings).
+        """
         local_groups = [r.name for r in user.roles]
         remote_groups = []
 
-        group_changes = {
+        group_changes: GroupChangesDict = {
             "dropped_groups": [],
             "added_groups": [],
             "unchanged_groups": local_groups,
@@ -589,11 +688,13 @@ class CILogonHelpers:
         return group_changes
 
     @staticmethod
-    def build_account_info(
-        api_result: APIResponse | None, sub: str
-    ) -> dict[str, str | dict]:
-        """Build an account_info dict that looks as expected."""
-        account_info = {
+    def build_account_info(api_result: APIResponse | None, sub: str) -> AccountInfoDict:
+        """Build an account_info dict that looks as expected.
+
+        Returns:
+            AccountInfoDict: Structured dictionary of user info.
+        """
+        account_info: AccountInfoDict = {
             "external_id": sub,
             "external_method": "cilogon",
         }
@@ -609,8 +710,12 @@ class CILogonHelpers:
         return account_info
 
     @staticmethod
-    def create_new_user(result):
-        """Create a new user."""
+    def create_new_user(result) -> User:
+        """Create a new user.
+
+        Returns:
+            User: An invenio_accounts User object.
+        """
         app.logger.debug(f"Creating user: {result.data[0].profile.username}")
         user_info = {
             "username": result.data[0].profile.username,
@@ -628,13 +733,21 @@ class BrokerHelpers:
     """Helpers for SSO broker authentication."""
 
     @staticmethod
-    def _get_broker_cookie_name():
-        """Retrieve the broker refresh cookie name from config."""
+    def _get_broker_cookie_name() -> str:
+        """Retrieve the broker refresh cookie name from config.
+
+        Returns:
+            str: The configured refresh cookie name (default '_sso_checked')
+        """
         return app.config.get("SSO_BROKER_RETRY_COOKIE_NAME", "_sso_checked")
 
     @staticmethod
-    def _get_broker_cookie_ttl():
-        """Retrieve the broker refresh cookie ttl from config."""
+    def _get_broker_cookie_ttl() -> int:
+        """Retrieve the broker refresh cookie ttl from config.
+
+        Returns:
+            str: The configured refresh cookie ttl in seconds (default 1800)
+        """
         return app.config.get("SSO_BROKER_COOKIE_TTL", 1800)
 
     @staticmethod
@@ -661,7 +774,12 @@ class BrokerHelpers:
         return True
 
     @staticmethod
-    def set_broker_refresh_cookie(response):
+    def set_broker_refresh_cookie(response) -> Response:
+        """Set the broker refresh cookie.
+
+        Returns:
+            Response: A Flask Response object with new cookie set.
+        """
         cookie_name = BrokerHelpers._get_broker_cookie_name()
         cookie_ttl = BrokerHelpers._get_broker_cookie_ttl()
         response.set_cookie(
@@ -675,8 +793,12 @@ class BrokerHelpers:
         return response
 
     @staticmethod
-    def clear_broker_refresh_cookie(response):
-        """Delete the broker retry cookie from the current response."""
+    def clear_broker_refresh_cookie(response) -> Response:
+        """Delete the broker retry cookie from the current response.
+
+        Returns:
+            Response: A Flask Response object with cookie deleted.
+        """
         cookie_name = BrokerHelpers._get_broker_cookie_name()
         response.delete_cookie(cookie_name)
         return response
@@ -743,9 +865,16 @@ class BrokerHelpers:
 
         Args:
             payload: The decrypted broker token dict. Expected keys include
-                ``kc_username``, ``nonce``, ``final_redirect`` and a nested ``userinfo`` object
-                (e.g. ``payload["userinfo"]["sub"]`` /
-                ``payload["userinfo"]["email"]``).
+                - kc_username (str)
+                - primary_email (str)
+                - nonce (str)
+                - final_redirect (str)
+                - userinfo (dict): With 'sub', 'email', etc.
+
+        Raises:
+            UserDataRequestFailed: If the user's data could not be retrieved from
+              the remote endpoint's response.
+            UserDataRequestTimeout: If the request to the remote endpoint times out.
 
         Returns:
             A tuple of (user, final_redirect). ``user`` is None if the payload
@@ -762,7 +891,7 @@ class BrokerHelpers:
         email = payload.get("primary_email") or userinfo.get("email")
         orcid = userinfo.get("orcid") or payload.get("orcid")
 
-        account_info: dict = {
+        account_info: AccountInfoDict = {
             "external_id": sub,
             "external_method": "cilogon",
         }
@@ -778,9 +907,9 @@ class BrokerHelpers:
         user = CILogonHelpers.get_user_from_account_info(account_info)
         try:
             profile_response = UserDataAPIClient.fetch_user_profile(sub_id=sub)
-        except requests.Timeout as e:
+        except requests.Timeout:
             profile_fetch_error = "timeout"
-        except requests.RequestException as e:
+        except requests.RequestException:
             profile_fetch_error = "failure"
 
         # If we have an external subject but no local user yet, ask Profiles
@@ -809,7 +938,13 @@ class BrokerHelpers:
         return user, final_redirect
 
 
-def update_nested_dict(original, update):
+def update_nested_dict(original: dict, update: dict) -> dict[str, Any]:
+    """Recursively updates values in a nested dict based on an update dict.
+
+    Returns:
+        dict[str, Any]: The same `original` input dict mutated in place.
+          During recursion leaf values may be any type.
+    """
     for key, value in update.items():
         if isinstance(value, dict):
             original[key] = update_nested_dict(original.get(key, {}), value)

@@ -5,7 +5,10 @@
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
+"""HTTP views for SSO broker flows and remote user-data webhooks."""
+
 import time
+from typing import Any, NoReturn
 from urllib.parse import urlencode
 
 from flask import (
@@ -13,7 +16,6 @@ from flask import (
     abort,
     g,
     jsonify,
-    make_response,
     redirect,
     request,
     url_for,
@@ -23,7 +25,7 @@ from flask import (
 )
 from flask.views import MethodView
 from flask_login import login_user
-from invenio_accounts.models import UserIdentity
+from invenio_accounts.models import User, UserIdentity
 from invenio_accounts.sessions import delete_user_sessions
 from invenio_db import db
 from invenio_queues.proxies import current_queues
@@ -47,14 +49,16 @@ from .errors import (
     UserDataRequestTimeout,
 )
 from .signals import remote_data_updated
-from .utils import CILogonHelpers, BrokerHelpers, safe_redirect_target
+from .utils import BrokerHelpers, CILogonHelpers, safe_redirect_target
 
 
-def sso_broker_login(next: str | None = None, silent: bool = False, **kwargs):
+def sso_broker_login(
+    next: str | None = None, silent: bool = False, **kwargs: Any
+) -> Response:
     """Redirect the user to the Profiles broker login endpoint.
 
-    Flask-Security will send us here as `security.login` and supplies the
-    final destination in the `next` query parameter. The invenio-remote-user-
+    Flask-Security will send us here as security.login and supplies the
+    final destination in the 'next' query parameter. The invenio-remote-user-
     -data-kcworks silent login check (in ext.py) also sends an anonymous
     user here before the request is handled.
 
@@ -69,7 +73,14 @@ def sso_broker_login(next: str | None = None, silent: bool = False, **kwargs):
         silent (bool): Whether the user should be offered a login page on Profiles
             if they do not have an existing session, or whether they should be
             silently returned without login.
+        **kwargs: Ignored; accepted for call compatibility.
 
+    Returns:
+        Response: A 302 redirect to the Profiles broker login or silent-login URL
+            with return_to and final_redirect query parameters.
+
+    Note:
+        Calls ``abort(500)`` if the broker URL is not configured.
     """
     broker_url = ""
     if silent:
@@ -96,7 +107,25 @@ def sso_broker_login(next: str | None = None, silent: bool = False, **kwargs):
 def _sso_broker_callback() -> Response:
     """Handle broker callback after explicit login or silent login.
 
-    Expects an encrypted `broker_token` query parameter.
+    Expects an encrypted broker_token query parameter, or a no_session
+    branch for silent login without a session.
+
+    Returns:
+        Response: A redirect to the validated final_redirect target. On
+            successful login, the broker retry cookie is cleared on the
+            response; on the no-session path, the retry cookie is set.
+
+    Raises:
+        BrokerTokenMissingError: If neither broker_token nor no_session
+            is present.
+        BrokerTokenDecryptionError: If the token cannot be decrypted.
+        BrokerPayloadExpiredError: If the token payload is expired.
+        BrokerExpiryValueError: If the expiry value is invalid.
+        BrokerNonceValidationError: If the nonce is missing or invalid.
+        BrokerPayloadProcessingError: If the user cannot be resolved from
+            the payload.
+        UserDataRequestTimeout: Propagated from profile fetch.
+        UserDataRequestFailed: Propagated from profile fetch.
     """
     broker_token = request.args.get("broker_token")
     no_session = request.args.get("no_session")
@@ -149,17 +178,36 @@ def _sso_broker_callback() -> Response:
 def sso_broker_callback() -> Response:
     """Handle broker callback after explicit login or silent login.
 
-    Expects an encrypted `broker_token` query parameter.
+    Expects an encrypted broker_token query parameter (or silent-login
+    no_session flow). Maps broker errors to HTTP responses where
+    appropriate.
+
+    Returns:
+        Response: Same as _sso_broker_callback on success.
+
+    Raises:
+        BrokerTokenMissingError: Re-raised from the inner handler.
+        BrokerTokenDecryptionError: Re-raised from the inner handler.
+        BrokerPayloadExpiredError: Re-raised from the inner handler.
+        BrokerExpiryValueError: Re-raised from the inner handler.
+        BrokerNonceValidationError: Re-raised from the inner handler.
+
+    Note:
+        ``UserDataRequestTimeout`` and ``UserDataRequestFailed`` may propagate
+        from profile resolution inside ``_sso_broker_callback``.
+        BrokerPayloadProcessingError is not propagated; it becomes
+        ``abort(401)`` with ``REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE``.
+        Other exceptions may propagate for framework error handling.
     """
     try:
         return _sso_broker_callback()
-    except BrokerTokenMissingError as e:
+    except BrokerTokenMissingError:
         raise
-    except BrokerTokenDecryptionError as e:
+    except BrokerTokenDecryptionError:
         raise
     except BrokerPayloadExpiredError:
         raise
-    except BrokerExpiryValueError as e:
+    except BrokerExpiryValueError:
         raise
     except BrokerNonceValidationError:
         raise
@@ -198,9 +246,8 @@ class RemoteUserDataUpdateWebhook(MethodView):
 
     .. code-block:: bash
 
-        curl -k -X GET https://example.org/api/webhooks/users/update
-        --referer https://127.0.0.1 -H "Authorization: Bearer
-        my-token-string"
+        curl -k -X GET https://example.org/api/webhooks/users/update \
+            --referer https://127.0.0.1 -H 'Authorization: Bearer my-token-string'
 
     POST
 
@@ -209,17 +256,19 @@ class RemoteUserDataUpdateWebhook(MethodView):
     indicating that the notification has been accepted. This does NOT mean that the
     data has been updated within Invenio. It only means that the notification has
     been received. The actual data update is delegated to a background task which
-    may take some time to complete. Prefer ``/api/webhooks/users/update``; use of
-    ``/api/webhooks/user_data_update`` is deprecated.
+    may take some time to complete. Prefer /api/webhooks/users/update; use of
+    /api/webhooks/user_data_update is deprecated.
 
     .. code-block:: bash
 
-        curl -k -X POST https://example.org/api/webhooks/users/update
-        --referer https://127.0.0.1 -d '{"users": [{"id": "1234",
-        "event": "updated"}], "groups": [{"id": "4567", "event":
-        "created"}]}' -H "Content-type: application/json" -H
-        "Authorization: Bearer
-        my-token-string"
+        curl -k -X POST https://example.org/api/webhooks/users/update \
+            --referer https://127.0.0.1 \
+            -H 'Content-type: application/json' \
+            -H 'Authorization: Bearer my-token-string' \
+            -d '{
+                "users": [{"id": "1234", "event": "updated"}],
+                "groups": [{"id": "4567", "event": "created"}]
+            }'
 
 
     Signal content
@@ -235,10 +284,10 @@ class RemoteUserDataUpdateWebhook(MethodView):
     :updates: A JSON object whose top-level keys are the types of data object that
               have been updated on the remote IDP. The value of each key is an
               array of objects representing the updated entities. Each of these
-              objects should include an "id" property whose value is the entity's
+              objects should include an 'id' property whose value is the entity's
               string identifier on the remote IDP. It should also include the
-              "event" property, whose value is the type of event that is being
-              signalled (e.g., "updated", "created", "deleted", etc.).
+              'event' property, whose value is the type of event that is being
+              signalled (e.g., 'updated', 'created', 'deleted', etc.).
 
     For example:
 
@@ -263,16 +312,26 @@ class RemoteUserDataUpdateWebhook(MethodView):
 
     view_name = "remote_user_data_kcworks_webhook"
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Attach the Flask app logger for this view."""
         #  NOTE: The old static webhook token is no longer used.
         # The endpoint is protected by account-related OAuth tokens.
         self.logger = app.logger
 
-    def post(self):
+    def post(self) -> tuple[Response, int]:
         """Handle POST requests to the user data webhook endpoint.
 
         These are requests from a remote IDP indicating that user or group
         data has been updated on the remote server.
+
+        Returns:
+            tuple[Response, int]: JSON body and HTTP 202 when the
+            notification is accepted and queued.
+
+        Raises:
+            werkzeug.exceptions.BadRequest: Malformed JSON or no valid events.
+            werkzeug.exceptions.NotFound: Updates referenced unknown users/groups
+                in specific edge cases.
         """
         current_remote_user_data_service.require_permission(
             g.identity, "trigger_update"
@@ -376,7 +435,7 @@ class RemoteUserDataUpdateWebhook(MethodView):
             self.logger.error(f"Received malformed signal: {request.data}")
             raise BadRequest(
                 "Received malformed signal. Missing 'idp' or 'updates' keys."
-            )
+            ) from None
 
         return (
             jsonify({
@@ -387,17 +446,32 @@ class RemoteUserDataUpdateWebhook(MethodView):
             202,
         )
 
-    def get(self):
+    def get(self) -> tuple[Response, int]:
+        """Confirm the webhook endpoint is reachable.
+
+        Returns:
+            tuple[Response, int]: JSON body and HTTP 200.
+        """
         return (
             jsonify({"message": "Webhook receiver is active", "status": 200}),
             200,
         )
 
-    def put(self):
-        raise MethodNotAllowed
+    def put(self) -> NoReturn:
+        """Reject PUT; this endpoint only supports GET and POST.
 
-    def delete(self):
-        raise MethodNotAllowed
+        Raises:
+            MethodNotAllowed: Always, because PUT is not implemented.
+        """
+        raise MethodNotAllowed()
+
+    def delete(self) -> NoReturn:
+        """Reject DELETE; this endpoint only supports GET and POST.
+
+        Raises:
+            MethodNotAllowed: Always, because DELETE is not implemented.
+        """
+        raise MethodNotAllowed()
 
 
 class RemoteUserLogoutView(MethodView):
@@ -418,43 +492,54 @@ class RemoteUserLogoutView(MethodView):
     .. code-block:: bash
 
         curl -k -X GET https://example.org/api/webhooks/users/logout
-        --referer https://127.0.0.1 -H "Authorization: Bearer
-        my-token-string"
+        --referer https://127.0.0.1 -H 'Authorization: Bearer my-token-string'
 
     POST
 
-    An actual logout signal must be sent via a POST request with a `username` query
+    An actual logout signal must be sent via a POST request with a username query
     parameter. If the signal is received successfully, the endpoint will return a
-    202 response indicating that the user has been logged out.
+    200 response with a JSON body confirming that the user has been logged out.
 
     .. code-block:: bash
 
-        curl -k -X POST https://example.org/api/webhooks/users/logout?username=john_doe
-        --referer https://127.0.0.1 -H "Content-type: application/json" -H
-        "Authorization: Bearer my-token-string"
+        curl -k -X POST \
+            'https://example.org/api/webhooks/users/logout?username=john_doe' \
+            --referer https://127.0.0.1 \
+            -H 'Content-type: application/json' \
+            -H 'Authorization: Bearer my-token-string'
 
     Endpoint security
     -----------------
 
     The endpoint is secured by a Bearer token that must be provided in the
-    `Authorization` request header.
+    Authorization request header.
 
     """
 
     view_name = "remote_user_data_kcworks_logout_webhook"
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Attach the Flask app logger for this view."""
         self.logger = app.logger
 
-    def post(self):
+    def post(self) -> tuple[Response, int]:
         """Handle POST requests to the user logout webhook endpoint.
-        Invalidates all KCWorks sessions for the given user.
-        Returns 200 with confirmation when sessions were deleted, 404 when user
-        is unknown, or 500 on server error.
+
+        Invalidates KCWorks sessions for every matching user (single user or
+        list from KC username lookup).
 
         Authentication is by static bearer token, handled by the configurable
         routes in STATIC_API_TOKEN_ROUTES and the before_request handler
         registered by kcworks.ext.
+
+        Returns:
+            tuple[Response, int]: JSON body and status 200 when sessions
+            were invalidated, 404 when no user matches the username query
+            parameter, or 500 on persistence errors.
+
+        Raises:
+            werkzeug.exceptions.BadRequest: If the username query parameter
+                is missing.
         """
         current_remote_user_data_service.require_permission(
             g.identity, "trigger_logout_user"
@@ -466,6 +551,8 @@ class RemoteUserLogoutView(MethodView):
             raise BadRequest("Missing required query parameter: username")
 
         user = CILogonHelpers.try_get_user_by_kc_username(kc_username, "cilogon")
+        if isinstance(user, User):
+            user = [user]
         if not user:
             self.logger.info(
                 f"Logout webhook: no user found for username={kc_username!r}"
@@ -482,9 +569,10 @@ class RemoteUserLogoutView(MethodView):
             )
 
         try:
-            sessions_count = len(user.active_sessions)
-            delete_user_sessions(user)
-            db.session.commit()
+            for u in user:
+                sessions_count = len(u.active_sessions)
+                delete_user_sessions(u)
+                db.session.commit()
         except Exception as e:
             self.logger.error(
                 f"Logout webhook: failed to invalidate sessions for "
@@ -502,7 +590,7 @@ class RemoteUserLogoutView(MethodView):
 
         self.logger.debug(
             f"Logout webhook: invalidated {sessions_count} session(s) for user "
-            f"id={user.id} (username={kc_username!r})"
+            f"{user} (username={kc_username!r})"
         )
         return (
             jsonify({
@@ -512,18 +600,33 @@ class RemoteUserLogoutView(MethodView):
             200,
         )
 
-    def get(self):
+    def get(self) -> tuple[Response, int]:
+        """Confirm the logout webhook endpoint is reachable.
+
+        Returns:
+            tuple[Response, int]: JSON body and HTTP 200.
+        """
         return (
             jsonify({"message": "Webhook receiver is active", "status": 200}),
             200,
         )
 
-    def put(self):
-        raise MethodNotAllowed
+    def put(self) -> NoReturn:
+        """Reject PUT; this endpoint only supports GET and POST.
 
-    def delete(self):
-        raise MethodNotAllowed
+        Raises:
+            MethodNotAllowed: Always, because PUT is not implemented.
+        """
+        raise MethodNotAllowed()
+
+    def delete(self) -> NoReturn:
+        """Reject DELETE; this endpoint only supports GET and POST.
+
+        Raises:
+            MethodNotAllowed: Always, because DELETE is not implemented.
+        """
+        raise MethodNotAllowed()
 
 
 # NOTE: API/UI blueprint factories live in
-# `invenio_remote_user_data_kcworks.blueprints`.
+# invenio_remote_user_data_kcworks.blueprints.

@@ -788,7 +788,7 @@ class BrokerHelpers:
             max_age=cookie_ttl,
             httponly=True,
             secure=True,
-            samesite="Strict",
+            samesite="Lax",  # necessary for Safari & Firefox
         )
         return response
 

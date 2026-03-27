@@ -914,7 +914,7 @@ class BrokerHelpers:
 
         # If we have an external subject but no local user yet, ask Profiles
         # for the full profile and create the KCWorks user.
-        if not user and sub and profile_response.get("data"):
+        if not user and sub and profile_response and profile_response.data:
             user = CILogonHelpers.create_new_user(profile_response)
 
         # Ensure the external identity is linked (idempotent via suppression).

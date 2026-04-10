@@ -10,7 +10,7 @@ description = "An extension to draw user data from remote sources into the Knowl
 readme = "README.md"
 keywords = ["invenio", "inveniordm", "research", "users"]
 
-license = { file = "LICENSE" }
+license = "MIT"
 authors = [{ name = "Mesh Research", email = "scottia4@msu.edu" }]
 requires-python = ">=3.12"
 

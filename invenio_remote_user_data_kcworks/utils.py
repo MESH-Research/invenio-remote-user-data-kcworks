@@ -63,10 +63,10 @@ def safe_redirect_target(target: str | None = None, arg_name: str | None = None)
         str: The safe target for the redirect.
     """
     target = target if target else request.args.get(arg_name, "")
-    allowed_hosts = app.config.get("APP_ALLOWED_HOSTS") or []
+    allowed_hosts = app.config.get("TRUSTED_HOSTS") or []
 
     if not allowed_hosts:
-        app.logger.error("APP_ALLOWED_HOSTS not configred. Cannot validate redirects.")
+        app.logger.error("TRUSTED_HOSTS not configred. Cannot validate redirects.")
         return "/"
 
     for redirect_target in (target, request.referrer):

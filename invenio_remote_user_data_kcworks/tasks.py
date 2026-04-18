@@ -33,13 +33,15 @@ def do_user_data_update(
         remote_id: The ID of the user on the remote system.
 
     Returns:
-        A tuple containing
-        - the updated User object
-        - a dictionary of the updated user data (including only the changed
-          keys and values).
-        - A list of the updated user's group memberships.
-        - A dictionary of the changes to the user's group memberships (with
-          the keys "added_groups", "dropped_groups", and "unchanged_groups").
+        A four-tuple (indices 0–3):
+
+        0. The updated ``User`` object.
+        1. A dictionary of the updated user data (including only the changed
+           keys and values).
+        2. A list of the updated user's group memberships.
+        3. A dictionary of the changes to the user's group memberships (with
+           the keys ``added_groups``, ``dropped_groups``, and
+           ``unchanged_groups``).
     """
     with app.app_context():
         if not idp:
@@ -55,12 +57,12 @@ def do_user_data_update(
             service = current_remote_user_data_service
 
             # tuple: A tuple containing
-            #     1. The updated user object from the Invenio database. If an
+            #     0. The updated user object from the Invenio database. If an
             #     error is encountered, this will be None.
-            #     2. A dictionary of the updated user data (including only
+            #     1. A dictionary of the updated user data (including only
             #     the changed keys and values).
-            #     3. A list of the updated user's group memberships.
-            #     4. A dictionary of the changes to the user's group
+            #     2. A list of the updated user's group memberships.
+            #     3. A dictionary of the changes to the user's group
             #     memberships (with the keys "added_groups", "dropped_groups",
             #     and "unchanged_groups").
             user, updated_data, groups, groups_changes = (

@@ -10,6 +10,78 @@
 from flask import current_app as app
 
 
+class BrokerTokenMissingError(Exception):
+    """Exception raised if the login broker token is missing."""
+
+    def __init__(self, message=None, header=None):
+        message_fragment = message or "Missing broker_token parameter"
+        self.message = app.config.get(
+            "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
+        ).format(message=message_fragment)
+        self.header = header or "We couldn't log you in"
+        super().__init__(self.message)
+
+
+class BrokerTokenDecryptionError(Exception):
+    """Exception raised if the login broker token decryption fails."""
+
+    def __init__(self, message=None, header=None):
+        message_fragment = message or "Invalid broker_token"
+        self.message = app.config.get(
+            "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
+        ).format(message=message_fragment)
+        self.header = header or "We couldn't log you in"
+        super().__init__(self.message)
+
+
+class BrokerPayloadExpiredError(Exception):
+    """Exception raised if the broker payload has expired."""
+
+    def __init__(self, message=None, header=None):
+        message_fragment = message or "Expired broker payload"
+        self.message = app.config.get(
+            "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
+        ).format(message=message_fragment)
+        self.header = header or "We couldn't log you in"
+        super().__init__(self.message)
+
+
+class BrokerExpiryValueError(Exception):
+    """Exception raised if the broker payload expiry period is unreadable."""
+
+    def __init__(self, message=None, header=None):
+        message_fragment = message or "Invalid broker payload expiry value"
+        self.message = app.config.get(
+            "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
+        ).format(message=message_fragment)
+        self.header = header or "We couldn't log you in"
+        super().__init__(self.message)
+
+
+class BrokerNonceValidationError(Exception):
+    """Exception raised if the broker nonce validation fails."""
+
+    def __init__(self, message=None, header=None):
+        message_fragment = message or "Nonce validation failed"
+        self.message = app.config.get(
+            "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
+        ).format(message=message_fragment)
+        self.header = header or "We couldn't log you in"
+        super().__init__(self.message)
+
+
+class BrokerPayloadProcessingError(Exception):
+    """Exception raised if the broker payload can't be processed."""
+
+    def __init__(self, message=None, header=None):
+        message_fragment = message or "Problem processing broker payload"
+        self.message = app.config.get(
+            "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE"
+        ).format(message=message_fragment)
+        self.header = header or "We couldn't log you in"
+        super().__init__(self.message)
+
+
 class NoIDPFoundError(Exception):
     """Exception raised for errors in the input."""
 
@@ -49,7 +121,6 @@ class UserDataRequestFailed(Exception):
         self.message = app.config.get(
             "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_CONNECTION"
         ).format(message=message_fragment)
-        app.logger.debug(f"DEBUG: {self.message}")
         self.header = header or "We couldn't log you in"
         super().__init__(self.message)
 
@@ -60,6 +131,5 @@ class UserDataRequestTimeout(Exception):
         self.message = message or app.config.get(
             "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_TIMEOUT"
         ).format(message=message_fragment)
-        app.logger.debug(f"DEBUG: {self.message}")
         self.header = header or "We couldn't log you in"
         super().__init__(self.message)

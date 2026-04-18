@@ -1,23 +1,21 @@
 [build-system]
 build-backend = "setuptools.build_meta"
-requires = ["babel>2.8", "setuptools>=61", "wheel"]
+requires = ["setuptools>=61", "wheel"]
 
 [project]
 name = "invenio-remote-user-data-kcworks"
-version = "0.6.1-beta3"
-
+version = "1.0.0"
 description = "An extension to draw user data from remote sources into the Knowledge Commons Works InvenioRDM instance"
 readme = "README.md"
 keywords = ["invenio", "inveniordm", "research", "users"]
-
 license = "MIT"
 authors = [{ name = "Mesh Research", email = "scottia4@msu.edu" }]
 requires-python = ">=3.12"
-
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Web Environment",
   "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
   "Programming Language :: Python",
   "Programming Language :: Python :: 3 :: Only",
@@ -38,39 +36,32 @@ dependencies = [
   "invenio-search",
   "invenio-utilities-tuw",
   "marshmallow-utils>=0.12",           # EDTFLevel2DateString (used by invenio-rdm-records thesis)
-  "opensearch-dsl",
   "pydantic",
   "standard-pkg-resources",            # pkg_resources required by fs (transitive) at runtime
 ]
-
+optional-dependencies.dev = ["bumpver", "check-manifest", "pip-tools", "pipenv"]
 optional-dependencies.tests = [
-  "check-manifest",
   "coverage",
-  "invenio-stats-dashboard",
-  "pip-tools",
-  "pipenv",
   "pytest>=7.3.2",
   "pytest-invenio>=3.3,<4",
   "pytest-runner",
   "requests-mock",
 ]
-
 urls.Homepage = "https://github.com/MESH-Research/invenio-remote-user-data-kcworks"
-
 scripts.user-data = "invenio_remote_user_data_kcworks.cli:cli"
 entry-points."flask.commands".user-data = "invenio_remote_user_data_kcworks.cli:cli"
 entry-points."invenio_base.api_apps".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:InvenioRemoteUserData"
 entry-points."invenio_base.api_blueprints".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.views:create_api_blueprint"
-entry-points."invenio_base.api_finalize_app".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:finalize_app"
 entry-points."invenio_base.apps".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:InvenioRemoteUserData"
-entry-points."invenio_base.finalize_app".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:finalize_app"
+entry-points."invenio_base.blueprints".invenio_remote_user_data_kcworks_sso = "invenio_remote_user_data_kcworks.blueprints:create_sso_blueprint"
 entry-points."invenio_celery.tasks".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.tasks"
 entry-points."invenio_queues.queues".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.queues:declare_queues"
 
-[tool.uv.sources]
-invenio-group-collections-kcworks = { path = "../invenio-group-collections-kcworks", editable = true }
-invenio-stats-dashboard = { path = "../invenio-stats-dashboard", editable = true }
-invenio-communities = { path = "../invenio-communities", editable = true }
+[dependency-groups]
+dev = ["bumpver>=2025.1131"]
+
+[tool.uv]
+sources.invenio-group-collections-kcworks = { path = "../invenio-group-collections-kcworks", editable = true }
 
 [tool.ruff]
 target-version = "py312"
@@ -140,38 +131,6 @@ ignore = [
   ".vscode/*",
 ]
 
-[tool.pytest.ini_options]
-addopts = """
---ruff --doctest-modules
---log-cli-level=DEBUG
---ignore=app_data
---ignore=docs
---ignore=node_modules
---ignore=scripts
---ignore=tests/helpers
---ignore=site/kcworks/dependencies/invenio-communities
---ignore=site/kcworks/dependencies/invenio-group-collections-kcworks
---ignore=site/kcworks/dependencies/invenio-modular-deposit-form
---ignore=site/kcworks/dependencies/invenio-modular-detail-page
---ignore=site/kcworks/dependencies/invenio-rdm-records
---ignore=site/kcworks/dependencies/invenio-record-importer-kcworks
---ignore=site/kcworks/dependencies/invenio-remote-api-provisioner
---ignore=site/kcworks/dependencies/invenio-remote-user-data-kcworks
---ignore=site/kcworks/dependencies/invenio-vocabularies
---ignore=site/kcworks/dependencies/invenio-stats-dashboard
---ignore=site/kcworks/services/search/index_templates
---cov=invenio_remote_user_data_kcworks 
---cov-report=term-missing
-"""
-norecursedirs = []
-log_cli_level = "DEBUG"
-isort_show_files = true
-plugins = []
-testpaths = ["tests", "invenio_remote_user_data_kcworks"]
-
-[tool.coverage.run]
-omit = []
-
 [tool.mypy]
 python_version = "3.12"
 warn_return_any = true
@@ -187,52 +146,68 @@ warn_no_return = false
 ignore_missing_imports = true
 follow_imports = "skip"
 allow_untyped_globals = true
-exclude = ['^tests/']
+exclude = ["^tests/"]
 
-[tool.babel.compile_catalog]
-directory = "translations/"
-use-fuzzy = true
+[tool.pytest]
+ini_options.addopts = """
+--ruff --doctest-modules
+--ignore=docs
+--ignore=node_modules
+--ignore=scripts
+--ignore=tests/helpers
+--cov=invenio_remote_user_data_kcworks
+--cov-report=term-missing
+"""
+ini_options.norecursedirs = []
+ini_options.log_cli_level = "DEBUG"
+ini_options.isort_show_files = true
+ini_options.plugins = []
+ini_options.testpaths = ["tests", "invenio_remote_user_data_kcworks"]
 
-[tool.babel.extract_messages]
-copyright_holder = "Mesh Research"
-msgid_bugs_address = "scottia4@msu.edu"
-mapping-file = "translations/babel.ini"
-output-file = "translations/messages.pot"
-add-comments = "NOTE"
-
-[tool.babel.init_catalog]
-input-file = "translations/messages.pot"
-output-dir = "translations/"
-
-[tool.babel.update_catalog]
-input-file = "translations/messages.pot"
-output-dir = "translations/"
+[tool.coverage]
+run.omit = []
 
 [tool.bumpver]
-current_version = "0.6.1-beta3"
-version_pattern = "MAJOR.MINOR.PATCH[-TAGNUM]"
+current_version = "1.0.0"
+version_pattern = "MAJOR.MINOR.PATCH"
 commit_message = "Bumping version {old_version} -> {new_version}."
 tag_message = "{new_version}"
 tag_scope = "default"
 pre_commit_hook = ""
 post_commit_hook = ""
-commit = false
-tag = false
+commit = true
+tag = true
 push = false
-
-[tool.bumpver.file_patterns]
-"pyproject.toml" = ['^version = "{version}"', '^current_version = "{version}"']
-"README.md" = ['^Version {version}']
-VERSION = ['^"{version}"']
-"invenio_remote_user_data_kcworks/__init__.py" = ['^__version__ = "{version}"']
-
-[tool.pylsp.plugins.jedi]
-extra_paths = [
-  "../../..",  # kcworks (site/)
-  "../invenio-communities",
-  "../invenio-group-collections-kcworks",
-  "../invenio-stats-dashboard",
+file_patterns."pyproject.toml" = [
+  '^version = "{version}"',
+  '^current_version = "{version}"',
+]
+file_patterns."README.md" = ["^Version {version}"]
+file_patterns.VERSION = ['^"{version}"']
+file_patterns."invenio_remote_user_data_kcworks/__init__.py" = [
+  '^__version__ = "{version}"',
 ]
 
 [tool.pydocstyle]
 add_ignore = "D401"
+
+[tool.babel]
+compile_catalog.directory = "translations/"
+compile_catalog.use-fuzzy = true
+extract_messages.copyright_holder = "Mesh Research"
+extract_messages.msgid_bugs_address = "scottia4@msu.edu"
+extract_messages.mapping-file = "translations/babel.ini"
+extract_messages.output-file = "translations/messages.pot"
+extract_messages.add-comments = "NOTE"
+init_catalog.input-file = "translations/messages.pot"
+init_catalog.output-dir = "translations/"
+update_catalog.input-file = "translations/messages.pot"
+update_catalog.output-dir = "translations/"
+
+[tool.pylsp]
+plugins.jedi.extra_paths = [
+  "../../..",                             # kcworks (site/)
+  "../invenio-communities",
+  "../invenio-group-collections-kcworks",
+  "../invenio-stats-dashboard",
+]

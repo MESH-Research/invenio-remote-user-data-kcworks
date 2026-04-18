@@ -10,14 +10,12 @@
 import datetime
 import os
 from pprint import pformat
-from typing import Optional
+from typing import Any, Optional
 
 import requests
 
-# from pprint import pprint
 from flask import current_app
 
-# frm pprint import pformat
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import User
 from invenio_accounts.proxies import current_accounts
@@ -29,7 +27,9 @@ from invenio_queues.proxies import current_queues
 from invenio_records_resources.services import Service
 from werkzeug.local import LocalProxy
 
-from ..client import APIResponse, Profile, UserDataAPIClient
+from ..client import UserDataAPIClient
+from ..types import APIResponse, Profile
+from .group_roles import GroupRolesService
 from ..signals import remote_data_updated
 from ..tasks import do_group_data_update, do_user_data_update
 from ..utils import CILogonHelpers
@@ -345,7 +345,12 @@ class RemoteUserDataService(Service):
         remote_id: str,
         remote_data: APIResponse | None = None,
         **kwargs,
-    ) -> tuple[Optional[User], APIResponse | Profile | None, list[str], dict]:
+    ) -> tuple[
+        Optional[User],
+        dict[str, Any] | APIResponse | Profile | None,
+        list[str],
+        dict,
+    ]:
         """Main method to update user data from remote server.
 
         Parameters:
@@ -359,15 +364,22 @@ class RemoteUserDataService(Service):
             **kwargs: Additional keyword arguments to pass to the method.
 
         Returns:
-            tuple: A tuple containing
-                1. The updated user object from the Invenio database. If an
-                error is encountered, this will be None.
-                2. A dictionary of the updated user data (including only
-                the changed keys and values).
-                3. A list of the updated user's group memberships.
-                4. A dictionary of the changes to the user's group
-                memberships (with the keys "added_groups", "dropped_groups",
-                and "unchanged_groups").
+            tuple: A four-tuple:
+
+            0. User | None: The Invenio user after the update attempt, or
+               None if the update failed with an exception.
+            1. dict[str, Any] | APIResponse | Profile | None: On the
+               successful local-update path, the sparse user diff from
+               update_local_user_data (empty dict when no user fields changed);
+               structurally matches UserChangesDict in types.py. On
+               early-exit or error paths this may instead be the remote
+               APIResponse or Profile payload, or None when nothing
+               was returned.
+            2. list[str]: Final group role names after membership updates,
+               or an empty list when no group list was produced.
+            3. dict: Group delta with keys 'added_groups',
+               'dropped_groups', and 'unchanged_groups', or an empty dict on
+               error/early-exit paths that do not compute group changes.
 
         """
         self.require_permission(identity, "trigger_update")
@@ -420,12 +432,6 @@ class RemoteUserDataService(Service):
                     profile = remote_data.data[0].profile
                 except AttributeError:
                     profile = remote_data.results[0].profile
-
-                # update the user profile
-                if user.username != profile.username:
-                    user.username = profile.username
-                user.full_name = profile.name
-                user.email = profile.email
 
                 group_changes = CILogonHelpers.calculate_group_changes(profile, user)
                 user_changes, new_data = CILogonHelpers.calculate_user_changes(

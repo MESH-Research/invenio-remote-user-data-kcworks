@@ -1,5 +1,10 @@
 # Changes
 
+## 1.0.0 (2026-03-19)
+
+- First release of major rewrite to support Knowledge Commons' new IDMS based on Cilogon and the new KCProfiles app.
+- Includes update to use KCProfiles as a login broker for transparent SSO rather than communicating directly with cilogon.
+
 ## 0.6.1-beta3 (2025-02-25)
 
 - Fixed bug where user profile data was not being updated because comparison with initial data was not being made correctly.

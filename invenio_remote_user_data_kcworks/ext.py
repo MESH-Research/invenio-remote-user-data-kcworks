@@ -10,23 +10,16 @@
 import re
 
 import arrow
-from flask import current_app, session
-from flask_login import user_logged_in, user_logged_out
+from flask import Response, current_app, request, session
+from flask_login import current_user, user_logged_in, user_logged_out
 from invenio_accounts.models import User
 
 from . import config
 from .proxies import current_remote_user_data_service
 from .services.service import RemoteGroupDataService, RemoteUserDataService
 from .tasks import do_user_data_update
-from .views import (
-    authorized,
-    login,
-)
-
-OAUTH_ROUTE_REWRITES = {
-    "/oauth/login/<remote_app>/": login,
-    "/oauth/authorized/<remote_app>/": authorized,
-}
+from .utils import BrokerHelpers
+from .views import sso_broker_login
 
 
 def on_user_logged_out(_, user: User) -> None:
@@ -38,25 +31,8 @@ def on_user_logged_out(_, user: User) -> None:
 
 
 def on_user_logged_in(_, user: User) -> None:
-    """Update user data from remote server when current user is
-    changed.
-    """
-    # FIXME: Do we need this check now that we're using webhooks?
-
+    """Update user data from remote server when current user is changed."""
     with current_app.app_context():
-        # current_app.logger.debug(f"current_user: {current_user}")
-        # if self._data_is_stale(identity.id) and not self.update_in_progress:
-        # my_user_identity = UserIdentity.query.filter_by(
-        #     id_user=identity.id
-        # ).one_or_none()
-        # # will have a UserIdentity if the user has logged in via an IDP
-        # if my_user_identity is not None:
-        #     my_idp = my_user_identity.method
-        #     my_remote_id = my_user_identity.id
-
-        # TODO: For the moment we're not tracking the last update
-        # time because we're using logins and webhooks to trigger updates.
-        #
         if user.id:
             last_timestamp = session.get("user-data-updated", {}).get(user.id)
             last_updated = arrow.get(last_timestamp) if last_timestamp else None
@@ -104,9 +80,7 @@ class InvenioRemoteUserData:
             app (_type_): _description_
         """
         for k in dir(config):
-            if k.startswith("REMOTE_USER_DATA_"):
-                app.config.setdefault(k, getattr(config, k))
-            if k.startswith("COMMUNITIES_"):
+            if k.startswith(("REMOTE_USER_DATA_", "COMMUNITIES_", "SSO_BROKER_")):
                 app.config.setdefault(k, getattr(config, k))
 
     def init_services(self, app):
@@ -127,17 +101,46 @@ class InvenioRemoteUserData:
         user_logged_in.connect(on_user_logged_in, app)
         user_logged_out.connect(on_user_logged_out, app)
 
+        @app.before_request
+        def _sso_silent_login_check() -> Response | None:
+            """Attempt transparent SSO login for anonymous users.
 
-def finalize_app(app):
-    """Finalize app."""
-    for rule in app.url_map.iter_rules():
-        route_str = str(rule)
+            If the user is anonymous and the TTL cookie has expired (or is
+            absent), make a server-side request to the Profiles broker's
+            silent-login endpoint. If an active session is found, decrypt
+            the broker token, validate the nonce, and log the user in.
 
-        if route_str in OAUTH_ROUTE_REWRITES:
-            if rule.endpoint in app.view_functions:
-                app.view_functions[rule.endpoint] = OAUTH_ROUTE_REWRITES[route_str]
-            else:
-                app.logger.warning(
-                    f"Warning: Endpoint '{rule.endpoint}' not "
-                    f"found for overwriting route '{route_str}'"
-                )
+            Network errors or broker downtime are caught so they never
+            block the original request.
+
+            Returns:
+                Response | None: If the user is anonymous and hasn't recently
+                  checked for a Profiles login, returns a Flask redirect
+                  response to send the user to the silent Profiles login check.
+                  Otherwise, returns None.
+            """
+            app.logger.debug("CHECKING FOR SSO LOGIN")
+            if request.path.startswith((
+                "/static/",
+                "/api/",
+                "/sso/broker-callback/",
+            )) or request.path.rstrip("/").endswith("/sso/broker-callback"):
+                return
+
+            cu = current_user._get_current_object()
+            app.logger.debug(f"is_anonymous? {cu.is_anonymous}")
+            if not getattr(cu, "is_anonymous", False):
+                return
+
+            if BrokerHelpers.ready_for_login_broker_check():
+                app.logger.debug("ready_for_login_broker_check")
+                try:
+                    # NOTE: This must return the redirect response to the browser.
+                    # If we don't return it, the redirect is constructed but never sent
+                    # to the client, so the broker callback won't be hit.
+                    return sso_broker_login(next=request.url, silent=True)
+
+                except Exception:
+                    current_app.logger.exception(
+                        "Silent SSO login check failed unexpectedly"
+                    )

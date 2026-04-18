@@ -8,32 +8,88 @@
 """Utility functions for invenio-remote-user-data-kcworks."""
 
 import base64
+import contextlib
 import datetime
 import hashlib
 import json
 import os
+import time
 from pprint import pformat
+from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
 
 import invenio_oauthclient
-import jwt
 import requests
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from flask import current_app
+from flask import Response, request
+from flask import current_app as app
+from invenio_access.permissions import system_identity
 from invenio_accounts import current_accounts
+from invenio_accounts.errors import AlreadyLinkedError
 from invenio_accounts.models import User, UserIdentity
 from invenio_db import db
-from jwt.algorithms import RSAAlgorithm
+from uritools import uricompose, urisplit
 
-from .client import APIResponse, Profile, UserDataAPIClient
-from .errors import IDTokenInvalid
+from .client import UserDataAPIClient
+from .errors import UserDataRequestFailed, UserDataRequestTimeout
+from .proxies import current_remote_user_data_service
 from .services.group_roles import GroupRolesService
+from .types import (
+    AccountInfoDict,
+    APIResponse,
+    CalculatedUserDataDict,
+    GroupChangesDict,
+    Profile,
+    UpdateLocalUserDataResultDict,
+    UserChangesDict,
+)
+
+
+def safe_redirect_target(target: str | None = None, arg_name: str | None = None) -> str:
+    """Validate and normalize a redirect target to avoid open redirects.
+
+    If no redirect target is specified, returns the validated request referrer
+    if possible.
+
+    Default fallback is to return the root path ('/').
+
+    Arguments:
+        target (str|None): A url string for the redirect target.
+        arg_name (str|None): A string name for a request argument that carries the
+          redirect url.
+
+    Returns:
+        str: The safe target for the redirect.
+    """
+    target = target if target else request.args.get(arg_name, "")
+    allowed_hosts = app.config.get("APP_ALLOWED_HOSTS") or []
+
+    if not allowed_hosts:
+        app.logger.error("APP_ALLOWED_HOSTS not configred. Cannot validate redirects.")
+        return "/"
+
+    for redirect_target in (target, request.referrer):
+        if not redirect_target:
+            continue
+
+        redirect_uri = urisplit(redirect_target)
+        # Check if full url is allowed
+        if redirect_uri.host and redirect_uri.host in allowed_hosts:
+            return redirect_target
+        # Handle relative paths safely
+        elif redirect_uri.path:
+            return uricompose(
+                path=redirect_uri.getpath(),
+                query=redirect_uri.getquery(),
+                fragment=redirect_uri.getfragment(),
+            )
+
+    return "/"
 
 
 def extract_bearer_token(header_string: str) -> str:
-    """
-    Extract the actual bearer token from an Authorization header.
+    """Extract the actual bearer token from an Authorization header.
 
     Raises:
         ValueError: If the header string is None, malformed, or
@@ -67,7 +123,11 @@ class SecureParamEncoder:
         self.key = hashlib.sha256(shared_secret.encode()).digest()
 
     def encode(self, data: dict) -> str:
-        """Encrypt and encode data."""
+        """Encrypt and encode data.
+
+        Returns:
+            str: Encrypted data as a string.
+        """
         json_data = json.dumps(data).encode()
 
         # Generate random IV (init vector)
@@ -87,7 +147,11 @@ class SecureParamEncoder:
         return base64.urlsafe_b64encode(result).decode()
 
     def decode(self, encrypted_param: str) -> dict:
-        """Decrypt and decode data."""
+        """Decrypt and decode data.
+
+        Returns:
+            dict: The decrypted JSON data as a python dictionary.
+        """
         data = base64.urlsafe_b64decode(encrypted_param.encode())
 
         # Extract IV and encrypted data
@@ -136,71 +200,13 @@ class CILogonHelpers:
             return diff
 
     @staticmethod
-    def _get_cilogon_public_key(kid):
-        """Fetch the specific public key from CILogon's JWKS endpoint."""
-        timeout = current_app.config.get("IDMS_CILOGON_PUBLIC_KEY_TIMEOUT", 30)
-        jwks_url = "https://cilogon.org/oauth2/certs"
+    def build_association_url(id_token) -> str:
+        """Build the association URL.
 
-        try:
-            response = requests.get(jwks_url, timeout=timeout)
-            response.raise_for_status()
-            jwks = response.json()
-
-            # Find the key with matching kid (Key ID)
-            for key in jwks["keys"]:
-                if key["kid"] == kid:
-                    # Convert JWK to PEM format
-                    public_key = RSAAlgorithm.from_jwk(key)
-                    return public_key
-
-            raise ValueError(f"Key with kid '{kid}' not found in JWKS")
-
-        except requests.RequestException as e:
-            message = "Failed to fetch JWKS"
-            raise ValueError(message) from e
-
-    @staticmethod
-    def _verify_and_decode_cilogon_jwt(id_token, client_id):
-        """Verify and decode a CILogon JWT token."""
-        try:
-            # Get the key ID from the JWT header (without verification)
-            unverified_header = jwt.get_unverified_header(id_token)
-            kid = unverified_header["kid"]
-
-            # Fetch the corresponding public key
-            public_key = CILogonHelpers._get_cilogon_public_key(kid)
-
-            # Decode and verify the JWT
-            decoded_token = jwt.decode(
-                id_token,
-                public_key,
-                algorithms=["RS256"],
-                audience=f"cilogon:/client_id/{client_id}",
-                issuer="https://cilogon.org",
-                options={
-                    "verify_exp": True,  # Verify expiration
-                    "verify_aud": False,  # Verify audience
-                    "verify_iss": True,  # Verify issuer
-                },
-            )
-
-            return decoded_token
-
-        except jwt.ExpiredSignatureError as e:
-            raise IDTokenInvalid(message="Token has expired") from e
-        except jwt.InvalidAudienceError as e:
-            raise IDTokenInvalid(message="Invalid audience") from e
-        except jwt.InvalidIssuerError as e:
-            raise IDTokenInvalid(message="Invalid issuer") from e
-        except jwt.InvalidTokenError as e:
-            raise IDTokenInvalid(message="Invalid token") from e
-        except ValueError as e:
-            raise IDTokenInvalid(message=str(e)) from e
-
-    @staticmethod
-    def build_association_url(id_token):
-        """Build the association URL."""
-        base_url = current_app.config.get("IDMS_BASE_ASSOCIATION_URL")
+        Returns:
+            str: The url with encoded params as a string.
+        """
+        base_url = app.config.get("IDMS_BASE_ASSOCIATION_URL")
         params = {"userinfo": id_token}
 
         # encode the query string
@@ -221,8 +227,14 @@ class CILogonHelpers:
         ))
 
     @staticmethod
-    def _get_external_id(account_info):
-        """Get external id from account info."""
+    def _get_external_id(account_info: AccountInfoDict) -> dict[str, str] | None:
+        """Get external id from account info.
+
+        Returns:
+            dict[str, str]: A dictionary with 'id' and 'method' if the account
+              info contains the external account association.
+            None: If the account_info lacks the complete information.
+        """
         if all(k in account_info for k in ("external_id", "external_method")):
             return dict(
                 id=account_info["external_id"],
@@ -232,7 +244,7 @@ class CILogonHelpers:
 
     @staticmethod
     def get_user_from_account_info(
-        account_info: dict | None = None,
+        account_info: AccountInfoDict | None = None,
     ) -> User | None:
         """Retrieve user object for the given request.
 
@@ -255,11 +267,12 @@ class CILogonHelpers:
             }
 
         Parameters:
-            account_info (dict | None): The dictionary with the account info.
-                (Default: ``None``)
+            account_info (AccountInfoDict | None): External account payload
+                ('external_id', 'external_method', optional nested 'user').
+                (Default: None)
 
         Returns:
-            A :class:`invenio_accounts.models.User` instance or ``None``.
+            An invenio_accounts.models.User instance or None.
         """
         if not account_info:
             return None
@@ -267,7 +280,7 @@ class CILogonHelpers:
         # Try external ID first
         user = CILogonHelpers._try_get_user_by_external_id(account_info)
         if user:
-            current_app.logger.debug("User found by external ID (CILogon)")
+            app.logger.debug("User found by external ID (CILogon)")
             return user
 
         # Extract user profile safely
@@ -278,32 +291,45 @@ class CILogonHelpers:
             user_profile.get("identifier_orcid")
         )
         if user:
-            current_app.logger.debug("User found by ORCID")
+            app.logger.debug("User found by ORCID")
             return user
 
         # Try KC username lookup before email (more reliable)
+        kc_username = user_profile.get("identifier_kc_username")
         user = CILogonHelpers.try_get_user_by_kc_username(
-            user_profile.get("identifier_kc_username"),
+            kc_username,
             account_info.get("external_method"),
         )
-        if user:
-            current_app.logger.debug("User found by KC username")
+        # kc_username check can return a list of Users,
+        # in which case we log an error and continue.
+        if user and isinstance(user, User):
+            app.logger.debug("User found by KC username")
             return user
+        elif isinstance(user, list):
+            app.logger.error(f"Multiple users found with KC username {kc_username}")
 
         # Try email lookup
         email = account_info.get("user", {}).get("email")
+        app.logger.debug(pformat(account_info))
         user = CILogonHelpers._try_get_user_by_email(email)
         if user:
-            current_app.logger.debug("User found by email")
+            app.logger.debug("User found by email")
+            app.logger.debug(user.id)
+            app.logger.debug(user.email)
             return user
 
-        current_app.logger.debug("No user found for account info.")
+        app.logger.debug("No user found for account info.")
 
         return None
 
     @staticmethod
-    def _try_get_user_by_external_id(account_info: dict) -> User | None:
-        """Try to get user by external ID."""
+    def _try_get_user_by_external_id(account_info: AccountInfoDict) -> User | None:
+        """Try to get user by external ID.
+
+        Returns:
+            User: A matching User when one exists.
+            None: None when no matching user exists.
+        """
         try:
             external_id = CILogonHelpers._get_external_id(account_info)
             if external_id:
@@ -317,7 +343,12 @@ class CILogonHelpers:
 
     @staticmethod
     def _try_get_user_by_orcid(orcid: str | None) -> User | None:
-        """Try to get user by ORCID."""
+        """Try to get user by ORCID.
+
+        Returns:
+            User: A matching User when one exists.
+            None: None when no matching user exists.
+        """
         if not orcid:
             return None
 
@@ -332,10 +363,17 @@ class CILogonHelpers:
     @staticmethod
     def try_get_user_by_kc_username(
         kc_username: str | None, external_method: str | None
-    ) -> User | None:
-        """Try to get user by KC username."""
-        current_app.logger.debug(
-            f"in try_get_user_by_kc_username: looking for {kc_username} with {external_method}"
+    ) -> User | list[User] | None:
+        """Try to get user by KC username.
+
+        Returns:
+            User: if a matching user is found.
+            list[User]: if multiple matching users are found.
+            None: if no matching users are found.
+        """
+        app.logger.debug(
+            f"in try_get_user_by_kc_username: looking for {kc_username} with "
+            f"{external_method}"
         )
         if not kc_username:
             return None
@@ -344,36 +382,30 @@ class CILogonHelpers:
             # try profile field
             user = User.query.filter(
                 User._user_profile.op("->>")("identifier_kc_username") == kc_username
-            ).one_or_none()
-            current_app.logger.debug(f"user with kc id in profile field: {user}")
+            ).all()
+            app.logger.debug(f"user with kc id in profile field: {user}")
 
             # try legacy external identifier (used to use kc id as sub id)
             if external_method and not user:
                 user = UserIdentity.get_user("knowledgeCommons", kc_username)
-                current_app.logger.debug(
-                    f"user with kc id as legacy external id: {user}"
-                )
+                app.logger.debug(f"user with kc id as legacy external id: {user}")
 
             # try with username as a direct valid kc identifier
             if not user:
                 user = User.query.filter_by(username=f"{kc_username}").one_or_none()
-                current_app.logger.debug(f"user with username as kc id: {user}")
+                app.logger.debug(f"user with username as kc id: {user}")
 
             # try with kc prefix
             if external_method and not user:
                 user = User.query.filter_by(
                     username=f"knowledgeCommons-{kc_username}"
                 ).one_or_none()
-                current_app.logger.debug(
-                    f"user with username as kc id with prefix: {user}"
-                )
+                app.logger.debug(f"user with username as kc id with prefix: {user}")
             if external_method and not user:
                 user = User.query.filter_by(
                     username=f"knowledgecommons-{kc_username}"
                 ).one_or_none()
-                current_app.logger.debug(
-                    f"user with username as kc id with prefix: {user}"
-                )
+                app.logger.debug(f"user with username as kc id with prefix: {user}")
             if user:
                 return user
         except Exception:
@@ -382,7 +414,12 @@ class CILogonHelpers:
 
     @staticmethod
     def _try_get_user_by_email(email: str | None) -> User | None:
-        """Try to get user by email."""
+        """Try to get user by email.
+
+        Returns:
+            User: A matching User when one exists.
+            None: None when no matching user exists.
+        """
         if not email:
             return None
 
@@ -398,24 +435,21 @@ class CILogonHelpers:
     ) -> None:
         """Ensure that a user has a linked identity with the  external ID."""
         # TODO: deduplicate this function
-        current_app.logger.debug(
-            f"linking {user.id} with {external_method}, {external_id}"
-        )
+        app.logger.debug(f"linking {user.id} with {external_method}, {external_id}")
         existing_identity = UserIdentity.query.filter_by(
             method=external_method, id=external_id, id_user=user.id
         ).first()
-        current_app.logger.debug(f"existing_identity: {existing_identity}")
+        app.logger.debug(f"existing_identity: {existing_identity}")
 
         if existing_identity:
-            current_app.logger.debug("User already has identity linked to CILogon")
+            app.logger.debug("User already has identity linked to CILogon")
         else:
-            current_app.logger.debug("Creating new identity for CILogon")
-            # Create new UserIdentity
+            app.logger.debug("Creating new identity for CILogon")
             _ = UserIdentity.create(
                 user=user, method=external_method, external_id=external_id
             )
             db.session.commit()
-            current_app.logger.debug("New identity created")
+            app.logger.debug("New identity created")
 
     @staticmethod
     def _update_invenio_group_memberships(
@@ -459,40 +493,69 @@ class CILogonHelpers:
     @staticmethod
     def update_local_user_data(
         user: User,
-        new_data: dict,
-        user_changes: dict,
+        new_data: CalculatedUserDataDict,
+        user_changes: UserChangesDict,
         group_changes: dict,
         remote_service: str,
         **kwargs,
-    ) -> dict:
+    ) -> UpdateLocalUserDataResultDict:
         """Update Invenio user data for the supplied identity.
 
         Parameters:
             user (User): The user to be updated.
-            new_data (dict): The new user data.
-            user_changes (dict): The changes to the user data.
-            group_changes (dict): The changes to the user's group memberships.
+            new_data (CalculatedUserDataDict): The new user data.
+            user_changes (UserChangesDict): Sparse diff of changed user fields.
+            group_changes (dict): Group membership delta with keys
+                'added_groups', 'dropped_groups', and 'unchanged_groups'.
             remote_service (str): The name of the remote service providing
                 the user data update.
+            **kwargs: Additional options forwarded to group-role update helpers.
 
         Returns:
-            dict: A dictionary of the updated user data with the keys "user"
-                  and "groups".
+            UpdateLocalUserDataResultDict: Result of applying updates. Has two
+              keys:
+
+            - user (UserChangesDict): Sparse diff of fields written to the
+                database when user_changes was non-empty; otherwise an empty dict.
+                May include top-level keys 'active', 'username', 'email',
+                'preferences', and nested 'user_profile' (see
+                UserChangesDict in types.py).
+            - groups (list[str]): Role names representing the user's group
+                memberships after this update (either from
+                _update_invenio_group_memberships or unchanged groups).
         """
-        updated_data = {}
+        updated_data: UpdateLocalUserDataResultDict = {"user": {}, "groups": []}
         if user_changes:
-            # if email changes, keep the old email as an
-            # `identifier_email` in the user_profile
-            user.username = new_data["username"]
+            if user.username != new_data["username"]:
+                # FIXME: Workaround for potential username collision
+                # with a legacy account.
+                if len(User.query.filter_by(username=new_data["username"]).all()) == 0:
+                    user.username = new_data["username"]
+                else:
+                    app.logger.error(
+                        f"Could not update username from remote for user {user.id}. "
+                        "Collision with existing KCWorks account."
+                    )
+
             user.user_profile = new_data["user_profile"]
             user.preferences = new_data["preferences"]
+
             if user.email != new_data["email"]:
-                user.user_profile["identifier_email"] = user.email
-            user.email = new_data["email"]
+                # FIXME: Workaround for potential email collision
+                # Shouldn't be necessary now that Profiles is sending
+                # a primary_email, but keeping this in case.
+                # if email changes, keep the old email as an
+                # `identifier_email` in the user_profile
+                if len(User.query.filter_by(email=new_data["email"]).all()) == 0:
+                    user.user_profile["identifier_email"] = user.email
+                    user.email = new_data["email"]
+                else:
+                    app.logger.error(
+                        f"Could not update email from remote for user {user.id}. "
+                        "Collision with existing KCWorks account."
+                    )
             current_accounts.datastore.commit()
             updated_data["user"] = user_changes
-        else:
-            updated_data["user"] = []
         if group_changes.get("added_groups") or group_changes.get("dropped_groups"):
             updated_data["groups"] = CILogonHelpers._update_invenio_group_memberships(
                 user, group_changes, **kwargs
@@ -503,8 +566,30 @@ class CILogonHelpers:
         return updated_data
 
     @staticmethod
-    def calculate_user_changes(profile: APIResponse, user):
-        """Calculate the changes between the existing user and remote data."""
+    def calculate_user_changes(
+        profile: APIResponse | Profile, user: User
+    ) -> tuple[UserChangesDict, CalculatedUserDataDict]:
+        """Calculate user-field changes from remote profile data.
+
+        Parameters:
+            profile (APIResponse | Profile): Remote profile payload as either a full
+                API response wrapper or a direct profile object.
+            user (User): Local Invenio user to compare against.
+
+        Returns:
+            tuple[UserChangesDict, CalculatedUserDataDict]: A pair of dicts.
+
+            0 (UserChangesDict): Sparse diff between the local
+               user state and the desired remote-backed state. Only keys that
+               differ are present.
+
+            1 (CalculatedUserDataDict): Full normalized data for a user after
+               a successful application of the changes: Has the keys 'active',
+               'username', 'email', 'preferences' (including visibility
+               flags), and 'user_profile' nested dict with 'full_name', 'name_parts'
+               (JSON string), 'identifier_kc_username', optional 'affiliations' and
+               'identifier_orcid', etc. (see CalculatedUserDataDict in types.py).
+        """
         initial_user_data = {
             "username": user.username,
             "preferences": user.preferences,
@@ -515,9 +600,9 @@ class CILogonHelpers:
 
         try:
             initial_user_data["user_profile"] = user.user_profile
-            current_app.logger.debug(f"Initial user profile: {user.user_profile}")
+            app.logger.debug(f"Initial user profile: {user.user_profile}")
         except ValueError:
-            current_app.logger.error(
+            app.logger.error(
                 f"Error fetching initial user profile data for user {user.id}. "
                 f"Some data in db was invalid. Starting fresh with incoming "
                 "data."
@@ -556,12 +641,24 @@ class CILogonHelpers:
         return user_changes, new_data
 
     @staticmethod
-    def calculate_group_changes(profile: APIResponse | Profile, user):
-        """Calculate the changes between the existing user and the data."""
+    def calculate_group_changes(
+        profile: APIResponse | Profile, user
+    ) -> GroupChangesDict:
+        """Calculate the changes between the existing user and the data.
+
+        Note that only roles related to Knowledge Commons groups are compared to
+        calculate the changes. These are recognized by the prefix
+        `knowledgeCommons---`.
+
+        Returns:
+            GroupChangesDict: Dictionary with three keys: `dropped_groups`,
+              `added_groups`, and `unchanged_groups`. Each value is a list of
+              group role names (strings).
+        """
         local_groups = [r.name for r in user.roles]
         remote_groups = []
 
-        group_changes = {
+        group_changes: GroupChangesDict = {
             "dropped_groups": [],
             "added_groups": [],
             "unchanged_groups": local_groups,
@@ -603,50 +700,13 @@ class CILogonHelpers:
         return group_changes
 
     @staticmethod
-    def validate_token_and_extract_sub(resp):
-        """Validate token and extract the sub field from the CILogon response."""
-        if not resp or "id_token" not in resp:
-            raise IDTokenInvalid(message="No id_token returned from code exchange.")
-        id_token = resp.get("id_token")
+    def build_account_info(api_result: APIResponse | None, sub: str) -> AccountInfoDict:
+        """Build an account_info dict that looks as expected.
 
-        # raises IDTokenInvalid for JWT validation errors
-        decoded_token = CILogonHelpers._verify_and_decode_cilogon_jwt(
-            id_token, os.getenv("CILOGON_CLIENT_ID")
-        )
-
-        if not decoded_token or "sub" not in decoded_token:
-            raise IDTokenInvalid
-
-        sub = decoded_token.get("sub")
-        return decoded_token, id_token, sub
-
-    @staticmethod
-    def update_token_data(resp, result):
-        """Update token data in the remote IDMS API.
-
-        The reason we do this is to ensure that the tokens are up to date
-        so that when the user does a logout, they can be logged out of
-        all services (Single Sign Out).
+        Returns:
+            AccountInfoDict: Structured dictionary of user info.
         """
-        try:
-            UserDataAPIClient.update_token_information(
-                resp.get("access_token"),
-                resp.get("refresh_token"),
-                result.data[0].profile.username,
-            )
-        except Exception:  # noqa: BLE001
-            # semi-silently fail if we can't update the token
-            current_app.logger.error(
-                "Failed to update token information in central API"
-            )
-
-    @staticmethod
-    def build_account_info(
-        api_result: APIResponse | None, sub: str
-    ) -> dict[str, str | dict]:
-        """Build an account_info dict that looks as expected."""
-        current_app.logger.debug(f"result: {pformat(api_result)}")
-        account_info = {
+        account_info: AccountInfoDict = {
             "external_id": sub,
             "external_method": "cilogon",
         }
@@ -662,9 +722,13 @@ class CILogonHelpers:
         return account_info
 
     @staticmethod
-    def create_new_user(result):
-        """Create a new user."""
-        current_app.logger.debug(f"Creating user: {result.data[0].profile.username}")
+    def create_new_user(result) -> User:
+        """Create a new user.
+
+        Returns:
+            User: An invenio_accounts User object.
+        """
+        app.logger.debug(f"Creating user: {result.data[0].profile.username}")
         user_info = {
             "username": result.data[0].profile.username,
             "email": result.data[0].profile.email,
@@ -677,7 +741,222 @@ class CILogonHelpers:
         return user
 
 
-def update_nested_dict(original, update):
+class BrokerHelpers:
+    """Helpers for SSO broker authentication."""
+
+    @staticmethod
+    def _get_broker_cookie_name() -> str:
+        """Retrieve the broker refresh cookie name from config.
+
+        Returns:
+            str: The configured refresh cookie name (default '_sso_checked')
+        """
+        return app.config.get("SSO_BROKER_RETRY_COOKIE_NAME", "_sso_checked")
+
+    @staticmethod
+    def _get_broker_cookie_ttl() -> int:
+        """Retrieve the broker refresh cookie ttl from config.
+
+        Returns:
+            str: The configured refresh cookie ttl in seconds (default 1800)
+        """
+        return app.config.get("SSO_BROKER_COOKIE_TTL", 1800)
+
+    @staticmethod
+    def ready_for_login_broker_check() -> bool:
+        """Check whether it's time to check broker for a login again.
+
+        Returns:
+            True if it's time to check the login broker for an active
+            session, False if it's not.
+        """
+        cookie_ttl = BrokerHelpers._get_broker_cookie_ttl()
+        cookie_name = BrokerHelpers._get_broker_cookie_name()
+        cookie_val = request.cookies.get(cookie_name)
+        if cookie_val:
+            # Server-side TTL validation so we don't rely solely on
+            # browser cookie expiry behavior.
+            try:
+                checked_at = int(float(cookie_val))
+                if time.time() - checked_at < int(cookie_ttl):
+                    return False
+            except (TypeError, ValueError):
+                # If the cookie value is unexpected, treat it as expired.
+                pass
+        return True
+
+    @staticmethod
+    def set_broker_refresh_cookie(response) -> Response:
+        """Set the broker refresh cookie.
+
+        Returns:
+            Response: A Flask Response object with new cookie set.
+        """
+        cookie_name = BrokerHelpers._get_broker_cookie_name()
+        cookie_ttl = BrokerHelpers._get_broker_cookie_ttl()
+        response.set_cookie(
+            cookie_name,
+            str(int(time.time())),
+            max_age=cookie_ttl,
+            httponly=True,
+            secure=True,
+            samesite="Lax",  # necessary for Safari & Firefox
+        )
+        return response
+
+    @staticmethod
+    def clear_broker_refresh_cookie(response) -> Response:
+        """Delete the broker retry cookie from the current response.
+
+        Returns:
+            Response: A Flask Response object with cookie deleted.
+        """
+        cookie_name = BrokerHelpers._get_broker_cookie_name()
+        response.delete_cookie(cookie_name)
+        return response
+
+    @staticmethod
+    def decrypt_broker_token(token: str) -> dict:
+        """Decrypt an AES-256-CBC broker token using the shared secret.
+
+        Args:
+            token: The base64url-encoded encrypted token string.
+
+        Returns:
+            The decrypted payload as a dict.
+
+        Raises:
+            ValueError: If the token cannot be decrypted or parsed.
+        """
+        secret = os.getenv("COMMONS_PROFILES_API_TOKEN")
+        if not secret:
+            raise ValueError("COMMONS_PROFILES_API_TOKEN environment variable not set")
+        encoder = SecureParamEncoder(secret)
+        return encoder.decode(token)
+
+    @staticmethod
+    def validate_nonce(nonce: str) -> bool:
+        """Validate a broker nonce via the Profiles microservice.
+
+        Args:
+            nonce: The nonce string extracted from the broker token payload.
+
+        Returns:
+            True if the nonce is valid, False otherwise.
+        """
+        verify_url = app.config.get("SSO_BROKER_VERIFY_NONCE_URL")
+        if not verify_url:
+            app.logger.error("SSO_BROKER_VERIFY_NONCE_URL not configured")
+            return False
+
+        bearer_token = os.getenv("COMMONS_PROFILES_API_TOKEN")
+        if not bearer_token:
+            app.logger.error("COMMONS_PROFILES_API_TOKEN not set")
+            return False
+
+        timeout = app.config.get("SSO_BROKER_SILENT_LOGIN_TIMEOUT", 3)
+        try:
+            resp = requests.post(
+                verify_url,
+                json={"nonce": nonce},
+                headers={
+                    "Authorization": f"Bearer {bearer_token}",
+                    "Content-Type": "application/json",
+                },
+                timeout=timeout,
+            )
+            resp.raise_for_status()
+            return resp.json().get("valid", False) is True
+        except Exception:
+            app.logger.exception("Nonce validation request failed")
+            return False
+
+    @staticmethod
+    def process_broker_payload(payload: dict) -> tuple[User | None, str | None]:
+        """Extract user identity, find/create th KCWorks user, and update their data.
+
+        Args:
+            payload: The decrypted broker token dict. Expected keys include
+                - kc_username (str)
+                - primary_email (str)
+                - nonce (str)
+                - final_redirect (str)
+                - userinfo (dict): With 'sub', 'email', etc.
+
+        Raises:
+            UserDataRequestFailed: If the user's data could not be retrieved from
+              the remote endpoint's response.
+            UserDataRequestTimeout: If the request to the remote endpoint times out.
+
+        Returns:
+            A tuple of (user, final_redirect). ``user`` is None if the payload
+            did not contain enough information to identify or create a user.
+        """
+        userinfo = payload.get("userinfo") or {}
+        sub = payload.get("sub") or userinfo.get("sub")
+        final_redirect = payload.get("final_redirect", "/")
+
+        if not sub:
+            return None, final_redirect
+
+        kc_username = payload.get("kc_username") or payload.get("username")
+        email = payload.get("primary_email") or userinfo.get("email")
+        orcid = userinfo.get("orcid") or payload.get("orcid")
+
+        account_info: AccountInfoDict = {
+            "external_id": sub,
+            "external_method": "cilogon",
+        }
+        if email or kc_username:
+            account_info["user"] = {
+                "email": email or "",
+                "profile": {
+                    "identifier_orcid": orcid or "",
+                    "identifier_kc_username": kc_username or "",
+                },
+            }
+
+        user = CILogonHelpers.get_user_from_account_info(account_info)
+        try:
+            profile_response = UserDataAPIClient.fetch_user_profile(sub_id=sub)
+        except requests.Timeout:
+            profile_fetch_error = "timeout"
+        except requests.RequestException:
+            profile_fetch_error = "failure"
+
+        # If we have an external subject but no local user yet, ask Profiles
+        # for the full profile and create the KCWorks user.
+        if not user and sub and profile_response and profile_response.data:
+            user = CILogonHelpers.create_new_user(profile_response)
+
+        # Ensure the external identity is linked (idempotent via suppression).
+        if user:
+            with contextlib.suppress(AlreadyLinkedError):
+                CILogonHelpers.link_user_to_oauth_identifier(user, "cilogon", sub)
+
+            current_remote_user_data_service.update_user_from_remote(
+                system_identity,
+                user.id,
+                "knowledgeCommons",
+                sub,
+                remote_date=profile_response,
+            )
+        else:
+            if profile_fetch_error == "timeout":
+                raise UserDataRequestTimeout
+            else:
+                raise UserDataRequestFailed
+
+        return user, final_redirect
+
+
+def update_nested_dict(original: dict, update: dict) -> dict[str, Any]:
+    """Recursively updates values in a nested dict based on an update dict.
+
+    Returns:
+        dict[str, Any]: The same `original` input dict mutated in place.
+          During recursion leaf values may be any type.
+    """
     for key, value in update.items():
         if isinstance(value, dict):
             original[key] = update_nested_dict(original.get(key, {}), value)

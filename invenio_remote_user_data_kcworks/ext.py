@@ -119,14 +119,20 @@ class InvenioRemoteUserData:
                   response to send the user to the silent Profiles login check.
                   Otherwise, returns None.
             """
-            app.logger.debug("CHECKING FOR SSO LOGIN")
-            if request.path.startswith((
-                "/static/",
-                "/api/",
-                "/sso/broker-callback/",
-            )) or request.path.rstrip("/").endswith("/sso/broker-callback"):
+            # Silent SSO targets the UI app: skip REST API, static assets, broker
+            # callback. Bare ``/api`` (no trailing slash) and ``SCRIPT_NAME=/api``
+            # mounts are handled separately so we do not match e.g. ``/apiculture``.
+            path = request.path or "/"
+            script = (request.script_root or "").rstrip("/")
+            if (
+                path.startswith(("/api/", "/static/", "/sso/broker-callback/"))
+                or path.rstrip("/") == "/api"
+                or script == "/api"
+                or path.rstrip("/").endswith("/sso/broker-callback")
+            ):
                 return
 
+            app.logger.debug("CHECKING FOR SSO LOGIN")
             cu = current_user._get_current_object()
             app.logger.debug(f"is_anonymous? {cu.is_anonymous}")
             if not getattr(cu, "is_anonymous", False):

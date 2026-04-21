@@ -7,22 +7,24 @@
 
 """Celery task to update user data from remote API."""
 
+import json
+from typing import Any
+
 from celery import shared_task
 from flask import current_app as app
 from invenio_access.permissions import system_identity
-from invenio_accounts.models import UserIdentity, User
+from invenio_accounts.models import UserIdentity
 from .proxies import (
     current_remote_user_data_service,
     current_remote_group_service,
 )
 from .errors import NoIDPFoundError
-from typing import Optional
 
 
-@shared_task(ignore_result=False)
+@shared_task(ignore_result=True)
 def do_user_data_update(
-    user_id: int, idp: Optional[str] = None, remote_id: Optional[str] = None, **kwargs
-) -> tuple[User, dict, list[str], dict]:
+    user_id: int, idp: str | None = None, remote_id: str | None = None, **kwargs
+) -> dict[str, Any]:
     """Perform a user metadata update.
 
     Args:
@@ -31,15 +33,9 @@ def do_user_data_update(
         remote_id: The ID of the user on the remote system.
 
     Returns:
-        A four-tuple (indices 0–3):
-
-        0. The updated ``User`` object.
-        1. A dictionary of the updated user data (including only the changed
-           keys and values).
-        2. A list of the updated user's group memberships.
-        3. A dictionary of the changes to the user's group memberships (with
-           the keys ``added_groups``, ``dropped_groups``, and
-           ``unchanged_groups``).
+        Plain dict summarizing the run (IDs, group names, group deltas, and
+        optional user-field changes when the service returns a dict). Safe for
+        Celery's JSON result backend; not the raw service tuple.
     """
     with app.app_context():
         if not idp:
@@ -54,21 +50,30 @@ def do_user_data_update(
         if idp:
             service = current_remote_user_data_service
 
-            # tuple: A tuple containing
-            #     0. The updated user object from the Invenio database. If an
-            #     error is encountered, this will be None.
-            #     1. A dictionary of the updated user data (including only
-            #     the changed keys and values).
-            #     2. A list of the updated user's group memberships.
-            #     3. A dictionary of the changes to the user's group
-            #     memberships (with the keys "added_groups", "dropped_groups",
-            #     and "unchanged_groups").
             user, updated_data, groups, groups_changes = (
                 service.update_user_from_remote(
                     system_identity, user_id, idp, remote_id
                 )
             )
-            return user, updated_data, groups, groups_changes
+            summary: dict[str, Any] = {
+                "user_id": user_id,
+                "idp": idp,
+                "remote_id": remote_id,
+                "completed_user_id": user.id if user is not None else None,
+                "groups": list(groups),
+                "group_changes": dict(groups_changes)
+                if isinstance(groups_changes, dict)
+                else {},
+            }
+            if isinstance(updated_data, dict):
+                summary["user_field_changes"] = updated_data
+            else:
+                summary["user_field_changes"] = None
+                summary["user_field_payload_type"] = (
+                    type(updated_data).__name__ if updated_data is not None else None
+                )
+            encoded = json.dumps(summary, default=str)
+            return json.loads(encoded)
         else:
             raise NoIDPFoundError(f"No IDP found for user {user_id}")
 

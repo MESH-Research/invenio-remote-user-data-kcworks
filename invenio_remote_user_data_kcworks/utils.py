@@ -905,10 +905,12 @@ class BrokerHelpers:
             }
 
         user = CILogonHelpers.get_user_from_account_info(account_info)
+        profile_fetch_error: str | None = None
         try:
             profile_response = UserDataAPIClient.fetch_user_profile(sub_id=sub)
         except requests.Timeout:
             profile_fetch_error = "timeout"
+            app.logger.error("profile_response on timeout:", profile_response)
         except requests.RequestException:
             profile_fetch_error = "failure"
 

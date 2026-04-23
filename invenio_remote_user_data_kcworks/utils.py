@@ -170,6 +170,78 @@ class SecureParamEncoder:
         return json.loads(json_data.decode())
 
 
+class UserIdentifierHelpers:
+    """Helper functions in handling user identifiers."""
+
+    @classmethod
+    def username_from_user(cls, user: User | None) -> str | None:
+        """Read the KC member name off a ``User``.
+
+        Prefers ``user.user_profile["identifier_kc_username"]`` (the
+        canonical Profiles-side username) and falls back to
+        ``user.username`` for legacy local accounts where the profile
+        field was never populated. Returns ``None`` when both are empty.
+        """
+        if user is None:
+            return None
+        profile = user.user_profile or {}
+        candidate = (profile.get("identifier_kc_username") or "").strip()
+        if candidate:
+            return candidate
+        fallback = (user.username or "").strip()
+        return fallback or None
+
+    @classmethod
+    def resolve_kc_username(
+        cls,
+        sub: str | None,
+        user: User | None,
+        *,
+        method: str | None = None,
+    ) -> str | None:
+        """Resolve a KC member name for status callback purposes.
+
+        The webhook payload's ``id`` is the OAuth ``sub`` (i.e. the value
+        stored as ``UserIdentity.id``), not the KC member name. To address
+        the Profiles status callback we need the actual member name, so
+        this helper performs the resolution chain:
+
+        1. If a local ``user`` is already in hand, read from it directly
+           (preferring ``user_profile["identifier_kc_username"]``, with
+           ``user.username`` as a legacy fallback).
+        2. Otherwise look up ``UserIdentity(method=..., id=sub)``,
+           hydrate the corresponding ``User``, and read the member name
+           off it.
+
+        Returns ``None`` when no member name can be resolved (e.g. an
+        early failure in ``do_user_created`` before the local user has
+        been created); callers should still send a status callback in
+        that case but with ``username=None``, addressed to the
+        ``unknown`` member-name slot in the URL.
+
+        Args:
+            sub: The OAuth ``sub`` from the webhook (``UserIdentity.id``).
+            user: The matched/created local user, or ``None``.
+            method: Optional ``UserIdentity.method`` to disambiguate the
+                sub lookup when no ``user`` is supplied.
+
+        Returns:
+            A non-empty KC member name, or ``None``.
+        """
+        if user is not None:
+            return cls.username_from_user(user)
+        if not sub:
+            return None
+        query = UserIdentity.query.filter_by(id=sub)
+        if method:
+            query = query.filter_by(method=method)
+        user_identity = query.first()
+        if user_identity is None:
+            return None
+        looked_up = User.query.get(user_identity.id_user)
+        return cls.username_from_user(looked_up)
+
+
 class CILogonHelpers:
     """CILogon helper functions."""
 
@@ -934,13 +1006,30 @@ class BrokerHelpers:
             with contextlib.suppress(AlreadyLinkedError):
                 CILogonHelpers.link_user_to_oauth_identifier(user, "cilogon", sub)
 
-            current_remote_user_data_service.update_user_from_remote(
-                system_identity,
-                user.id,
-                "knowledgeCommons",
-                sub,
-                remote_date=profile_response,
-            )
+            # Defensive wrap: ``update_user_from_remote`` no longer
+            # swallows exceptions internally (so the Celery tasks can
+            # apply their HTTP retry policies). At login time we never
+            # want a transient Profiles-side failure to block a user
+            # from logging in; the next webhook, the next login (after
+            # ``INVENIO_REMOTE_USER_DATA_UPDATE_INTERVAL``), or the
+            # periodic sync job will fill in any data that didn't get
+            # refreshed here.
+            try:
+                current_remote_user_data_service.update_user_from_remote(
+                    system_identity,
+                    user.id,
+                    "knowledgeCommons",
+                    sub,
+                    remote_date=profile_response,
+                )
+            except Exception as exc:
+                app.logger.warning(
+                    "Login-time user-data update failed for sub=%s: %r; "
+                    "login proceeds; next webhook/login/refresh will "
+                    "catch up.",
+                    sub,
+                    exc,
+                )
         else:
             if profile_fetch_error == "timeout":
                 raise UserDataRequestTimeout

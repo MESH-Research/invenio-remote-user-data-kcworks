@@ -6,12 +6,53 @@
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
+from enum import StrEnum
+
 from kombu import Exchange
 
 from .permissions import (
     CustomCommunitiesPermissionPolicy,
     RemoteUserDataPermissionPolicy,
 )
+
+
+class UserDataStatus(StrEnum):
+    """Outcome values for the Profiles works/status callback.
+
+    Sent in the ``status`` field of POSTs to
+    ``/api/v1/members/{member_name}/works/status``.
+
+    IMPORTANT: changing a member's value is a wire-protocol change and
+    must be coordinated with the Profiles side.
+    """
+
+    PROCESSED = "PROCESSED"
+    FAILED = "FAILED"
+
+
+class UserDataEvent(StrEnum):
+    """Event values for the Profiles works/status callback.
+
+    Sent in the ``event`` field of POSTs to
+    ``/api/v1/members/{member_name}/works/status``. Mirrors the
+    ``event`` property carried by each entry in the inbound
+    ``updates.users`` webhook payload, so the Profiles side can
+    correlate the status callback with the original signal it sent.
+
+    Only the two values KCWorks itself can report on are modelled
+    here; ``deleted`` is intentionally absent because KCWorks does
+    not act on ``users.deleted`` webhook events (see the API
+    documentation for the rationale) and therefore never sends a
+    status callback for one. The webhook view continues to accept
+    ``deleted`` as a valid wire-format string.
+
+    IMPORTANT: changing these values is a wire-protocol change and
+    must be coordinated with the Profiles side.
+    """
+
+    CREATED = "created"
+    UPDATED = "updated"
+
 
 REMOTE_USER_DATA_API_TIMEOUT = 5
 
@@ -37,6 +78,63 @@ REMOTE_USER_DATA_API_ENDPOINTS = {
 }
 
 REMOTE_USER_DATA_UPDATE_INTERVAL = 1  # 1 hour
+
+# Long-delay reschedule for the ``do_user_created`` and
+# ``do_user_data_update`` tasks after Celery's retries 
+# fail. 
+REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY = 3600
+
+# Names vocabulary sync
+# ----------------------
+
+#: Tag applied to Names records that represent a local KCWorks user.
+REMOTE_USER_DATA_NAMES_TAG_KCWORKS_USER = "kcworks-user"
+
+#: Tag applied to Names records that were materialized lazily from ORCID
+#: because an ORCID-identified contributor was cited in a draft, but the
+#: cited person is not (yet) a KCWorks user.
+REMOTE_USER_DATA_NAMES_TAG_KCWORKS_CITED = "kcworks-cited"
+
+#: When true, the periodic dedupe sweep will automatically merge a
+#: ``kcworks-cited`` Names record into a matching ``kc|...`` record when
+#: the two share the same ORCID iD. When false, candidate pairs are only
+#: written to the dedupe report for human review.
+REMOTE_USER_DATA_NAMES_AUTO_MERGE_ON_ORCID = True
+
+#: Filesystem path where the periodic dedupe sweep writes its report of
+#: candidate duplicate Names records that require human review. ``None``
+#: disables report writing.
+REMOTE_USER_DATA_NAMES_DEDUPE_REPORT_PATH = None
+
+#: Minimum SequenceMatcher ratio (0.0–1.0) for two Names records to be
+#: surfaced as a likely-duplicate candidate in the dedupe report.
+REMOTE_USER_DATA_NAMES_DEDUPE_SIMILARITY_THRESHOLD = 0.92
+
+# ORCID Public API integration
+# ----------------------------
+#: When true, the deposit form's creatibutor picker fans out to the
+#: backend ORCID proxy in parallel with the local Names search.
+REMOTE_USER_DATA_ORCID_PROXY_ENABLED = False
+
+#: Use the ORCID sandbox (``sandbox.orcid.org``) instead of the production
+#: ORCID API. Useful for local development.
+REMOTE_USER_DATA_ORCID_USE_SANDBOX = False
+
+#: Environment variable name from which the ORCID Public API client id is
+#: read at runtime.
+REMOTE_USER_DATA_ORCID_CLIENT_ID_ENV_VAR = "ORCID_PUBLIC_CLIENT_ID"
+
+#: Environment variable name from which the ORCID Public API client
+#: secret is read at runtime.
+REMOTE_USER_DATA_ORCID_CLIENT_SECRET_ENV_VAR = "ORCID_PUBLIC_CLIENT_SECRET"
+
+#: Soft daily quota (number of ORCID API calls) tracked by the rate
+#: limiter to avoid blowing through the Public API free tier.
+REMOTE_USER_DATA_ORCID_DAILY_QUOTA = 90_000
+
+#: Sustained per-second request budget for ORCID API calls. The Public
+#: API tier allows roughly 12 req/s; we leave headroom by default.
+REMOTE_USER_DATA_ORCID_REQUESTS_PER_SECOND = 8
 
 REMOTE_USER_DATA_MQ_EXCHANGE = Exchange(
     "user-data-updates",

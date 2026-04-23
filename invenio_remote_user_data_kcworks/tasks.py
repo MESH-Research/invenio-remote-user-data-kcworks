@@ -7,30 +7,277 @@
 
 """Celery task to update user data from remote API."""
 
-from typing import Optional
+import contextlib
+from datetime import UTC, datetime, timedelta
 
+import requests
 from celery import shared_task
+from celery.exceptions import MaxRetriesExceededError
 from flask import current_app as app
 from invenio_access.permissions import system_identity
+from invenio_accounts.errors import AlreadyLinkedError
 from invenio_accounts.models import User, UserIdentity
+from invenio_accounts.proxies import current_datastore as datastore
+from invenio_db import db
+from sqlalchemy.exc import IntegrityError
 
+from .client import UserDataAPIClient
+from .config import UserDataEvent, UserDataStatus
 from .errors import NoIDPFoundError
 from .proxies import (
     current_remote_group_service,
     current_remote_user_data_service,
 )
+from .services.names_sync import upsert_name_for_user
+from .utils import CILogonHelpers, UserIdentifierHelpers
 
 
-@shared_task(ignore_result=False)
-def do_user_data_update(
-    user_id: int, idp: Optional[str] = None, remote_id: Optional[str] = None, **kwargs
-) -> tuple[User, dict, list[str], dict]:
-    """Perform a user metadata update.
+def _retry_at_iso(seconds_from_now: int) -> str:
+    """Return an ISO 8601 UTC timestamp ``seconds_from_now`` in the future.
+
+    Used to populate the ``retry_at`` field on FAILED status callbacks
+    so the Profiles side can tell that another attempt is already
+    scheduled and avoid prompting an operator for manual remediation.
 
     Args:
+        seconds_from_now: Number of seconds in the future at which the
+            next attempt is scheduled.
+
+    Returns:
+        An ISO 8601 UTC timestamp (e.g. ``"2026-04-21T15:30:00+00:00"``).
+    """
+    return (datetime.now(UTC) + timedelta(seconds=seconds_from_now)).isoformat()
+
+
+def _send_status(
+    sub: str | None,
+    status: UserDataStatus,
+    event: UserDataEvent,
+    *,
+    user: User | None = None,
+    method: str | None = None,
+    retry_at: str | None = None,
+    note: str | None = None,
+) -> None:
+    """Best-effort wrapper around the Profiles status callback.
+
+    Resolves the KC member name from ``user`` (preferred) or from
+    ``UserIdentity(method, id=sub)`` and forwards the call to
+    :meth:`UserDataAPIClient.send_user_status_callback`, which
+    constructs the URL as
+    ``/api/v1/members/{username or "unknown"}/works/status`` and
+    sends both the resolved ``username`` (possibly ``null``) and the
+    raw ``sub`` in the body.
+
+    The callback is skipped only when ``sub`` is also missing (no
+    addressee at all is meaningful for the Profiles side). Otherwise
+    even an unresolvable sub gets a callback under the ``unknown``
+    member-name slot so the Profiles operator at least sees the
+    failure.
+
+    Args:
+        sub: The OAuth ``sub`` from the webhook
+            (``UserIdentity.id``), or ``None``.
+        status: ``UserDataStatus`` member.
+            ``UserDataStatus.PROCESSED`` or ``UserDataStatus.FAILED``.
+        event: ``UserDataEvent`` member, mirroring the inbound webhook
+            ``event`` field.
+        user: Optional local ``User`` to read the member name from
+            without an extra ``UserIdentity`` lookup.
+        method: Optional ``UserIdentity.method`` to disambiguate the
+            sub lookup when ``user`` is not supplied.
+        retry_at: Optional ISO 8601 UTC timestamp when a follow-up
+            attempt is already scheduled.
+        note: Optional freeform diagnostic string.
+    """
+    if not sub:
+        # No sub means the upstream side has nothing to correlate
+        # against either; bail silently.
+        return
+    username = UserIdentifierHelpers.resolve_kc_username(sub, user, method=method)
+    try:
+        UserDataAPIClient.send_user_status_callback(
+            sub=sub,
+            username=username,
+            status=status,
+            event=event,
+            retry_at=retry_at,
+            note=note,
+        )
+    except Exception:
+        # The client method already does inline retry + logging; a
+        # surprise exception here must not bubble out of the task body.
+        app.logger.warning(
+            "send_user_status_callback raised unexpectedly for "
+            "sub=%s username=%s status=%s event=%s",
+            sub,
+            username,
+            status,
+            event,
+            exc_info=True,
+        )
+
+
+def _handle_profiles_api_failure(
+    self,
+    exc: Exception,
+    *,
+    sub: str | None,
+    event: UserDataEvent,
+    method: str | None,
+    kwargs: dict,
+    reschedule_task,
+    reschedule_args: tuple,
+) -> None:
+    """Apply the shared HTTP retry + long-delay reschedule policy.
+
+    Both ``do_user_created`` and ``do_user_data_update`` need the same
+    behaviour when the Profiles API is unreachable
+    (``requests.RequestException`` / ``requests.Timeout``):
+
+    1. Send a FAILED status callback with a ``retry_at`` timestamp so
+       the Profiles operator can see another attempt is already
+       scheduled.
+    2. Trigger Celery's bounded retry mechanism with exponential
+       backoff (30s, 60s, 120s, 240s, 480s, capped at 600s). This
+       raises a ``Retry`` exception which propagates out of this
+       helper, out of the calling task, and Celery handles it.
+    3. When the bounded retry budget is exhausted Celery raises
+       ``MaxRetriesExceededError`` synchronously from ``self.retry``;
+       we catch it here, log an error, send a final FAILED callback
+       with a far-future ``retry_at``, and re-enqueue the task with a
+       long countdown
+       (``REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY``, default
+       1 hour, shared by both tasks).
+
+    Control flow
+    ------------
+
+    The helper either:
+
+    * raises ``Retry`` (the normal retry path -- exits the calling
+      task, Celery handles re-execution), **or**
+    * returns normally (the long-delay reschedule path -- the calling
+      task should ``return`` immediately so it doesn't try to
+      continue work after the reschedule has been queued).
+
+    Args:
+        self: The bound Celery task instance (caller passes its own
+            ``self``). Used for ``self.request.retries``,
+            ``self.retry``, ``self.max_retries``, and ``self.name``.
+        exc: The HTTP exception that triggered this call.
+        sub: The OAuth ``sub`` (``UserIdentity.id``) for the affected
+            user, used for the status callback. May be ``None``;
+            ``_send_status`` will skip silently in that case.
+        event: ``UserDataEvent`` member, mirroring the inbound webhook
+            ``event`` field.
+        method: The ``UserIdentity.method`` for resolving the sub
+            into a KC member name (status-callback addressing).
+        kwargs: The original ``**kwargs`` passed to the calling task,
+            forwarded to ``apply_async`` on the long-delay reschedule
+            so any caller-specified Celery options are preserved.
+        reschedule_task: The Celery task object to re-enqueue
+            (typically the calling task itself).
+        reschedule_args: Positional ``args`` tuple to pass to
+            ``reschedule_task.apply_async`` on the long-delay
+            reschedule path.
+    """
+    retries = self.request.retries or 0
+    countdown = min(30 * (2**retries), 600)
+    try:
+        _send_status(
+            sub,
+            UserDataStatus.FAILED,
+            event,
+            method=method,
+            retry_at=_retry_at_iso(countdown),
+            note=f"profiles_api:{type(exc).__name__}",
+        )
+        raise self.retry(exc=exc, countdown=countdown)
+    except MaxRetriesExceededError:
+        long_delay = int(
+            app.config.get(
+                "REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY",
+                3600,
+            )
+        )
+        app.logger.error(
+            "%s: exhausted %s retries for sub=%s (%r); rescheduling in %ss",
+            self.name,
+            self.max_retries,
+            sub,
+            exc,
+            long_delay,
+        )
+        _send_status(
+            sub,
+            UserDataStatus.FAILED,
+            event,
+            method=method,
+            retry_at=_retry_at_iso(long_delay),
+            note=(f"profiles_api:{type(exc).__name__}:retries_exhausted_rescheduled"),
+        )
+        reschedule_task.apply_async(
+            args=reschedule_args,
+            kwargs=kwargs,
+            countdown=long_delay,
+        )
+
+
+@shared_task(
+    bind=True,
+    ignore_result=False,
+    max_retries=5,
+)
+def do_user_data_update(
+    self,
+    user_id: int,
+    idp: str | None = None,
+    remote_id: str | None = None,
+    **kwargs,
+) -> tuple[User, dict, list[str], dict] | None:
+    """Perform a user metadata update.
+
+    On every resolution path this task sends a PROCESSED/FAILED 
+    callback response to the Profiles
+    ``/api/v1/members/{member_name}/works/status`` endpoint. The 
+    KC member name needed for the callback URL and body is resolved 
+    locally. When no member name can be resolved the callback still 
+    fires with ``unknown`` in place of the member username in the URL,
+    so that the Profiles operator can correlate by ``sub`` in the 
+    response body.
+
+    After update, we also keep the user's Names vocabulary record in
+    sync with their just-updated profile. Failures in this vocabulary sync
+    are logged but never break the user-data update path.
+
+    Failure handling
+    ----------------
+
+    Transient HTTP failures while fetching the Profiles API
+    (``requests.RequestException`` / ``requests.Timeout``) propagate
+    out of ``service.update_user_from_remote`` and are caught here.
+    They are routed through the shared
+    :func:`_handle_profiles_api_failure` helper, which applies the
+    same bounded exponential-backoff retry (30s, 60s, 120s, …, capped
+    at 600s) that ``do_user_created`` uses; on exhaustion the task is
+    re-enqueued with a long countdown
+    (``REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY``, shared
+    config key). Status callbacks include a ``retry_at`` timestamp so
+    the Profiles operator can see another attempt is pending.
+
+    Other unexpected exceptions trigger a FAILED callback and are
+    re-raised so Celery surfaces the error.
+
+    Args:
+        self: The bound Celery task instance, used by
+            :func:`_handle_profiles_api_failure` for ``self.retry``.
         user_id: The local ID of the user to update.
         idp: The remote service configuration to use for the update.
-        remote_id: The ID of the user on the remote system.
+        remote_id: The ID of the user on the remote system (the
+            OAuth ``sub``, also stored as ``UserIdentity.id``).
+        **kwargs: Reserved for future Celery options; forwarded
+            unchanged to the long-delay reschedule path.
 
     Returns:
         A four-tuple (indices 0–3):
@@ -42,6 +289,13 @@ def do_user_data_update(
         3. A dictionary of the changes to the user's group memberships (with
            the keys ``added_groups``, ``dropped_groups``, and
            ``unchanged_groups``).
+
+        ``None`` when the task has been re-enqueued for a long-delay
+        retry after exhausting its bounded retry budget.
+
+    Raises:
+        NoIDPFoundError: When ``idp`` cannot be inferred from a
+            ``UserIdentity`` for ``user_id``.
     """
     with app.app_context():
         if not idp:
@@ -53,26 +307,67 @@ def do_user_data_update(
                 idp = my_user_identity.method
                 remote_id = my_user_identity.id
 
-        if idp:
-            service = current_remote_user_data_service
+        if not idp:
+            user = datastore.get_user_by_id(user_id)
+            _send_status(
+                remote_id,
+                UserDataStatus.FAILED,
+                UserDataEvent.UPDATED,
+                user=user,
+                note="NoIDPFoundError",
+            )
+            raise NoIDPFoundError(f"No IDP found for user {user_id}")
 
-            # tuple: A tuple containing
-            #     0. The updated user object from the Invenio database. If an
-            #     error is encountered, this will be None.
-            #     1. A dictionary of the updated user data (including only
-            #     the changed keys and values).
-            #     2. A list of the updated user's group memberships.
-            #     3. A dictionary of the changes to the user's group
-            #     memberships (with the keys "added_groups", "dropped_groups",
-            #     and "unchanged_groups").
+        service = current_remote_user_data_service
+        try:
             user, updated_data, groups, groups_changes = (
                 service.update_user_from_remote(
                     system_identity, user_id, idp, remote_id
                 )
             )
-            return user, updated_data, groups, groups_changes
-        else:
-            raise NoIDPFoundError(f"No IDP found for user {user_id}")
+        except (requests.RequestException, requests.Timeout) as exc:
+            app.logger.warning(
+                "do_user_data_update: Profiles API failure for user_id=%s sub=%s: %r",
+                user_id,
+                remote_id,
+                exc,
+            )
+            _handle_profiles_api_failure(
+                self,
+                exc,
+                sub=remote_id,
+                event=UserDataEvent.UPDATED,
+                method=idp,
+                kwargs=kwargs,
+                reschedule_task=do_user_data_update,
+                reschedule_args=(user_id, idp, remote_id),
+            )
+            # Only reached on the long-delay reschedule branch; the
+            # normal retry branch raises ``Retry`` out of the helper.
+            return None
+        except Exception as exc:
+            user = datastore.get_user_by_id(user_id)
+            _send_status(
+                remote_id,
+                UserDataStatus.FAILED,
+                UserDataEvent.UPDATED,
+                user=user,
+                method=idp,
+                note=type(exc).__name__,
+            )
+            raise
+
+        if user is not None:
+            sync_user_to_names.delay(user.id)
+
+        _send_status(
+            remote_id,
+            UserDataStatus.PROCESSED,
+            UserDataEvent.UPDATED,
+            user=user,
+            method=idp,
+        )
+        return user, updated_data, groups, groups_changes
 
 
 @shared_task(ignore_result=False)
@@ -83,3 +378,287 @@ def do_group_data_update(idp, remote_id, **kwargs):
         service = current_remote_group_service
         service.update_group_from_remote(system_identity, idp, remote_id)
         return True
+
+
+@shared_task(
+    bind=True,
+    ignore_result=False,
+    max_retries=5,
+)
+def do_user_created(self, idp: str, oauth_id: str, **kwargs) -> int | None:
+    """Provision a local KCWorks user from a remote ``created`` webhook event.
+
+    Triggered from
+    :class:`~invenio_remote_user_data_kcworks.services.service.RemoteUserDataService`
+    when a ``users.created`` webhook event is consumed from the
+    ``user-data-updates`` queue. The remote profile is fetched from the
+    Profiles API by the OAuth ``sub`` (``oauth_id`` — also the value
+    stored as ``UserIdentity.id``), the local ``User`` is created
+    (or matched if it already exists by external id, ORCID, KC
+    username, or email), the ``UserIdentity`` link is ensured
+    (idempotent), and finally the standard update path is invoked to
+    populate ``user_profile`` fields and group memberships.
+
+    The task is idempotent: if a ``UserIdentity`` already exists for the
+    given ``(idp, oauth_id)`` pair the task delegates to
+    :func:`do_user_data_update` and returns the existing user id.
+
+    Failure handling
+    ----------------
+
+    Transient HTTP failures while talking to the Profiles API
+    (``requests.RequestException`` / ``requests.Timeout``) -- whether
+    they occur during the initial profile fetch or during the
+    follow-up ``update_user_from_remote`` call -- are routed through
+    the shared :func:`_handle_profiles_api_failure` helper. That
+    helper applies bounded exponential backoff (30s, 60s, 120s, …,
+    capped at 600s) for up to ``max_retries`` attempts; on exhaustion
+    it logs an error and re-enqueues the task with a long countdown
+    (``REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY``, default 1
+    hour, shared with ``do_user_data_update``) so provisioning will
+    eventually succeed once the Profiles service recovers.
+
+    Status callback
+    ---------------
+
+    On every resolution path (success, give-up after no profile data,
+    give-up after user could not be matched/created, scheduled retry,
+    or scheduled long-delay reschedule) this task sends a 
+    PROCESSED/FAILED callback response body to the Profiles
+    ``/api/v1/members/{member_name}/works/status`` endpoint. When a
+    follow-up attempt is already queued (a Celery retry or the
+    long-delay reschedule) the callback body includes a ``retry_at``
+    timestamp so the Profiles side can avoid prompting an operator 
+    while the next attempt is still pending.
+
+    Args:
+        self: The bound Celery task instance, used to drive
+            ``self.retry`` for transient Profiles API failures.
+        idp: The identity provider name (matches a key in
+            ``REMOTE_USER_DATA_API_ENDPOINTS``). For Knowledge Commons this
+            is ``"knowledgeCommons"``.
+        oauth_id: The external subject identifier (``sub``) for the
+            user on the remote IDP.
+        **kwargs: Reserved for future Celery options; currently ignored.
+
+    Returns:
+        The id of the matched/created local user, ``None`` when no
+        remote profile data was returned, or ``None`` when the
+        Profiles API was unreachable and the task has been rescheduled
+        for a future attempt.
+    """
+    with app.app_context():
+        if not oauth_id:
+            app.logger.warning("do_user_created: missing oauth_id; skipping")
+            # _send_status will skip silently when sub is empty.
+            _send_status(
+                None,
+                UserDataStatus.FAILED,
+                UserDataEvent.CREATED,
+                note="missing_oauth_id",
+            )
+            return None
+
+        auth_method = idp
+        if idp == "knowledgeCommons":
+            kc_idps = app.config.get("KC_REMOTE_IDPS") or []
+            if kc_idps:
+                auth_method = kc_idps[0]
+
+        existing = UserIdentity.query.filter_by(
+            id=oauth_id, method=auth_method
+        ).one_or_none()
+        if existing is not None:
+            app.logger.debug(
+                "do_user_created: UserIdentity already exists for "
+                f"sub={oauth_id} method={auth_method}; delegating to "
+                "do_user_data_update"
+            )
+            # Delegated path: do_user_data_update will fire its own
+            # PROCESSED/FAILED callback once it resolves, so we don't
+            # send one from here.
+            do_user_data_update.delay(existing.id_user, idp, oauth_id)
+            return existing.id_user
+
+        try:
+            profile_response = UserDataAPIClient.fetch_user_profile(sub_id=oauth_id)
+        except (requests.RequestException, requests.Timeout) as exc:
+            app.logger.warning(
+                f"do_user_created: failed to fetch profile for sub={oauth_id}: {exc!r}"
+            )
+            _handle_profiles_api_failure(
+                self,
+                exc,
+                sub=oauth_id,
+                event=UserDataEvent.CREATED,
+                method=auth_method,
+                kwargs=kwargs,
+                reschedule_task=do_user_created,
+                reschedule_args=(idp, oauth_id),
+            )
+            # Only reached on the long-delay reschedule branch.
+            return None
+
+        if not profile_response or not getattr(profile_response, "data", None):
+            app.logger.info(
+                f"do_user_created: no profile data returned for "
+                f"sub={oauth_id}; skipping user creation"
+            )
+            _send_status(
+                oauth_id,
+                UserDataStatus.FAILED,
+                UserDataEvent.CREATED,
+                method=auth_method,
+                note="no_profile_data",
+            )
+            return None
+
+        # Match an existing user if possible; a user may have previously 
+        # logged in with a different method.
+        profile = profile_response.data[0].profile
+        account_info = {
+            "external_id": oauth_id,
+            "external_method": auth_method,
+            "user": {
+                "email": profile.email or "",
+                "profile": {
+                    "identifier_orcid": profile.orcid or "",
+                    "identifier_kc_username": profile.username or "",
+                },
+            },
+        }
+        user = CILogonHelpers.get_user_from_account_info(account_info)
+        if user is None:
+            try:
+                user = CILogonHelpers.create_new_user(profile_response)
+            except IntegrityError:
+                # Race-loser path: a concurrent ``do_user_created`` for
+                # the same sub committed the ``User`` row first, so the
+                # upstream ``register_user`` INSERT hit the unique
+                # constraint on email/username. Roll back so the
+                # SQLAlchemy session is usable again, then re-match
+                # exactly once. If the re-match still produces no
+                # user, the IntegrityError isn't a race -- it's a
+                # data inconsistency we can't safely recover from in
+                # this task, so we FAIL cleanly without looping.
+                db.session.rollback()
+                app.logger.warning(
+                    "do_user_created: IntegrityError during "
+                    "create_new_user for sub=%s; re-matching after "
+                    "rollback",
+                    oauth_id,
+                )
+                user = CILogonHelpers.get_user_from_account_info(account_info)
+                if user is None:
+                    app.logger.error(
+                        "do_user_created: IntegrityError on create "
+                        "and re-match still produced no user for "
+                        "sub=%s; giving up",
+                        oauth_id,
+                    )
+                    _send_status(
+                        oauth_id,
+                        UserDataStatus.FAILED,
+                        UserDataEvent.CREATED,
+                        method=auth_method,
+                        note="integrity_error_unresolved",
+                    )
+                    return None
+
+        if user is None:
+            app.logger.warning(
+                f"do_user_created: could not find or create user for sub={oauth_id}"
+            )
+            _send_status(
+                oauth_id,
+                UserDataStatus.FAILED,
+                UserDataEvent.CREATED,
+                method=auth_method,
+                note="user_match_or_create_failed",
+            )
+            return None
+
+        with contextlib.suppress(AlreadyLinkedError):
+            CILogonHelpers.link_user_to_oauth_identifier(user, auth_method, oauth_id)
+
+        # Run the normal update path so user_profile fields and group
+        # memberships are populated from the same payload we already
+        # fetched. HTTP failures here get the same retry+reschedule 
+        # treatment. A re-run of this task will short-circuit through 
+        # the existing-identity branch and run ``do_user_data_update``.
+        try:
+            current_remote_user_data_service.update_user_from_remote(
+                system_identity,
+                user.id,
+                "knowledgeCommons" if idp == "knowledgeCommons" else idp,
+                oauth_id,
+                remote_data=profile_response,
+            )
+        except (requests.RequestException, requests.Timeout) as exc:
+            app.logger.warning(
+                "do_user_created: Profiles API failure during "
+                "update_user_from_remote for sub=%s: %r",
+                oauth_id,
+                exc,
+            )
+            _handle_profiles_api_failure(
+                self,
+                exc,
+                sub=oauth_id,
+                event=UserDataEvent.CREATED,
+                method=auth_method,
+                kwargs=kwargs,
+                reschedule_task=do_user_created,
+                reschedule_args=(idp, oauth_id),
+            )
+            # Only reached on the long-delay reschedule branch.
+            return user.id
+        except Exception as exc:
+            _send_status(
+                oauth_id,
+                UserDataStatus.FAILED,
+                UserDataEvent.CREATED,
+                user=user,
+                method=auth_method,
+                note=f"update_user_from_remote:{type(exc).__name__}",
+            )
+            raise
+
+        sync_user_to_names.delay(user.id)
+
+        _send_status(
+            oauth_id,
+            UserDataStatus.PROCESSED,
+            UserDataEvent.CREATED,
+            user=user,
+            method=auth_method,
+        )
+        return user.id
+
+
+@shared_task(ignore_result=True)
+def sync_user_to_names(user_id: int) -> bool:
+    """Mirror a single local user into the Names vocabulary.
+
+    Thin Celery wrapper around
+    :func:`invenio_remote_user_data_kcworks.services.names_sync.upsert_name_for_user`.
+    Used both as a side effect of the user create/update flows and
+    directly from the ``flask user-data names sync-now`` CLI helper.
+
+    Args:
+        user_id: The local Invenio user id to mirror.
+
+    Returns:
+        ``True`` when a Names record was upserted (or already up to
+        date), ``False`` when the user was missing or did not have
+        enough profile data to be mirrored.
+    """
+    with app.app_context():
+        user = User.query.get(user_id)
+        if user is None:
+            app.logger.warning(
+                f"sync_user_to_names: user {user_id} not found; skipping"
+            )
+            return False
+        result = upsert_name_for_user(user)
+        return result is not None

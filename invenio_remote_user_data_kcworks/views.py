@@ -270,6 +270,16 @@ class RemoteUserDataUpdateWebhook(MethodView):
                 "groups": [{"id": "4567", "event": "created"}]
             }'
 
+    Lazy provisioning
+    -----------------
+
+    We accept ``created`` events for users that do not yet have
+    a ``UserIdentity``, and treat ``updated`` events for unknown users
+    as ``created`` so that we still provision them. (The downstream task will fetch
+    the profile and create the local user.) An ``updated`` signal for an unknown
+    user usually means we missed the original ``created`` webhook for that user, 
+    or they were registered prior to the current IDMS system setup. We just
+    log a warning to flag the gap for operators in case a genuine problem emerges.
 
     Signal content
     --------------
@@ -288,6 +298,14 @@ class RemoteUserDataUpdateWebhook(MethodView):
               string identifier on the remote IDP. It should also include the
               'event' property, whose value is the type of event that is being
               signalled (e.g., 'updated', 'created', 'deleted', etc.).
+
+              For ``users`` events the ``id`` is the OAuth ``sub``
+              for the user on the remote IDP (i.e. the value stored
+              as ``UserIdentity.id``). The KC member name needed for
+              the ``/api/v1/members/{member_name}/works/status``
+              callback is resolved locally from the sub via
+              ``UserIdentity`` -> ``User.user_profile['identifier_kc_username']``
+              when the callback fires.
 
     For example:
 
@@ -363,11 +381,21 @@ class RemoteUserDataUpdateWebhook(MethodView):
                                     id=u["id"], method=auth_method
                                 ).one_or_none()
                                 if user_identity is None:
-                                    bad_users.append(u["id"])
-                                    self.logger.debug(
-                                        f"Received update signal from {idp} "
-                                        f"for unknown user: external id {u['id']}"
-                                    )
+                                    if u["event"] != "created":
+                                        self.logger.warning(
+                                            f"{idp} sent an {u['event']!r} "
+                                            f"event for unknown user (sub="
+                                            f"{u['id']!r}); converting to "
+                                            "'created' for lazy provisioning"
+                                        )
+                                    users.append(u["id"])
+                                    events.append({
+                                        "idp": idp,
+                                        "entity_type": e,
+                                        "event": "created",
+                                        "oauth_id": u["id"],
+                                        "user_id": None,
+                                    })
                                 else:
                                     users.append(u["id"])
                                     events.append({
@@ -392,10 +420,19 @@ class RemoteUserDataUpdateWebhook(MethodView):
                             )
                 else:
                     bad_entity_types.append(e)
+                    # Deliberately do NOT log the full ``data`` payload
+                    # here: the wire format is controlled by the remote
+                    # IDP and any future addition of PII (e.g. an email
+                    # field) would silently land in operational logs.
+                    # The configured set of valid entity types and the
+                    # offending key are sufficient for diagnosis.
                     self.logger.warning(
-                        f"{idp} Received update signal for unknown entity type: {e}"
+                        "%s received update signal for unknown entity "
+                        "type %r (configured types: %s)",
+                        idp,
+                        e,
+                        sorted(entity_types.keys()),
                     )
-                    self.logger.warning(data)
 
             if len(events) > 0:
                 current_queues.queues["user-data-updates"].publish(events)
@@ -421,8 +458,31 @@ class RemoteUserDataUpdateWebhook(MethodView):
                     self.logger.info(data["updates"])
                     raise NotFound("Updates attempted for unknown groups")
                 else:
-                    self.logger.warning(f"{idp} No valid events received")
-                    self.logger.warning(data["updates"])
+                    # Summarise rather than dump: log just the
+                    # ``(entity_type, event, id)`` triples we already
+                    # extract from each entry, plus the per-bucket count.
+                    # This avoids leaking any unexpected fields the remote
+                    # IDP might add to the payload in the future.
+                    summary = {
+                        bucket: {
+                            "count": len(items),
+                            "triples": [
+                                (
+                                    bucket,
+                                    str(it.get("event")),
+                                    str(it.get("id")),
+                                )
+                                for it in items
+                            ],
+                        }
+                        for bucket, items in (data.get("updates") or {}).items()
+                        if isinstance(items, list)
+                    }
+                    self.logger.warning(
+                        "%s no valid events received; summary=%s",
+                        idp,
+                        summary,
+                    )
                     raise BadRequest("No valid events received")
 
             # return error message after handling signals that are
@@ -432,7 +492,22 @@ class RemoteUserDataUpdateWebhook(MethodView):
                 # completely rejected
                 raise BadRequest
         except KeyError:  # request is missing 'idp' or 'updates' keys
-            self.logger.error(f"Received malformed signal: {request.data}")
+            # ``request.data`` is whatever bytes the caller posted; on a
+            # truly-malformed signal that could be anything (including a
+            # body mistakenly directed here from another endpoint). Log
+            # only a bounded excerpt with content metadata so the body
+            # itself cannot grow log lines unbounded or leak sensitive
+            # content from a misrouted POST.
+            raw_body = request.data or b""
+            excerpt = raw_body[:400]
+            self.logger.error(
+                "Received malformed signal (Content-Type=%r, "
+                "Content-Length=%d): %r%s",
+                request.content_type,
+                len(raw_body),
+                excerpt,
+                "..." if len(raw_body) > len(excerpt) else "",
+            )
             raise BadRequest(
                 "Received malformed signal. Missing 'idp' or 'updates' keys."
             ) from None

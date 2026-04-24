@@ -28,7 +28,7 @@ from werkzeug.local import LocalProxy
 
 from ..client import UserDataAPIClient
 from ..types import APIResponse, Profile
-from ..utils import CILogonHelpers
+from ..utils.auth import CILogonHelpers
 from .group_roles import GroupRolesService
 
 

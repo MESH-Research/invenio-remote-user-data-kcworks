@@ -49,7 +49,9 @@ from .errors import (
     UserDataRequestTimeout,
 )
 from .signals import remote_data_updated
-from .utils import BrokerHelpers, CILogonHelpers, safe_redirect_target
+from .utils.auth import CILogonHelpers
+from .utils.broker import BrokerHelpers
+from .utils.redirect import safe_redirect_target
 
 
 def sso_broker_login(
@@ -420,12 +422,6 @@ class RemoteUserDataUpdateWebhook(MethodView):
                             )
                 else:
                     bad_entity_types.append(e)
-                    # Deliberately do NOT log the full ``data`` payload
-                    # here: the wire format is controlled by the remote
-                    # IDP and any future addition of PII (e.g. an email
-                    # field) would silently land in operational logs.
-                    # The configured set of valid entity types and the
-                    # offending key are sufficient for diagnosis.
                     self.logger.warning(
                         "%s received update signal for unknown entity "
                         "type %r (configured types: %s)",
@@ -458,11 +454,6 @@ class RemoteUserDataUpdateWebhook(MethodView):
                     self.logger.info(data["updates"])
                     raise NotFound("Updates attempted for unknown groups")
                 else:
-                    # Summarise rather than dump: log just the
-                    # ``(entity_type, event, id)`` triples we already
-                    # extract from each entry, plus the per-bucket count.
-                    # This avoids leaking any unexpected fields the remote
-                    # IDP might add to the payload in the future.
                     summary = {
                         bucket: {
                             "count": len(items),
@@ -492,12 +483,6 @@ class RemoteUserDataUpdateWebhook(MethodView):
                 # completely rejected
                 raise BadRequest
         except KeyError:  # request is missing 'idp' or 'updates' keys
-            # ``request.data`` is whatever bytes the caller posted; on a
-            # truly-malformed signal that could be anything (including a
-            # body mistakenly directed here from another endpoint). Log
-            # only a bounded excerpt with content metadata so the body
-            # itself cannot grow log lines unbounded or leak sensitive
-            # content from a misrouted POST.
             raw_body = request.data or b""
             excerpt = raw_body[:400]
             self.logger.error(

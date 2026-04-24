@@ -17,6 +17,7 @@ from invenio_queues.proxies import current_queues
 
 from . import config
 from .proxies import current_remote_user_data_service
+from .services.names_sync import NamesSyncService
 from .services.service import RemoteGroupDataService, RemoteUserDataService
 from .signals import remote_data_updated
 from .tasks import (
@@ -24,7 +25,7 @@ from .tasks import (
     do_user_created,
     do_user_data_update,
 )
-from .utils import BrokerHelpers
+from .utils.broker import BrokerHelpers
 from .views import sso_broker_login
 
 
@@ -60,18 +61,18 @@ def on_user_logged_in(_, user: User) -> None:
 def on_remote_data_updated(_, events: list) -> None:
     """Drain the user-data-updates queue and dispatch by entity type.
 
-    Single consumer for the ``remote_data_updated`` signal: drains
-    ``current_queues.queues["user-data-updates"]`` once per signal
+    Single consumer for the `remote_data_updated` signal: drains
+    `current_queues.queues["user-data-updates"]` once per signal
     firing and routes each event to the appropriate Celery task
-    based on ``entity_type`` + ``event``.
+    based on `entity_type` + `event`.
 
-    Replaces the per-service ``__init__`` handlers that previously
+    Replaces the per-service `__init__` handlers that previously
     each drained the same queue, racing each other and silently
-    skipping events whose ``entity_type`` didn't match. Living in
-    ``ext.py`` keeps signal-subscription wiring out of the service
+    skipping events whose `entity_type` didn't match. Living in
+    `ext.py` keeps signal-subscription wiring out of the service
     classes themselves.
 
-    Unhandled event types (e.g. ``groups`` + ``deleted``, which is
+    Unhandled event types (e.g. `groups` + `deleted`, which is
     not yet implemented) are logged at warning level and skipped so
     a single unrecognised event can't abort queue draining for the
     rest of the batch.
@@ -79,7 +80,7 @@ def on_remote_data_updated(_, events: list) -> None:
     Args:
         _: The Flask app sender (positional arg required by Blinker;
             unused).
-        events: Forwarded by ``RemoteUserDataUpdateWebhook`` for
+        events: Forwarded by `RemoteUserDataUpdateWebhook` for
             logging/diagnostic context; the authoritative list of
             events to process is read from the queue itself.
     """
@@ -149,6 +150,7 @@ class InvenioRemoteUserData:
         """
         self.service = RemoteUserDataService(app, config=app.config)
         self.group_service = RemoteGroupDataService(app, config=app.config)
+        self.names_sync_service = NamesSyncService(app, config=app.config)
 
     def init_listeners(self, app):
         """Initialize listeners for the extension.

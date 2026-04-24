@@ -20,12 +20,11 @@ from invenio_accounts.models import User, UserIdentity
 from invenio_db import db
 
 from ..services.group_roles import GroupRolesService
-from ..types import (
-    AccountInfoDict,
-    APIResponse,
+from ..types.auth import AccountInfoDict
+from ..types.profiles_api import APIResponse, Profile
+from ..types.users import (
     CalculatedUserDataDict,
     GroupChangesDict,
-    Profile,
     UpdateLocalUserDataResultDict,
     UserChangesDict,
 )

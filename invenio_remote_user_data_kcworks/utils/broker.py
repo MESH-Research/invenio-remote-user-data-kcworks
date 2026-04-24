@@ -26,7 +26,7 @@ from invenio_accounts.models import User
 from ..client import UserDataAPIClient
 from ..errors import UserDataRequestFailed, UserDataRequestTimeout
 from ..proxies import current_remote_user_data_service
-from ..types import AccountInfoDict
+from ..types.auth import AccountInfoDict
 from .auth import CILogonHelpers
 
 

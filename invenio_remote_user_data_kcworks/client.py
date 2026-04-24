@@ -15,7 +15,7 @@ from flask import current_app as app
 from flask import request
 
 from .config import UserDataEvent, UserDataStatus
-from .types import APIResponse, LogoutRequest, Profile
+from .types.profiles_api import APIResponse, LogoutRequest, Profile
 
 
 class SessionBrokerAPIClient:
@@ -41,7 +41,7 @@ class SessionBrokerAPIClient:
 
         Returns:
             The JSON response dict if an active session was found (contains
-            `broker_token`), or None if there is no session or the request
+            ``broker_token``), or None if there is no session or the request
             fails.
         """
         silent_url = app.config.get("SSO_BROKER_SILENT_LOGIN_URL")
@@ -300,13 +300,6 @@ class UserDataAPIClient:
                     return True
 
                 except (AssertionError, KeyError):
-                    # Bound the body excerpt to match the sibling HTTP-
-                    # error log line below, and skip `exc_info`: the
-                    # only exceptions caught here are the structural
-                    # AssertionError/KeyError raised when parsing the
-                    # response, whose tracebacks are not operationally
-                    # useful and just risk pulling response bytes into
-                    # the log via local-variable repr.
                     app.logger.error(
                         "Profiles logout API returned unexpected "
                         "response logging out user %r: %s",
@@ -342,7 +335,7 @@ class UserDataAPIClient:
         """Notify the Profiles API that a user create/update job finished.
 
         POSTs to
-        `{IDMS_BASE_API_URL}members/{username or "unknown"}/works/status`
+        ``{IDMS_BASE_API_URL}members/{username or "unknown"}/works/status``
         with a Bearer-token-protected JSON body of the form::
 
             {
@@ -354,23 +347,23 @@ class UserDataAPIClient:
                 "note":     "<freeform diagnostic>"       // optional
             }
 
-        The webhook's `id` field is the OAuth `sub` (i.e. the
-        value stored as `UserIdentity.id`), not the KC member name,
+        The webhook's ``id`` field is the OAuth ``sub`` (i.e. the
+        value stored as ``UserIdentity.id``), not the KC member name,
         so callers must resolve the member name locally
-        (sub -> `UserIdentity` -> `User.user_profile`) before
+        (sub -> ``UserIdentity`` -> ``User.user_profile``) before
         invoking this method. When the resolution fails (e.g. an
-        early failure in `do_user_created` before the local user
-        has been created) callers may pass `username=None` and the
-        callback will still fire under the `unknown` URL slot, with
-        the raw `sub` in the body so the Profiles operator can
+        early failure in ``do_user_created`` before the local user
+        has been created) callers may pass ``username=None`` and the
+        callback will still fire under the ``unknown`` URL slot, with
+        the raw ``sub`` in the body so the Profiles operator can
         correlate.
 
-        The `event` value mirrors the `event` property carried by
-        each entry in the inbound `updates.users` webhook payload, so
+        The ``event`` value mirrors the ``event`` property carried by
+        each entry in the inbound ``updates.users`` webhook payload, so
         the Profiles side can correlate the status callback with the
         original signal it sent.
 
-        `retry_at` should be set when `status == UserDataStatus.FAILED`
+        ``retry_at`` should be set when ``status == UserDataStatus.FAILED``
         and the Works task has scheduled (or auto-rescheduled) another
         attempt for that timestamp, so the Profiles side can avoid
         prompting an operator for manual remediation while a retry is
@@ -381,17 +374,17 @@ class UserDataAPIClient:
         Profiles outage block the underlying user-update task itself.
 
         Args:
-            sub: The OAuth `sub` from the webhook
-                (`UserIdentity.id`). Required; empty values
-                short-circuit to `False` with a warning.
+            sub: The OAuth ``sub`` from the webhook
+                (``UserIdentity.id``). Required; empty values
+                short-circuit to ``False`` with a warning.
             username: The KC member name resolved from the sub, or
-                `None` when no local user is known yet. Used to
-                construct the URL (falling back to `"unknown"`) and
+                ``None`` when no local user is known yet. Used to
+                construct the URL (falling back to ``"unknown"``) and
                 included verbatim in the body.
-            status: `UserDataStatus` member.
-                `UserDataStatus.PROCESSED` or `UserDataStatus.FAILED`.
-            event: `UserDataEvent` member, mirroring the inbound
-                webhook `event` field.
+            status: ``UserDataStatus`` member.
+                ``UserDataStatus.PROCESSED`` or ``UserDataStatus.FAILED``.
+            event: ``UserDataEvent`` member, mirroring the inbound
+                webhook ``event`` field.
             retry_at: Optional ISO 8601 UTC timestamp of the next
                 scheduled attempt.
             note: Optional freeform diagnostic string (e.g. exception
@@ -401,8 +394,8 @@ class UserDataAPIClient:
             timeout: Per-request timeout in seconds (default 5).
 
         Returns:
-            `True` when the callback was accepted (HTTP 2xx) on any
-            attempt, `False` otherwise.
+            ``True`` when the callback was accepted (HTTP 2xx) on any
+            attempt, ``False`` otherwise.
         """
         if not sub:
             app.logger.warning(
@@ -441,8 +434,8 @@ class UserDataAPIClient:
 
         member_slug = (username or "").strip() or "unknown"
         url = f"{base_api_url}members/{member_slug}/works/status"
-        # `StrEnum` members serialise as their bare string value via
-        # `json.dumps`, so the wire format is unchanged.
+        # ``StrEnum`` members serialise as their bare string value via
+        # ``json.dumps``, so the wire format is unchanged.
         body: dict[str, str | None] = {
             "username": (username or None),
             "sub": sub,

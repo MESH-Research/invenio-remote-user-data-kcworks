@@ -27,7 +27,7 @@ from invenio_records_resources.services import Service
 from werkzeug.local import LocalProxy
 
 from ..client import UserDataAPIClient
-from ..types import APIResponse, Profile
+from ..types.profiles_api import APIResponse, Profile
 from ..utils.auth import CILogonHelpers
 from .group_roles import GroupRolesService
 

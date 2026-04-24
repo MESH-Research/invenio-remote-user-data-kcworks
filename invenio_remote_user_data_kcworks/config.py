@@ -19,8 +19,8 @@ from .permissions import (
 class UserDataStatus(StrEnum):
     """Outcome values for the Profiles works/status callback.
 
-    Sent in the ``status`` field of POSTs to
-    ``/api/v1/members/{member_name}/works/status``.
+    Sent in the `status` field of POSTs to
+    `/api/v1/members/{member_name}/works/status`.
 
     IMPORTANT: changing a member's value is a wire-protocol change and
     must be coordinated with the Profiles side.
@@ -30,21 +30,45 @@ class UserDataStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class KCNamesTag(StrEnum):
+    """Discriminator tags applied to KCWorks-managed Names records.
+
+    The Names vocabulary is shared with bulk-loaded data and other
+    sources, so we tag every record we write to be able to tell ours
+    apart at lookup, merge, and dedupe time. The two values below are
+    the only tags `NamesSyncService` writes; tag-based filtering
+    elsewhere in the codebase should reference these members rather
+    than the bare strings.
+
+    Members:
+        USER: A Names record that mirrors a local KCWorks user.
+        CITED: A Names record materialized lazily from ORCID because
+            an ORCID-identified contributor was cited in a draft but
+            is not (yet) a KCWorks user.
+
+    The string values are persisted on Names records in OpenSearch and
+    in the database, so changing them is a data-migration concern.
+    """
+
+    USER = "kcworks-user"
+    CITED = "kcworks-cited"
+
+
 class UserDataEvent(StrEnum):
     """Event values for the Profiles works/status callback.
 
-    Sent in the ``event`` field of POSTs to
-    ``/api/v1/members/{member_name}/works/status``. Mirrors the
-    ``event`` property carried by each entry in the inbound
-    ``updates.users`` webhook payload, so the Profiles side can
+    Sent in the `event` field of POSTs to
+    `/api/v1/members/{member_name}/works/status`. Mirrors the
+    `event` property carried by each entry in the inbound
+    `updates.users` webhook payload, so the Profiles side can
     correlate the status callback with the original signal it sent.
 
     Only the two values KCWorks itself can report on are modelled
-    here; ``deleted`` is intentionally absent because KCWorks does
-    not act on ``users.deleted`` webhook events (see the API
+    here; `deleted` is intentionally absent because KCWorks does
+    not act on `users.deleted` webhook events (see the API
     documentation for the rationale) and therefore never sends a
     status callback for one. The webhook view continues to accept
-    ``deleted`` as a valid wire-format string.
+    `deleted` as a valid wire-format string.
 
     IMPORTANT: changing these values is a wire-protocol change and
     must be coordinated with the Profiles side.
@@ -79,30 +103,27 @@ REMOTE_USER_DATA_API_ENDPOINTS = {
 
 REMOTE_USER_DATA_UPDATE_INTERVAL = 1  # 1 hour
 
-# Long-delay reschedule for the ``do_user_created`` and
-# ``do_user_data_update`` tasks after Celery's retries 
+# Long-delay reschedule for the `do_user_created` and
+# `do_user_data_update` tasks after Celery's retries 
 # fail. 
 REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY = 3600
 
 # Names vocabulary sync
 # ----------------------
-
-#: Tag applied to Names records that represent a local KCWorks user.
-REMOTE_USER_DATA_NAMES_TAG_KCWORKS_USER = "kcworks-user"
-
-#: Tag applied to Names records that were materialized lazily from ORCID
-#: because an ORCID-identified contributor was cited in a draft, but the
-#: cited person is not (yet) a KCWorks user.
-REMOTE_USER_DATA_NAMES_TAG_KCWORKS_CITED = "kcworks-cited"
+#
+# The discriminator tags applied to KCWorks-managed Names records are
+# defined as `KCNamesTag` above. They are intentionally not
+# exposed as Flask config values: changing them is a data-migration
+# concern, not a deployment knob.
 
 #: When true, the periodic dedupe sweep will automatically merge a
-#: ``kcworks-cited`` Names record into a matching ``kc|...`` record when
-#: the two share the same ORCID iD. When false, candidate pairs are only
-#: written to the dedupe report for human review.
+#: `kcworks-cited` Names record into a matching `kcworks-user`
+#: record when the two share the same ORCID iD. When false, candidate
+#: pairs are only written to the dedupe report for human review.
 REMOTE_USER_DATA_NAMES_AUTO_MERGE_ON_ORCID = True
 
 #: Filesystem path where the periodic dedupe sweep writes its report of
-#: candidate duplicate Names records that require human review. ``None``
+#: candidate duplicate Names records that require human review. `None`
 #: disables report writing.
 REMOTE_USER_DATA_NAMES_DEDUPE_REPORT_PATH = None
 
@@ -116,7 +137,7 @@ REMOTE_USER_DATA_NAMES_DEDUPE_SIMILARITY_THRESHOLD = 0.92
 #: backend ORCID proxy in parallel with the local Names search.
 REMOTE_USER_DATA_ORCID_PROXY_ENABLED = False
 
-#: Use the ORCID sandbox (``sandbox.orcid.org``) instead of the production
+#: Use the ORCID sandbox (`sandbox.orcid.org`) instead of the production
 #: ORCID API. Useful for local development.
 REMOTE_USER_DATA_ORCID_USE_SANDBOX = False
 

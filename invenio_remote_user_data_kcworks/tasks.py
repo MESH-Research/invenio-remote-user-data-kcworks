@@ -25,17 +25,17 @@ from .client import UserDataAPIClient
 from .config import UserDataEvent, UserDataStatus
 from .errors import NoIDPFoundError
 from .proxies import (
+    current_names_sync_service,
     current_remote_group_service,
     current_remote_user_data_service,
 )
-from .services.names_sync import upsert_name_for_user
-from .utils import CILogonHelpers, UserIdentifierHelpers
+from .utils.auth import CILogonHelpers, UserIdentifierHelpers
 
 
 def _retry_at_iso(seconds_from_now: int) -> str:
-    """Return an ISO 8601 UTC timestamp ``seconds_from_now`` in the future.
+    """Return an ISO 8601 UTC timestamp `seconds_from_now` in the future.
 
-    Used to populate the ``retry_at`` field on FAILED status callbacks
+    Used to populate the `retry_at` field on FAILED status callbacks
     so the Profiles side can tell that another attempt is already
     scheduled and avoid prompting an operator for manual remediation.
 
@@ -44,7 +44,7 @@ def _retry_at_iso(seconds_from_now: int) -> str:
             next attempt is scheduled.
 
     Returns:
-        An ISO 8601 UTC timestamp (e.g. ``"2026-04-21T15:30:00+00:00"``).
+        An ISO 8601 UTC timestamp (e.g. `"2026-04-21T15:30:00+00:00"`).
     """
     return (datetime.now(UTC) + timedelta(seconds=seconds_from_now)).isoformat()
 
@@ -61,31 +61,31 @@ def _send_status(
 ) -> None:
     """Best-effort wrapper around the Profiles status callback.
 
-    Resolves the KC member name from ``user`` (preferred) or from
-    ``UserIdentity(method, id=sub)`` and forwards the call to
-    :meth:`UserDataAPIClient.send_user_status_callback`, which
+    Resolves the KC member name from `user` (preferred) or from
+    `UserIdentity(method, id=sub)` and forwards the call to
+    `UserDataAPIClient.send_user_status_callback()`, which
     constructs the URL as
-    ``/api/v1/members/{username or "unknown"}/works/status`` and
-    sends both the resolved ``username`` (possibly ``null``) and the
-    raw ``sub`` in the body.
+    `/api/v1/members/{username or "unknown"}/works/status` and
+    sends both the resolved `username` (possibly `null`) and the
+    raw `sub` in the body.
 
-    The callback is skipped only when ``sub`` is also missing (no
+    The callback is skipped only when `sub` is also missing (no
     addressee at all is meaningful for the Profiles side). Otherwise
-    even an unresolvable sub gets a callback under the ``unknown``
+    even an unresolvable sub gets a callback under the `unknown`
     member-name slot so the Profiles operator at least sees the
     failure.
 
     Args:
-        sub: The OAuth ``sub`` from the webhook
-            (``UserIdentity.id``), or ``None``.
-        status: ``UserDataStatus`` member.
-            ``UserDataStatus.PROCESSED`` or ``UserDataStatus.FAILED``.
-        event: ``UserDataEvent`` member, mirroring the inbound webhook
-            ``event`` field.
-        user: Optional local ``User`` to read the member name from
-            without an extra ``UserIdentity`` lookup.
-        method: Optional ``UserIdentity.method`` to disambiguate the
-            sub lookup when ``user`` is not supplied.
+        sub: The OAuth `sub` from the webhook
+            (`UserIdentity.id`), or `None`.
+        status: `UserDataStatus` member.
+            `UserDataStatus.PROCESSED` or `UserDataStatus.FAILED`.
+        event: `UserDataEvent` member, mirroring the inbound webhook
+            `event` field.
+        user: Optional local `User` to read the member name from
+            without an extra `UserIdentity` lookup.
+        method: Optional `UserIdentity.method` to disambiguate the
+            sub lookup when `user` is not supplied.
         retry_at: Optional ISO 8601 UTC timestamp when a follow-up
             attempt is already scheduled.
         note: Optional freeform diagnostic string.
@@ -131,23 +131,23 @@ def _handle_profiles_api_failure(
 ) -> None:
     """Apply the shared HTTP retry + long-delay reschedule policy.
 
-    Both ``do_user_created`` and ``do_user_data_update`` need the same
+    Both `do_user_created` and `do_user_data_update` need the same
     behaviour when the Profiles API is unreachable
-    (``requests.RequestException`` / ``requests.Timeout``):
+    (`requests.RequestException` / `requests.Timeout`):
 
-    1. Send a FAILED status callback with a ``retry_at`` timestamp so
+    1. Send a FAILED status callback with a `retry_at` timestamp so
        the Profiles operator can see another attempt is already
        scheduled.
     2. Trigger Celery's bounded retry mechanism with exponential
        backoff (30s, 60s, 120s, 240s, 480s, capped at 600s). This
-       raises a ``Retry`` exception which propagates out of this
+       raises a `Retry` exception which propagates out of this
        helper, out of the calling task, and Celery handles it.
     3. When the bounded retry budget is exhausted Celery raises
-       ``MaxRetriesExceededError`` synchronously from ``self.retry``;
+       `MaxRetriesExceededError` synchronously from `self.retry`;
        we catch it here, log an error, send a final FAILED callback
-       with a far-future ``retry_at``, and re-enqueue the task with a
+       with a far-future `retry_at`, and re-enqueue the task with a
        long countdown
-       (``REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY``, default
+       (`REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY`, default
        1 hour, shared by both tasks).
 
     Control flow
@@ -155,31 +155,31 @@ def _handle_profiles_api_failure(
 
     The helper either:
 
-    * raises ``Retry`` (the normal retry path -- exits the calling
+    * raises `Retry` (the normal retry path -- exits the calling
       task, Celery handles re-execution), **or**
     * returns normally (the long-delay reschedule path -- the calling
-      task should ``return`` immediately so it doesn't try to
+      task should `return` immediately so it doesn't try to
       continue work after the reschedule has been queued).
 
     Args:
         self: The bound Celery task instance (caller passes its own
-            ``self``). Used for ``self.request.retries``,
-            ``self.retry``, ``self.max_retries``, and ``self.name``.
+            `self`). Used for `self.request.retries`,
+            `self.retry`, `self.max_retries`, and `self.name`.
         exc: The HTTP exception that triggered this call.
-        sub: The OAuth ``sub`` (``UserIdentity.id``) for the affected
-            user, used for the status callback. May be ``None``;
-            ``_send_status`` will skip silently in that case.
-        event: ``UserDataEvent`` member, mirroring the inbound webhook
-            ``event`` field.
-        method: The ``UserIdentity.method`` for resolving the sub
+        sub: The OAuth `sub` (`UserIdentity.id`) for the affected
+            user, used for the status callback. May be `None`;
+            `_send_status` will skip silently in that case.
+        event: `UserDataEvent` member, mirroring the inbound webhook
+            `event` field.
+        method: The `UserIdentity.method` for resolving the sub
             into a KC member name (status-callback addressing).
-        kwargs: The original ``**kwargs`` passed to the calling task,
-            forwarded to ``apply_async`` on the long-delay reschedule
+        kwargs: The original `**kwargs` passed to the calling task,
+            forwarded to `apply_async` on the long-delay reschedule
             so any caller-specified Celery options are preserved.
         reschedule_task: The Celery task object to re-enqueue
             (typically the calling task itself).
-        reschedule_args: Positional ``args`` tuple to pass to
-            ``reschedule_task.apply_async`` on the long-delay
+        reschedule_args: Positional `args` tuple to pass to
+            `reschedule_task.apply_async` on the long-delay
             reschedule path.
     """
     retries = self.request.retries or 0
@@ -240,11 +240,11 @@ def do_user_data_update(
 
     On every resolution path this task sends a PROCESSED/FAILED 
     callback response to the Profiles
-    ``/api/v1/members/{member_name}/works/status`` endpoint. The 
+    `/api/v1/members/{member_name}/works/status` endpoint. The 
     KC member name needed for the callback URL and body is resolved 
     locally. When no member name can be resolved the callback still 
-    fires with ``unknown`` in place of the member username in the URL,
-    so that the Profiles operator can correlate by ``sub`` in the 
+    fires with `unknown` in place of the member username in the URL,
+    so that the Profiles operator can correlate by `sub` in the 
     response body.
 
     After update, we also keep the user's Names vocabulary record in
@@ -255,15 +255,15 @@ def do_user_data_update(
     ----------------
 
     Transient HTTP failures while fetching the Profiles API
-    (``requests.RequestException`` / ``requests.Timeout``) propagate
-    out of ``service.update_user_from_remote`` and are caught here.
+    (`requests.RequestException` / `requests.Timeout`) propagate
+    out of `service.update_user_from_remote` and are caught here.
     They are routed through the shared
-    :func:`_handle_profiles_api_failure` helper, which applies the
+    `_handle_profiles_api_failure()` helper, which applies the
     same bounded exponential-backoff retry (30s, 60s, 120s, …, capped
-    at 600s) that ``do_user_created`` uses; on exhaustion the task is
+    at 600s) that `do_user_created` uses; on exhaustion the task is
     re-enqueued with a long countdown
-    (``REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY``, shared
-    config key). Status callbacks include a ``retry_at`` timestamp so
+    (`REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY`, shared
+    config key). Status callbacks include a `retry_at` timestamp so
     the Profiles operator can see another attempt is pending.
 
     Other unexpected exceptions trigger a FAILED callback and are
@@ -271,31 +271,31 @@ def do_user_data_update(
 
     Args:
         self: The bound Celery task instance, used by
-            :func:`_handle_profiles_api_failure` for ``self.retry``.
+            `_handle_profiles_api_failure()` for `self.retry`.
         user_id: The local ID of the user to update.
         idp: The remote service configuration to use for the update.
         remote_id: The ID of the user on the remote system (the
-            OAuth ``sub``, also stored as ``UserIdentity.id``).
+            OAuth `sub`, also stored as `UserIdentity.id`).
         **kwargs: Reserved for future Celery options; forwarded
             unchanged to the long-delay reschedule path.
 
     Returns:
         A four-tuple (indices 0–3):
 
-        0. The updated ``User`` object.
+        0. The updated `User` object.
         1. A dictionary of the updated user data (including only the changed
            keys and values).
         2. A list of the updated user's group memberships.
         3. A dictionary of the changes to the user's group memberships (with
-           the keys ``added_groups``, ``dropped_groups``, and
-           ``unchanged_groups``).
+           the keys `added_groups`, `dropped_groups`, and
+           `unchanged_groups`).
 
-        ``None`` when the task has been re-enqueued for a long-delay
+        `None` when the task has been re-enqueued for a long-delay
         retry after exhausting its bounded retry budget.
 
     Raises:
-        NoIDPFoundError: When ``idp`` cannot be inferred from a
-            ``UserIdentity`` for ``user_id``.
+        NoIDPFoundError: When `idp` cannot be inferred from a
+            `UserIdentity` for `user_id`.
     """
     with app.app_context():
         if not idp:
@@ -343,7 +343,7 @@ def do_user_data_update(
                 reschedule_args=(user_id, idp, remote_id),
             )
             # Only reached on the long-delay reschedule branch; the
-            # normal retry branch raises ``Retry`` out of the helper.
+            # normal retry branch raises `Retry` out of the helper.
             return None
         except Exception as exc:
             user = datastore.get_user_by_id(user_id)
@@ -386,36 +386,36 @@ def do_group_data_update(idp, remote_id, **kwargs):
     max_retries=5,
 )
 def do_user_created(self, idp: str, oauth_id: str, **kwargs) -> int | None:
-    """Provision a local KCWorks user from a remote ``created`` webhook event.
+    """Provision a local KCWorks user from a remote `created` webhook event.
 
     Triggered from
-    :class:`~invenio_remote_user_data_kcworks.services.service.RemoteUserDataService`
-    when a ``users.created`` webhook event is consumed from the
-    ``user-data-updates`` queue. The remote profile is fetched from the
-    Profiles API by the OAuth ``sub`` (``oauth_id`` — also the value
-    stored as ``UserIdentity.id``), the local ``User`` is created
+    `invenio_remote_user_data_kcworks.services.service.RemoteUserDataService`
+    when a `users.created` webhook event is consumed from the
+    `user-data-updates` queue. The remote profile is fetched from the
+    Profiles API by the OAuth `sub` (`oauth_id` — also the value
+    stored as `UserIdentity.id`), the local `User` is created
     (or matched if it already exists by external id, ORCID, KC
-    username, or email), the ``UserIdentity`` link is ensured
+    username, or email), the `UserIdentity` link is ensured
     (idempotent), and finally the standard update path is invoked to
-    populate ``user_profile`` fields and group memberships.
+    populate `user_profile` fields and group memberships.
 
-    The task is idempotent: if a ``UserIdentity`` already exists for the
-    given ``(idp, oauth_id)`` pair the task delegates to
-    :func:`do_user_data_update` and returns the existing user id.
+    The task is idempotent: if a `UserIdentity` already exists for the
+    given `(idp, oauth_id)` pair the task delegates to
+    `do_user_data_update()` and returns the existing user id.
 
     Failure handling
     ----------------
 
     Transient HTTP failures while talking to the Profiles API
-    (``requests.RequestException`` / ``requests.Timeout``) -- whether
+    (`requests.RequestException` / `requests.Timeout`) -- whether
     they occur during the initial profile fetch or during the
-    follow-up ``update_user_from_remote`` call -- are routed through
-    the shared :func:`_handle_profiles_api_failure` helper. That
+    follow-up `update_user_from_remote` call -- are routed through
+    the shared `_handle_profiles_api_failure()` helper. That
     helper applies bounded exponential backoff (30s, 60s, 120s, …,
-    capped at 600s) for up to ``max_retries`` attempts; on exhaustion
+    capped at 600s) for up to `max_retries` attempts; on exhaustion
     it logs an error and re-enqueues the task with a long countdown
-    (``REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY``, default 1
-    hour, shared with ``do_user_data_update``) so provisioning will
+    (`REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY`, default 1
+    hour, shared with `do_user_data_update`) so provisioning will
     eventually succeed once the Profiles service recovers.
 
     Status callback
@@ -425,25 +425,25 @@ def do_user_created(self, idp: str, oauth_id: str, **kwargs) -> int | None:
     give-up after user could not be matched/created, scheduled retry,
     or scheduled long-delay reschedule) this task sends a 
     PROCESSED/FAILED callback response body to the Profiles
-    ``/api/v1/members/{member_name}/works/status`` endpoint. When a
+    `/api/v1/members/{member_name}/works/status` endpoint. When a
     follow-up attempt is already queued (a Celery retry or the
-    long-delay reschedule) the callback body includes a ``retry_at``
+    long-delay reschedule) the callback body includes a `retry_at`
     timestamp so the Profiles side can avoid prompting an operator 
     while the next attempt is still pending.
 
     Args:
         self: The bound Celery task instance, used to drive
-            ``self.retry`` for transient Profiles API failures.
+            `self.retry` for transient Profiles API failures.
         idp: The identity provider name (matches a key in
-            ``REMOTE_USER_DATA_API_ENDPOINTS``). For Knowledge Commons this
-            is ``"knowledgeCommons"``.
-        oauth_id: The external subject identifier (``sub``) for the
+            `REMOTE_USER_DATA_API_ENDPOINTS`). For Knowledge Commons this
+            is `"knowledgeCommons"`.
+        oauth_id: The external subject identifier (`sub`) for the
             user on the remote IDP.
         **kwargs: Reserved for future Celery options; currently ignored.
 
     Returns:
-        The id of the matched/created local user, ``None`` when no
-        remote profile data was returned, or ``None`` when the
+        The id of the matched/created local user, `None` when no
+        remote profile data was returned, or `None` when the
         Profiles API was unreachable and the task has been rescheduled
         for a future attempt.
     """
@@ -532,9 +532,9 @@ def do_user_created(self, idp: str, oauth_id: str, **kwargs) -> int | None:
             try:
                 user = CILogonHelpers.create_new_user(profile_response)
             except IntegrityError:
-                # Race-loser path: a concurrent ``do_user_created`` for
-                # the same sub committed the ``User`` row first, so the
-                # upstream ``register_user`` INSERT hit the unique
+                # Race-loser path: a concurrent `do_user_created` for
+                # the same sub committed the `User` row first, so the
+                # upstream `register_user` INSERT hit the unique
                 # constraint on email/username. Roll back so the
                 # SQLAlchemy session is usable again, then re-match
                 # exactly once. If the re-match still produces no
@@ -585,7 +585,7 @@ def do_user_created(self, idp: str, oauth_id: str, **kwargs) -> int | None:
         # memberships are populated from the same payload we already
         # fetched. HTTP failures here get the same retry+reschedule 
         # treatment. A re-run of this task will short-circuit through 
-        # the existing-identity branch and run ``do_user_data_update``.
+        # the existing-identity branch and run `do_user_data_update`.
         try:
             current_remote_user_data_service.update_user_from_remote(
                 system_identity,
@@ -641,24 +641,24 @@ def sync_user_to_names(user_id: int) -> bool:
     """Mirror a single local user into the Names vocabulary.
 
     Thin Celery wrapper around
-    :func:`invenio_remote_user_data_kcworks.services.names_sync.upsert_name_for_user`.
-    Used both as a side effect of the user create/update flows and
-    directly from the ``flask user-data names sync-now`` CLI helper.
+    `NamesSyncService.upsert_name_for_user()`. Used both as a
+    side effect of the user create/update flows and directly from the
+    `flask user-data names sync-now` CLI helper.
 
     Args:
         user_id: The local Invenio user id to mirror.
 
     Returns:
-        ``True`` when a Names record was upserted (or already up to
-        date), ``False`` when the user was missing or did not have
+        `True` when a Names record was upserted (or already up to
+        date), `False` when the user was missing or did not have
         enough profile data to be mirrored.
     """
     with app.app_context():
-        user = User.query.get(user_id)
+        user = datastore.get_user_by_id(user_id)
         if user is None:
             app.logger.warning(
                 f"sync_user_to_names: user {user_id} not found; skipping"
             )
             return False
-        result = upsert_name_for_user(user)
+        result = current_names_sync_service.upsert_name_for_user(user)
         return result is not None

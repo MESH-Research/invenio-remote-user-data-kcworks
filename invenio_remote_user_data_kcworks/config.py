@@ -42,9 +42,10 @@ class KCNamesTag(StrEnum):
 
     Members:
         USER: A Names record that mirrors a local KCWorks user.
-        CITED: A Names record materialized lazily from ORCID because
-            an ORCID-identified contributor was cited in a draft but
-            is not (yet) a KCWorks user.
+        CITED: A Names record inserted from ORCID on first reference
+            (e.g. an ORCID-identified contributor cited in a draft, or
+            picked from the deposit form's ORCID proxy) for a person
+            who is not (yet) a KCWorks user.
 
     The string values are persisted on Names records in OpenSearch and
     in the database, so changing them is a data-migration concern.
@@ -126,10 +127,6 @@ REMOTE_USER_DATA_NAMES_AUTO_MERGE_ON_ORCID = True
 #: candidate duplicate Names records that require human review. `None`
 #: disables report writing.
 REMOTE_USER_DATA_NAMES_DEDUPE_REPORT_PATH = None
-
-#: Minimum SequenceMatcher ratio (0.0–1.0) for two Names records to be
-#: surfaced as a likely-duplicate candidate in the dedupe report.
-REMOTE_USER_DATA_NAMES_DEDUPE_SIMILARITY_THRESHOLD = 0.92
 
 # ORCID Public API integration
 # ----------------------------

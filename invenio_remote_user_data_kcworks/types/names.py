@@ -1,11 +1,16 @@
-"""Type definitions for Names vocabulary payloads.
+"""Type definitions for Names vocabulary records.
 
-Locally constructed `TypedDict` shapes for create/update calls to the
-upstream Names vocabulary service. Authoritative validation is
-delegated to `invenio_vocabularies.contrib.names.schema.NameSchema`,
-which the service invokes on every load; these types only document
-shape and give static checkers something to enforce at construction
-sites.
+`TypedDict` shapes used both for create/update *payloads* sent to the
+upstream Names vocabulary service and for the *record dicts* read
+back from it. Authoritative validation is delegated to
+`invenio_vocabularies.contrib.names.schema.NameSchema`, which the
+service invokes on every load; these types only document shape and
+give static checkers something to enforce at construction and
+consumption sites.
+
+Read-side records returned by the service also carry system fields
+(`created`, `updated`, `revision_id`, `pid`, `links`, etc.) that this
+package does not consume and so does not model here.
 """
 
 from typing import TypedDict
@@ -34,6 +39,13 @@ class NameAffiliationDict(TypedDict, total=False):
 class NamePropsDict(TypedDict, total=False):
     """Standard props stored under the Names record's `props` field.
 
+    Rule of thumb: identifier-shaped data (anything carrying a
+    registered scheme such as `orcid`, `kc_username`, `email`, `isni`,
+    etc.) belongs in the record's `identifiers` list, not here.
+    `props` is reserved for derived display state (`display_name`,
+    `name_parts`), internal references that have no public identifier
+    scheme (`kcworks_user_id`), and operational metadata (`source`).
+
     `display_name` is necessary because `NameSchema` overwrites the
     payload's `name` field with a naive `"family_name, given_name"`
     composition for personal names whenever both parts are present,
@@ -46,18 +58,55 @@ class NamePropsDict(TypedDict, total=False):
     it is stored here as a real nested dict, not as a JSON string the
     way `user_profile["name_parts"]` is stored on KC users; translate
     on the way in (`json.loads`) when seeding from the user profile.
+
+    `dismissed_duplicates` is a list of Names record UUIDs that an
+    operator has explicitly marked as not-a-duplicate of this record
+    via `NamesSyncService.dismiss_duplicate_pair()`. The dedup sweep
+    consults both sides of each candidate pair and skips any pair
+    where either side carries the other's UUID, so a one-time dismissal
+    suppresses re-flagging on every subsequent run.
+
+    `family_token` is a coarse, normalized form of `family_name`
+    (NFKD asciifold + lowercased + punctuation stripped + whitespace
+    collapsed) populated at write time by `NamesSyncService`. It is
+    the canonical single-valued display form used for reporting; the
+    actual aggregation key is `family_part_tokens`. Records that
+    pre-date this field (or that are written by upstream paths we do
+    not control) simply do not appear in any bucket.
+
+    `family_part_tokens` is the multi-valued bucket index used by the
+    token pass of the periodic dedup sweep. It contains the full
+    normalized family form (element 0) plus each constituent piece,
+    treating both whitespace and hyphens as separators. So
+    `García López` and `García-López` both index as
+    `["garcia lopez", "garcia", "lopez"]` and cluster with single-piece
+    `García` (`["garcia"]`) records via the shared `garcia` bucket.
+    `_score_bucket_pairs` then classifies each surviving pair as
+    full-family or partial-family match by comparing the bucket key
+    against element 0 of each side, applying `PARTIAL_FAMILY_DISCOUNT`
+    to partial matches.
+
+    `family_phonetic_tokens` is the multi-valued bucket index used by
+    the phonetic pass of the same sweep. Each piece of the family
+    name (split on the same rules as `family_part_tokens`) is encoded
+    with Metaphone; the codes are deduped order-preserving. Catches
+    spelling variants the token index cannot, e.g. `Smith`/`Smyth`
+    (both `SM0`), `OBrien`/`OBrian` (both `OBRN`). `_score_bucket_pairs`
+    applies `PHONETIC_FAMILY_DISCOUNT` to scores from this pass.
     """
 
     kcworks_user_id: str
-    kc_username: str
-    orcid: str
     display_name: str
     name_parts: dict[str, str]
-    source: str  # Why a `kcworks-cited` record was materialized
+    source: str  # What triggered insertion of the `kcworks-cited` record
+    dismissed_duplicates: list[str]  # Names record UUIDs dismissed by an operator
+    family_token: str  # Canonical normalized family_name; reporting only
+    family_part_tokens: list[str]  # Multi-valued bucket index, token pass
+    family_phonetic_tokens: list[str]  # Multi-valued bucket index, phonetic pass
 
 
-class NamePayloadDict(TypedDict, total=False):
-    """Dict for creating/updating one name vocabulary item.
+class NamesRecordDict(TypedDict, total=False):
+    """Dict for one Names vocabulary item, used for both reads and writes.
 
     Corresponds to the shape accepted by the NameSchema validator in
     `invenio_vocabularies.contrib.names.schema.NameSchema`. We don't
@@ -67,7 +116,17 @@ class NamePayloadDict(TypedDict, total=False):
 
     The NameSchema will enforce the presence of either `name` or both
     `given_name` and `family_name`. But we don't try to mirror that
-    constraint in the names sync service.
+    constraint here.
+
+    Also used as a read-side type when consuming records returned by
+    the service. Read-side records additionally carry system fields
+    (`created`, `updated`, `revision_id`, `pid`, `links`) that this
+    package does not consume; they are intentionally omitted here.
+    Records authored by the upstream
+    `invenio_vocabularies.contrib.names.datastreams.OrcidTransformer`
+    will populate only `id`, `given_name`, `family_name`, and
+    `identifiers` (a single `orcid`-scheme entry) plus `affiliations`,
+    leaving `name`, `props`, and `tags` empty.
     """
 
     id: str  # PID on create, ignored on update
@@ -79,3 +138,12 @@ class NamePayloadDict(TypedDict, total=False):
     affiliations: list[NameAffiliationDict]
     props: NamePropsDict
     tags: list[KCNamesTag]
+    uuid: str
+    # `uuid` is the Names DB row's primary-key UUID, written into the
+    # OpenSearch source by the Names `SearchDumper`. It is therefore
+    # present on records pulled out of indexed search hits but absent
+    # from records returned by `service.read().to_dict()` (which goes
+    # through `NameSchema`, which does not declare `uuid`). Do NOT
+    # confuse with `opensearch_dsl.response.hit.HitMeta.id`, which is
+    # the OpenSearch document id and only happens to equal the DB UUID
+    # by current dumper convention.

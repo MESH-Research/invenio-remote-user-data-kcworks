@@ -3,6 +3,7 @@ include *.rst
 include LICENSE
 include Pipfile
 include .gitmodules
+recursive-include invenio_remote_user_data_kcworks *.csv
 recursive-include invenio_remote_user_data_kcworks *.in
 recursive-include invenio_remote_user_data_kcworks *.md
 recursive-include invenio_remote_user_data_kcworks *.py
@@ -10,4 +11,5 @@ recursive-include invenio_remote_user_data_kcworks *.rst
 recursive-include invenio_remote_user_data_kcworks *.sh
 recursive-include invenio_remote_user_data_kcworks *.toml
 recursive-include invenio_remote_user_data_kcworks *.txt
+recursive-include invenio_remote_user_data_kcworks/data LICENSE
 recursive-include tests *.py

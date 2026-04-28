@@ -8,6 +8,7 @@
 """Celery task to update user data from remote API."""
 
 import contextlib
+import json
 from datetime import UTC, datetime, timedelta
 
 import requests
@@ -29,6 +30,7 @@ from .proxies import (
     current_remote_group_service,
     current_remote_user_data_service,
 )
+from .types.profiles_api import APIResponse
 from .utils.auth import CILogonHelpers, UserIdentifierHelpers
 
 
@@ -238,13 +240,13 @@ def do_user_data_update(
 ) -> tuple[User, dict, list[str], dict] | None:
     """Perform a user metadata update.
 
-    On every resolution path this task sends a PROCESSED/FAILED 
+    On every resolution path this task sends a PROCESSED/FAILED
     callback response to the Profiles
-    `/api/v1/members/{member_name}/works/status` endpoint. The 
-    KC member name needed for the callback URL and body is resolved 
-    locally. When no member name can be resolved the callback still 
+    `/api/v1/members/{member_name}/works/status` endpoint. The
+    KC member name needed for the callback URL and body is resolved
+    locally. When no member name can be resolved the callback still
     fires with `unknown` in place of the member username in the URL,
-    so that the Profiles operator can correlate by `sub` in the 
+    so that the Profiles operator can correlate by `sub` in the
     response body.
 
     After update, we also keep the user's Names vocabulary record in
@@ -380,12 +382,33 @@ def do_group_data_update(idp, remote_id, **kwargs):
         return True
 
 
+@shared_task(ignore_result=False)
+def do_find_names_duplicates(
+    limit: int | None = None,
+    since: datetime | None = None,
+    full_sweep: bool = False,
+):
+    """Find possible duplicate entries in the Names vocabulary."""
+    with app.app_context():
+        result = current_names_sync_service.find_duplicate_candidates(
+            limit=limit, since=since, full_sweep=full_sweep
+        )
+        return result
+
+
 @shared_task(
     bind=True,
     ignore_result=False,
     max_retries=5,
 )
-def do_user_created(self, idp: str, oauth_id: str, **kwargs) -> int | None:
+def do_user_created(
+    self,
+    idp: str,
+    oauth_id: str,
+    *,
+    remote_data: APIResponse | None = None,
+    **kwargs,
+) -> int | None:
     """Provision a local KCWorks user from a remote `created` webhook event.
 
     Triggered from
@@ -423,12 +446,12 @@ def do_user_created(self, idp: str, oauth_id: str, **kwargs) -> int | None:
 
     On every resolution path (success, give-up after no profile data,
     give-up after user could not be matched/created, scheduled retry,
-    or scheduled long-delay reschedule) this task sends a 
+    or scheduled long-delay reschedule) this task sends a
     PROCESSED/FAILED callback response body to the Profiles
     `/api/v1/members/{member_name}/works/status` endpoint. When a
     follow-up attempt is already queued (a Celery retry or the
     long-delay reschedule) the callback body includes a `retry_at`
-    timestamp so the Profiles side can avoid prompting an operator 
+    timestamp so the Profiles side can avoid prompting an operator
     while the next attempt is still pending.
 
     Args:
@@ -439,6 +462,15 @@ def do_user_created(self, idp: str, oauth_id: str, **kwargs) -> int | None:
             is `"knowledgeCommons"`.
         oauth_id: The external subject identifier (`sub`) for the
             user on the remote IDP.
+        remote_data: Optional pre-fetched Profiles API response for
+            `oauth_id`. When provided, skips the initial Profiles API
+            fetch and uses the supplied payload for both user creation
+            and the downstream `update_user_from_remote` call. Used by
+            the bulk JSONL ingest path
+            (`do_ingest_profiles_dump`) so we can replay an offline
+            Profiles dump without re-hitting the live API. The
+            delegating-to-`do_user_data_update` short-circuit (when a
+            local `UserIdentity` already exists) ignores this argument.
         **kwargs: Reserved for future Celery options; currently ignored.
 
     Returns:
@@ -480,24 +512,28 @@ def do_user_created(self, idp: str, oauth_id: str, **kwargs) -> int | None:
             do_user_data_update.delay(existing.id_user, idp, oauth_id)
             return existing.id_user
 
-        try:
-            profile_response = UserDataAPIClient.fetch_user_profile(sub_id=oauth_id)
-        except (requests.RequestException, requests.Timeout) as exc:
-            app.logger.warning(
-                f"do_user_created: failed to fetch profile for sub={oauth_id}: {exc!r}"
-            )
-            _handle_profiles_api_failure(
-                self,
-                exc,
-                sub=oauth_id,
-                event=UserDataEvent.CREATED,
-                method=auth_method,
-                kwargs=kwargs,
-                reschedule_task=do_user_created,
-                reschedule_args=(idp, oauth_id),
-            )
-            # Only reached on the long-delay reschedule branch.
-            return None
+        if remote_data is not None:
+            profile_response = remote_data
+        else:
+            try:
+                profile_response = UserDataAPIClient.fetch_user_profile(sub_id=oauth_id)
+            except (requests.RequestException, requests.Timeout) as exc:
+                app.logger.warning(
+                    f"do_user_created: failed to fetch profile for "
+                    f"sub={oauth_id}: {exc!r}"
+                )
+                _handle_profiles_api_failure(
+                    self,
+                    exc,
+                    sub=oauth_id,
+                    event=UserDataEvent.CREATED,
+                    method=auth_method,
+                    kwargs=kwargs,
+                    reschedule_task=do_user_created,
+                    reschedule_args=(idp, oauth_id),
+                )
+                # Only reached on the long-delay reschedule branch.
+                return None
 
         if not profile_response or not getattr(profile_response, "data", None):
             app.logger.info(
@@ -513,7 +549,7 @@ def do_user_created(self, idp: str, oauth_id: str, **kwargs) -> int | None:
             )
             return None
 
-        # Match an existing user if possible; a user may have previously 
+        # Match an existing user if possible; a user may have previously
         # logged in with a different method.
         profile = profile_response.data[0].profile
         account_info = {
@@ -583,8 +619,8 @@ def do_user_created(self, idp: str, oauth_id: str, **kwargs) -> int | None:
 
         # Run the normal update path so user_profile fields and group
         # memberships are populated from the same payload we already
-        # fetched. HTTP failures here get the same retry+reschedule 
-        # treatment. A re-run of this task will short-circuit through 
+        # fetched. HTTP failures here get the same retry+reschedule
+        # treatment. A re-run of this task will short-circuit through
         # the existing-identity branch and run `do_user_data_update`.
         try:
             current_remote_user_data_service.update_user_from_remote(
@@ -662,3 +698,185 @@ def sync_user_to_names(user_id: int) -> bool:
             return False
         result = current_names_sync_service.upsert_name_for_user(user)
         return result is not None
+
+
+def _sniff_dump_format(filepath: str) -> str:
+    """Detect whether a file is JSONL (Profiles-shape) or a one-column CSV of usernames.
+
+    The detection is intentionally cheap: read the first non-blank line, strip,
+    and check whether it starts with ``{``. Anything else is assumed to be a
+    plain-text username list (one username per line; CSV header optional).
+
+    Args:
+        filepath: Path to the file to inspect.
+
+    Returns:
+        Either ``"jsonl"`` or ``"usernames"``.
+    """
+    with open(filepath, encoding="utf-8") as f:
+        for line in f:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            return "jsonl" if stripped.startswith("{") else "usernames"
+    return "usernames"
+
+
+def _iter_jsonl_rows(filepath: str):
+    """Yield parsed JSON objects from a JSONL file, skipping blank lines."""
+    with open(filepath, encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line:
+                continue
+            yield json.loads(line)
+
+
+def _iter_username_rows(filepath: str):
+    """Yield trimmed usernames from a one-column file, skipping blanks and comments."""
+    with open(filepath, encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            # Tolerate a CSV-style header row labelled "username" (case-insensitive).
+            if line.lower() in {"username", '"username"'}:
+                continue
+            # If somebody hands us a CSV with extra columns, take the first one.
+            yield line.split(",", 1)[0].strip().strip('"')
+
+
+@shared_task(ignore_result=False)
+def do_ingest_profiles_dump(
+    filepath: str,
+    *,
+    fmt: str = "auto",
+    source: str = "knowledgeCommons",
+) -> dict[str, int]:
+    """Bulk-create / update local users from a Profiles dump file.
+
+    Two input shapes are accepted; the format is sniffed by default
+    from the first non-blank line:
+
+    - **JSONL** (`fmt="jsonl"`): each line is one Profiles API response
+      payload (matching `APIResponse` from `...types.profiles_api`). For
+      every row we call `do_user_created` *synchronously* with
+      `remote_data=<row>` so no live Profiles API I/O is performed.
+    - **Usernames** (`fmt="usernames"`): one KC username per line (CSV
+      header `username` and `#` comment lines tolerated). For every row
+      we call `do_user_created` *synchronously* without pre-fetched
+      data, so the live Profiles API is hit per row exactly as a
+      webhook `users.created` event would. The downstream lazy-
+      provisioning logic (the `UserIdentity`-exists short-circuit
+      delegating to `do_user_data_update`) gives "create or update"
+      semantics for both new and known usernames.
+
+    Both code paths run synchronously *inside this single task* so a
+    long ingest is observable as one Celery entry rather than thousands
+    of per-row tasks; this is friendlier to Profiles API rate limits and
+    easier for operators to monitor / abort.
+
+    The operation is idempotent provided Profiles API-served data does not
+    change between runs. Already-existing KCWorks users simply have their
+    metadata updated from the Profiles API.
+
+    Args:
+        filepath: Absolute path to the dump file. Read with UTF-8.
+        fmt: `"auto"` (sniff), `"jsonl"`, or `"usernames"`.
+        source: The IDP key to pass to `do_user_created`. Defaults to
+            `"knowledgeCommons"`.
+
+    Returns:
+        A stats dict with keys:
+
+        - `rows_seen`: number of non-blank rows in the file.
+        - `processed`: rows that produced a non-`None` user id.
+        - `skipped`: rows where `do_user_created` returned `None` (no
+          profile data, missing oauth_id, etc.).
+        - `errors`: rows that raised an exception (logged, not
+          propagated, so the rest of the dump still runs).
+
+    Raises:
+        ValueError: When `fmt` is not one of `"auto"`, `"jsonl"`, or
+            `"usernames"`.
+    """
+    with app.app_context():
+        if fmt == "auto":
+            fmt = _sniff_dump_format(filepath)
+        if fmt not in {"jsonl", "usernames"}:
+            raise ValueError(
+                f"do_ingest_profiles_dump: unknown fmt={fmt!r} "
+                "(expected 'auto', 'jsonl', or 'usernames')"
+            )
+
+        stats = {"rows_seen": 0, "processed": 0, "skipped": 0, "errors": 0}
+
+        if fmt == "jsonl":
+            iterator = _iter_jsonl_rows(filepath)
+        else:
+            iterator = _iter_username_rows(filepath)
+
+        for row in iterator:
+            stats["rows_seen"] += 1
+            try:
+                if fmt == "jsonl":
+                    payload = APIResponse.model_validate(row)
+                    if not payload.data:
+                        stats["skipped"] += 1
+                        continue
+                    oauth_id = payload.data[0].sub
+                    user_id = do_user_created(source, oauth_id, remote_data=payload)
+                else:
+                    user_id = do_user_created(source, row)
+            except Exception:  # noqa: BLE001 - logged, never propagated
+                stats["errors"] += 1
+                app.logger.exception(
+                    "do_ingest_profiles_dump: row %d failed; continuing",
+                    stats["rows_seen"],
+                )
+                continue
+            if user_id is None:
+                stats["skipped"] += 1
+            else:
+                stats["processed"] += 1
+
+        app.logger.info(
+            "do_ingest_profiles_dump: finished %s; rows_seen=%d processed=%d "
+            "skipped=%d errors=%d",
+            filepath,
+            stats["rows_seen"],
+            stats["processed"],
+            stats["skipped"],
+            stats["errors"],
+        )
+        return stats
+
+
+@shared_task(ignore_result=False)
+def do_backfill_cited_from_records(
+    *,
+    limit: int | None = None,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Walk all published RDM records and upsert a Names record for each ORCID.
+
+    Thin Celery wrapper around
+    `NamesSyncService.backfill_cited_orcid_from_records` (in
+    `...services.names_sync`). Run once per deployment to backfill
+    pre-component published records; the on-draft-save component
+    handles new drafts going forward. Safe to re-run.
+
+    Args:
+        limit: Maximum number of records to scan; `None` walks the
+            entire published corpus.
+        dry_run: When `True`, count payloads but skip every Names
+            upsert. The returned `upserted` counter will be `0`.
+
+    Returns:
+        The stats dict produced by
+        `NamesSyncService.backfill_cited_orcid_from_records`.
+    """
+    with app.app_context():
+        return current_names_sync_service.backfill_cited_orcid_from_records(
+            limit=limit, dry_run=dry_run
+        )

@@ -66,6 +66,17 @@ class NamePropsDict(TypedDict, total=False):
     where either side carries the other's UUID, so a one-time dismissal
     suppresses re-flagging on every subsequent run.
 
+    `possible_duplicates` is a mapping from another Names record's
+    UUID to a 2-element list `[score, score_method]` describing the
+    best (highest-scoring) duplicate candidacy the periodic dedup
+    sweep has found between this record and that one. The list shape
+    is chosen because JSON has no tuple type: persisting a Python
+    tuple round-trips through OpenSearch as a list, so we use a list
+    end-to-end. `score` is a `float`; `score_method` is one of the
+    `family_*+given_*` strategy codes documented on
+    `NamesSyncService.find_duplicate_candidates`. Cross-references are
+    symmetric: each side carries an entry for the other.
+
     `family_token` is a coarse, normalized form of `family_name`
     (NFKD asciifold + lowercased + punctuation stripped + whitespace
     collapsed) populated at write time by `NamesSyncService`. It is
@@ -100,6 +111,9 @@ class NamePropsDict(TypedDict, total=False):
     name_parts: dict[str, str]
     source: str  # What triggered insertion of the `kcworks-cited` record
     dismissed_duplicates: list[str]  # Names record UUIDs dismissed by an operator
+    possible_duplicates: dict[
+        str, list[float | str]
+    ]  # other_uuid -> [score: float, score_method: str]
     family_token: str  # Canonical normalized family_name; reporting only
     family_part_tokens: list[str]  # Multi-valued bucket index, token pass
     family_phonetic_tokens: list[str]  # Multi-valued bucket index, phonetic pass

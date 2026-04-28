@@ -1,13 +1,18 @@
-# -*- coding: utf-8 -*-
+# Part of invenio-remote-user-data-kcworks
+# Copyright (C) 2023-2026, MESH Research
 #
-# This file is part of the invenio-remote-user-data-kcworks package.
-# Copyright (C) 2023-2026, MESH Research.
-#
-# invenio-remote-user-data-kcworks is free software; you can redistribute it
-# and/or modify it under the terms of the MIT License; see
-# LICENSE file for more details.
+# invenio-remote-user-data-kcworks is free software; you can redistribute and/or modify it
+# under the terms of the MIT License; see LICENSE file for more details.
 
-"""CLI commands for user data-related actions."""
+"""`user-data users` subgroup for managing user accounts.
+
+- bulk ingestion from JSONL or CSV `ingest-profiles-dump`
+
+Long-running commands (`ingest-profiles-dump`) accept `--background`
+to `.delay()` the corresponding Celery task and return immediately
+with the task id; without the flag, the work runs synchronously inside
+the CLI process.
+"""
 
 import re
 from pprint import pprint
@@ -19,20 +24,18 @@ from invenio_accounts.proxies import current_datastore
 from invenio_oauthclient.models import UserIdentity
 from invenio_users_resources.proxies import current_users_service
 
-from .proxies import (
-    current_names_sync_service as names_sync_service,
-)
-from .proxies import (
+from ..proxies import (
     current_remote_user_data_service as user_data_service,
 )
+from ..tasks import do_ingest_profiles_dump
 
 
-@click.group()
-def cli():
-    """User and group data updates from remote source."""
+@click.group(name="users")
+def users_cli():
+    """Bulk user provisioning and re-pull from the Profiles API."""
 
 
-@cli.command(name="update")
+@users_cli.command(name="update")
 @click.argument("ids", nargs=-1)
 @click.option(
     "-g",
@@ -81,8 +84,7 @@ def update_user_data(
     by_email: bool,
     by_username: bool,
 ):
-    """
-    Update user or group metadata from the remote data service.
+    """Update user or group metadata from the remote data service.
 
     If IDS are not specified, all records (either users or groups)
     will be updated from the specified remote service.
@@ -101,10 +103,6 @@ def update_user_data(
     by_username (bool): Flag to update by remote username. If true,
         the ID(s) should be one or more usernames from the remote
         service.
-
-    Returns:
-
-    None
     """
     print(
         f"Updating {'all ' if len(ids) == 0 else ''}"
@@ -122,7 +120,6 @@ def update_user_data(
 
     sources = ["cilogon", source]
 
-    # handle ranges
     expanded_ids = []
     for i in ids:
         if re.match(r"\d+-\d+", i):
@@ -133,7 +130,6 @@ def update_user_data(
             expanded_ids.append(i)
     ids = expanded_ids
 
-    # eliminate duplicates
     ids = sorted(list(set(ids)))
 
     if len(ids) > 0:
@@ -250,166 +246,61 @@ def update_user_data(
         print(f"{len(failures)} updates failed for the following records: {failures}")
 
 
-@click.group()
-def names_cli():
-    """KCWorks Names vocabulary maintenance commands.
-
-    Includes utilities for reviewing fuzzy-matched duplicate candidates
-    surfaced by the periodic dedupe sweep, and for dismissing /
-    un-dismissing pairs that an operator has confirmed are *not*
-    duplicates. Dismissals are recorded by UUID on both sides of the
-    pair (in ``Name.props.dismissed_duplicates``) so the candidate
-    finder will not surface the same pair again until reversed.
-    """
-
-
-@names_cli.command(name="merge-orcid-duplicates")
+@users_cli.command(name="ingest-profiles-dump")
+@click.argument("filepath", type=click.Path(exists=True, dir_okay=False))
 @click.option(
-    "--limit",
-    type=int,
-    default=1000,
+    "--format",
+    "fmt",
+    type=click.Choice(["auto", "jsonl", "usernames"], case_sensitive=False),
+    default="auto",
     show_default=True,
     help=(
-        "Maximum number of identifier-collision buckets returned by "
-        "the aggregation."
+        "Input format. ``jsonl`` = one Profiles API response per line "
+        "(no API I/O); ``usernames`` = one KC username per line (live "
+        "API fetch per row). ``auto`` sniffs the first non-blank line."
+    ),
+)
+@click.option(
+    "-s",
+    "--source",
+    default="knowledgeCommons",
+    show_default=True,
+    help="IDP key passed to the underlying do_user_created task.",
+)
+@click.option(
+    "--background",
+    is_flag=True,
+    default=False,
+    help=(
+        "Queue the ingest as a Celery task and return immediately with "
+        "the task id, instead of running synchronously in the CLI."
     ),
 )
 @with_appcontext
-def merge_orcid_duplicates_cmd(limit: int):
-    """Auto-consolidate Names records that share an ORCID iD.
+def ingest_profiles_dump_cmd(filepath: str, fmt: str, source: str, background: bool):
+    r"""Bulk-create / update local users from a Profiles JSONL dump or username CSV.
 
-    Folds non-USER stubs (CITED, untagged harvester records, etc.) that
-    share an ORCID with a single USER record into that USER record and
-    deletes the stubs. Buckets with more than one USER record (or with
-    no USER record) are logged and left for human review via
-    ``find-duplicates``. Run before ``find-duplicates`` so the review
-    list is not cluttered by pairs that should be auto-merged.
+    Two input shapes are accepted:
+
+    \b
+    - `jsonl` — each line is one Profiles API response (no API I/O).
+    - `usernames` — one KC username per line (live API fetch per row;
+      lazy provisioning fallback gives create-or-update semantics).
+
+    Without `--background`, the work runs synchronously inside the CLI
+    process and the final stats dict is printed on completion. With
+    `--background`, the same logic is enqueued as a single long-running
+    Celery task and the task id is printed immediately.
     """
-    stats = names_sync_service.merge_orcid_duplicates(limit=limit)
-    click.echo(
-        f"Merged: {stats['merged']}  "
-        f"multi-USER collisions: {stats['multi_user_collisions']}  "
-        f"orphan collisions: {stats['orphan_collisions']}  "
-        f"errors: {stats['errors']}"
-    )
-    if stats["multi_user_collisions"] or stats["orphan_collisions"]:
-        click.echo(
-            "Some ORCID collisions could not be auto-merged; see logs and "
-            "run `invenio kcworks-names find-duplicates` for review."
-        )
-
-
-@names_cli.command(name="find-duplicates")
-@click.option(
-    "--limit",
-    type=int,
-    default=1000,
-    show_default=True,
-    help=(
-        "Maximum number of family-name buckets returned by the "
-        "aggregation. Each bucket can yield multiple pairs."
-    ),
-)
-@with_appcontext
-def find_duplicates_cmd(limit: int):
-    """List likely-duplicate Names pairs flagged for human review.
-
-    Run ``merge-orcid-duplicates`` first so any pair sharing an ORCID
-    has been auto-consolidated and does not show up here. Pairs already
-    marked dismissed (via ``dismiss-duplicate``) are suppressed from the
-    output.
-    """
-    rows = names_sync_service.find_duplicate_candidates(limit=limit)
-    if not rows:
-        click.echo("No duplicate candidates above the configured threshold.")
+    if background:
+        async_result = do_ingest_profiles_dump.delay(filepath, fmt=fmt, source=source)
+        click.echo(f"Queued ingest task: {async_result.id}")
         return
-    click.echo(f"Found {len(rows)} candidate pair(s):")
-    for r in rows:
-        a = r["record_a"]
-        b = r["record_b"]
-        a_tags = ",".join(a.get("tags") or []) or "untagged"
-        b_tags = ",".join(b.get("tags") or []) or "untagged"
-        click.echo(
-            f"  score={r['score']}  family={r['family_token']}  "
-            f"[{a_tags}] {a['id']} ({a['uuid']}) \"{a['name']}\"  <->  "
-            f"[{b_tags}] {b['id']} ({b['uuid']}) \"{b['name']}\""
-        )
+    stats = do_ingest_profiles_dump(filepath, fmt=fmt, source=source)
     click.echo(
-        "\nTo dismiss a pair (mark as confirmed not-a-duplicate):\n"
-        "  invenio kcworks-names dismiss-duplicate <PID_A> <PID_B>"
+        f"Done. rows_seen={stats['rows_seen']}  processed={stats['processed']}  "
+        f"skipped={stats['skipped']}  errors={stats['errors']}"
     )
-
-
-@names_cli.command(name="dismiss-duplicate")
-@click.argument("pid_a")
-@click.argument("pid_b")
-@with_appcontext
-def dismiss_duplicate_cmd(pid_a: str, pid_b: str):
-    """Mark two Names records as confirmed *not* duplicates of each other.
-
-    Records each record's UUID on the other's
-    ``props.dismissed_duplicates`` list; the candidate finder will then
-    skip the pair on subsequent runs. Idempotent.
-
-    Raises:
-        click.ClickException: If either PID does not exist or the
-            update fails.
-    """
-    ok = names_sync_service.dismiss_duplicate_pair(
-        pid_a, pid_b, identity=system_identity
-    )
-    if ok:
-        click.echo(f"Dismissed duplicate pair: {pid_a} <-> {pid_b}")
-    else:
-        raise click.ClickException(
-            f"Failed to dismiss pair {pid_a} <-> {pid_b}; check the "
-            f"application log for details (most likely cause: one of "
-            f"the PIDs does not exist)."
-        )
-
-
-@names_cli.command(name="undismiss-duplicate")
-@click.argument("pid_a")
-@click.argument("pid_b")
-@with_appcontext
-def undismiss_duplicate_cmd(pid_a: str, pid_b: str):
-    """Reverse a previous ``dismiss-duplicate`` so the pair re-appears.
-
-    Idempotent: calling on a pair that was not dismissed succeeds with
-    no changes.
-
-    Raises:
-        click.ClickException: If either PID does not exist or the
-            update fails.
-    """
-    ok = names_sync_service.undismiss_duplicate_pair(
-        pid_a, pid_b, identity=system_identity
-    )
-    if ok:
-        click.echo(f"Un-dismissed duplicate pair: {pid_a} <-> {pid_b}")
-    else:
-        raise click.ClickException(
-            f"Failed to un-dismiss pair {pid_a} <-> {pid_b}; check the "
-            f"application log for details."
-        )
-
-
-@names_cli.command(name="list-dismissed-duplicates")
-@with_appcontext
-def list_dismissed_duplicates_cmd():
-    """List every Names pair currently marked as not-a-duplicate."""
-    rows = names_sync_service.list_dismissed_duplicate_pairs(
-        identity=system_identity
-    )
-    if not rows:
-        click.echo("No dismissed duplicate pairs.")
-        return
-    click.echo(f"{len(rows)} dismissed duplicate pair(s):")
-    for r in rows:
-        click.echo(
-            f"  {r['a_pid']} ({r['a_uuid']}) \"{r['a_name']}\"  <->  "
-            f"{r['b_pid']} ({r['b_uuid']}) \"{r['b_name']}\""
-        )
 
 
 if __name__ == "__main__":

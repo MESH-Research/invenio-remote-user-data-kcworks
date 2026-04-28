@@ -55,13 +55,16 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from datetime import UTC, datetime
 from itertools import combinations
 from typing import Any, Literal, cast
 
 import jellyfish
+from flask_principal import Identity
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import User
 from invenio_pidstore.errors import PIDAlreadyExists, PIDDoesNotExistError
+from invenio_rdm_records.proxies import current_rdm_records_service
 from invenio_records_resources.proxies import current_service_registry
 from invenio_records_resources.services import Service
 from invenio_search.engine import dsl
@@ -79,58 +82,118 @@ from ..utils.names import (
     get_full_name_inverted,
     get_given_name,
 )
+from ..utils.orcid_payload import collect_orcid_payloads
 from .name_similarity import PersonNameComparator
 
 __all__ = ("NamesSyncService",)
 
 
-# Dedup-sweep tuning knobs for given-name comparison. Kept as module-level
-# constants (not Flask config) because they are tightly coupled to the
-# `PersonNameComparator` algorithm and are not site-operator-tunable in
-# any meaningful way; promote to config only if a deployment needs to
-# override them at runtime.
-#
-# `GIVEN_NAME_SIMILARITY_THRESHOLD` is the minimum
-# `PersonNameComparator.compare(...).score` for a within-bucket pair to
-# be surfaced as a likely-duplicate candidate. The score scale is
-# recall-oriented (default `coverage_weight=0.7`), so a threshold of 0.70
-# admits cases like ("Mary", "Pauline Mary") = 0.85 while still rejecting
-# unrelated tokens. False positives are preferred over false negatives
-# because the report is a human-review queue.
 GIVEN_NAME_SIMILARITY_THRESHOLD = 0.70
+"""
+Minimum `PersonNameComparator.compare(...).score` for a within-bucket pair to
+be surfaced as a likely-duplicate candidate. The score scale is
+recall-oriented (default `coverage_weight=0.7`), so a threshold of 0.70
+admits cases like ("Mary", "Pauline Mary") = 0.85 while still rejecting
+unrelated tokens. False positives are preferred over false negatives
+because the report is a human-review queue.
+"""
 
-# Per-token fuzzy threshold inside `PersonNameComparator._compatible`:
-# two tokens are considered compatible if `SequenceMatcher.ratio()` meets
-# this bar (in addition to the equivalence-table and initial-prefix rules).
 GIVEN_NAME_WORD_FUZZY_THRESHOLD = 0.80
+"""
+Per-token fuzzy threshold inside `PersonNameComparator._compatible`:
+two tokens are considered compatible if `SequenceMatcher.ratio()` meets
+this bar (in addition to the equivalence-table and initial-prefix rules).
+"""
 
-# Weight assigned to coverage-of-shorter-name vs completeness-of-longer-name
-# in the `PersonNameComparator` score formula:
-#   score = coverage_weight * (matched / min) + (1 - coverage_weight) * (matched / max)
 GIVEN_NAME_COVERAGE_WEIGHT = 0.70
+"""
+Weight assigned to coverage-of-shorter-name vs completeness-of-longer-name
+in the `PersonNameComparator` score formula:
+  score = coverage_weight * (matched / min) + (1 - coverage_weight) * (matched / max)
+"""
 
-# Multiplier applied to a candidate-pair score when the family-name signal is
-# only partial: i.e. the records share at least one *piece* of their family
-# name (e.g. just `garcia` from `García López` vs `García-Smith`) rather than
-# the full canonical form. Higher = more recall on multi-part family-name
-# variants; lower = stricter ranking advantage to full-family matches.
 PARTIAL_FAMILY_DISCOUNT = 0.90
+"""
+Multiplier applied to a candidate-pair score when the family-name similarity is
+only partial: i.e. the records share at least one *piece* of their family
+name (e.g. just `garcia` from `García López` vs `García-Smith`) rather than
+the full canonical form. Higher = more recall on multi-part family-name
+variants; lower = stricter ranking advantage to full-family matches.
+"""
 
-# Multiplier applied when the family-name signal comes from the phonetic
-# pass (records share a Metaphone code rather than an exact normalized
-# family token). Phonetic matches are inherently fuzzier than token
-# matches but well-tuned per-piece codes still strongly suggest a
-# candidate worth reviewing. Set so a perfect given-name match (1.0)
-# still clears `GIVEN_NAME_SIMILARITY_THRESHOLD` after discount.
 PHONETIC_FAMILY_DISCOUNT = 0.85
+"""
+Multiplier applied when the family-name similarity is phonetic
+(records share a Metaphone code rather than an exact normalized
+family token). Set so a perfect given-name match (1.0)
+still clears `GIVEN_NAME_SIMILARITY_THRESHOLD` after discount.
+"""
 
-# Baseline score assigned to a pair when both records have an empty
-# `given_name`. The `PersonNameComparator` would otherwise return its
-# `empty_score` (0.30) and the pair would fall below threshold; we surface
-# such pairs anyway because, once family signal is the only thing we have,
-# a human reviewer is the only way to discriminate. Combined with
-# `PARTIAL_FAMILY_DISCOUNT` or `PHONETIC_FAMILY_DISCOUNT` as appropriate.
 EMPTY_GIVEN_NAME_SCORE = 0.85
+"""
+Baseline score assigned to a pair when both records have an empty
+`given_name`. The `PersonNameComparator` would otherwise return its
+`empty_score` (0.30) and the pair would fall below threshold; we surface
+such pairs anyway. Combined with `PARTIAL_FAMILY_DISCOUNT` or 
+`PHONETIC_FAMILY_DISCOUNT` as appropriate.
+"""
+
+# Cache key for the incremental-dedup bookmark (ISO datestamp).
+_DEDUP_BOOKMARK_KEY = "kcworks:names_sync:dedup:last_sweep"
+
+# Per-page bucket count for the composite aggregation that powers
+# `_fetch_dedup_buckets`. The composite agg pages exhaustively over the
+# family-token / phonetic-code keyspaces; this is the cluster-side page
+# size, not a cap on total buckets returned. Singletons are filtered
+# server-side via a `bucket_selector` pipeline agg, so each page can
+# return fewer buckets than this.
+_DEDUP_PAGE_SIZE = 1000
+
+
+def _pair_touches_recent(cand: dict[str, Any], bookmark: datetime) -> bool:
+    """Return `True` if either side of `cand` was updated at or after `bookmark`.
+
+    Used to filter `find_duplicate_candidates` candidate pairs in
+    incremental-dedup mode: a pair is in scope if at least one side has
+    been touched since the previous sweep. A pair where neither side
+    has been touched cannot have any new information to surface and is
+    safely skipped.
+
+    Each side's `updated` timestamp is read from the indexed doc
+    (`hit['_source']['updated']`, propagated through
+    `_fetch_dedup_buckets`'s `top_hits`). A record missing the
+    timestamp is treated as recent so that records pre-dating the
+    field, or test fixtures that omit it, are never silently dropped
+    from a sweep.
+
+    Args:
+        cand: A candidate-pair dict from the dedup pipeline. Must
+            carry `record_a` and `record_b` keys whose values are
+            indexed-doc-shaped dicts.
+        bookmark: The cutoff timestamp. Pairs with both sides strictly
+            older than this are excluded. Naive datetimes are treated
+            as UTC for the comparison.
+
+    Returns:
+        `True` if at least one side is recent enough to keep the pair
+        in scope; `False` if both sides are strictly older than the
+        bookmark.
+    """
+    if bookmark.tzinfo is None:
+        bookmark = bookmark.replace(tzinfo=UTC)
+    for rec in (cand["record_a"], cand["record_b"]):
+        updated_iso = rec.get("updated")
+        if not updated_iso:
+            return True
+        try:
+            updated_at = datetime.fromisoformat(str(updated_iso))
+        except ValueError:
+            return True
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=UTC)
+        if updated_at >= bookmark:
+            return True
+    return False
 
 
 class NamesSyncService(Service):
@@ -161,7 +224,7 @@ class NamesSyncService(Service):
         self.config = cfg
         self.logger = app.logger
         self._top_hits_per_dedup_bucket = cfg.get(
-            "REMOTE_USER_DATA_NAMES_DEDUP_TOP_HITS_PER_BUCKET", 100
+            "REMOTE_USER_DATA_NAMES_DEDUP_TOP_HITS_PER_BUCKET", 2000
         )
         self._given_name_comparator = PersonNameComparator(
             word_fuzzy_threshold=GIVEN_NAME_WORD_FUZZY_THRESHOLD,
@@ -643,7 +706,7 @@ class NamesSyncService(Service):
     # Read helper
     # ------------------------------------------------------------------
 
-    def _read_existing(self, identity, pid: str):
+    def _read_existing(self, identity: Identity, pid: str):
         """Read a Names record by PID, returning `None` if absent.
 
         Args:
@@ -667,7 +730,7 @@ class NamesSyncService(Service):
         self,
         user: User,
         *,
-        identity=None,
+        identity: Identity | None = None,
     ) -> dict[str, Any] | None:
         """Create or update the Names vocabulary record for a user.
 
@@ -736,7 +799,7 @@ class NamesSyncService(Service):
                     user.id,
                 )
 
-        # Best-effort: if the user has an ORCID, merge any cited stub.
+        # If the user has an ORCID, merge any citation-triggered Names entry
         profile = dict(user.user_profile or {})
         orcid = profile.get("identifier_orcid") or ""
         if orcid and item is not None:
@@ -764,7 +827,7 @@ class NamesSyncService(Service):
         self,
         payload: NamesRecordDict,
         *,
-        identity=None,
+        identity: Identity | None = None,
         source: str = "creatibutor",
     ) -> dict[str, Any] | None:
         """Insert or refresh a Names record from caller-supplied ORCID data.
@@ -836,11 +899,88 @@ class NamesSyncService(Service):
             item = service.update(identity, orcid, payload)
         return item.to_dict() if item is not None else None
 
+    def backfill_cited_orcid_from_records(
+        self,
+        *,
+        limit: int | None = None,
+        dry_run: bool = False,
+        identity: Identity | None = None,
+    ) -> dict[str, int]:
+        """Insert Names records for ORCIDs found in published RDM records.
+
+        Walks all published records via the RDM record service's `scan()` and,
+        for every personal-type creator/contributor carrying an ORCID iD,
+        calls `upsert_cited_orcid_name(payload, source="backfill")`. The
+        upstream method is itself idempotent: if a USER record already carries
+        the ORCID it gap-fills it; if a CITED stub already sits at PID=orcid
+        it refreshes it; otherwise it creates a fresh CITED stub.
+
+        Intended as a one-off recovery / migration tool: the on-draft-save
+        component (`CitedNamesUpsertComponent`) handles new drafts going
+        forward, but pre-component published records may still have
+        ORCID-bearing creators without a corresponding Names record.
+        Safe to re-run.
+
+        Args:
+            limit: Maximum number of records to scan. `None` (the default)
+                walks the entire published corpus.
+            dry_run: When `True`, count payloads but skip every
+                `upsert_cited_orcid_name` call. The returned `upserted`
+                counter will be `0`; `payloads_seen` reflects what *would*
+                be upserted.
+            identity: Optional Invenio identity for `scan()`. Defaults to
+                `system_identity`.
+
+        Returns:
+            A stats dict with keys:
+
+            - `records_scanned`: number of published records visited.
+            - `payloads_seen`: total ORCID payloads collected (after within-
+              record dedup).
+            - `upserted`: successful upsert calls (always `0` on dry-run).
+            - `errors`: upsert calls that raised (logged, not propagated).
+        """
+        identity = identity or system_identity
+        stats = {
+            "records_scanned": 0,
+            "payloads_seen": 0,
+            "upserted": 0,
+            "errors": 0,
+        }
+
+        scan_result = current_rdm_records_service.scan(identity)
+        for hit in scan_result.hits:
+            if limit is not None and stats["records_scanned"] >= limit:
+                break
+            stats["records_scanned"] += 1
+            metadata = hit.get("metadata") or {}
+            payloads = collect_orcid_payloads(metadata)
+            stats["payloads_seen"] += len(payloads)
+            if dry_run:
+                continue
+            for payload in payloads:
+                try:
+                    self.upsert_cited_orcid_name(
+                        payload, identity=identity, source="backfill"
+                    )
+                    stats["upserted"] += 1
+                except Exception:  # noqa: BLE001 - logged, never propagated
+                    stats["errors"] += 1
+                    # Per-record errors are logged and counted but do not
+                    # abort the walk; one bad record shouldn't strand the
+                    # rest of the corpus.
+                    self.logger.exception(
+                        "backfill_cited_orcid_from_records: "
+                        "upsert_cited_orcid_name failed for ORCID %s",
+                        payload.get("id"),
+                    )
+        return stats
+
     def _find_user_record_by_orcid(
         self,
         orcid: str,
         *,
-        identity=None,
+        identity: Identity | None = None,
     ) -> NamesRecordDict | None:
         """Resolve `orcid` and return the USER-tagged hit, if any.
 
@@ -880,7 +1020,7 @@ class NamesSyncService(Service):
         kc_record: NamesRecordDict,
         cited_data: NamesRecordDict | None = None,
         *,
-        identity=None,
+        identity: Identity | None = None,
     ) -> NamesRecordDict | None:
         """Merge ORCID-derived data into a KC-user Names record.
 
@@ -1082,7 +1222,7 @@ class NamesSyncService(Service):
     def merge_orcid_duplicates(
         self,
         *,
-        identity=None,
+        identity: Identity | None = None,
         limit: int = 1000,
     ) -> dict[str, int]:
         """Auto-consolidate Names records that share an ORCID iD.
@@ -1272,11 +1412,85 @@ class NamesSyncService(Service):
                 return True
         return False
 
+    def _read_dedup_bookmark(self) -> datetime | None:
+        """Return the cached cutoff for the next incremental dedup sweep.
+
+        Looks up `_DEDUP_BOOKMARK_KEY` via `invenio_cache.current_cache`.
+        A missing key, an unreadable cache, or a malformed value all
+        return `None` so the caller falls back to a full sweep — that's
+        the only safe behavior when we cannot trust the bookmark.
+
+        Cache failures are logged once at warning level so an operator
+        notices a misconfigured backend, but the call never raises:
+        dedup is a maintenance job and must not abort just because the
+        cache is down.
+
+        Returns:
+            The previously stored sweep timestamp (timezone-aware UTC),
+            or `None` when no usable bookmark is available.
+        """
+        try:
+            from invenio_cache import current_cache
+
+            raw = current_cache.get(_DEDUP_BOOKMARK_KEY)
+        except Exception:
+            self.logger.warning(
+                "names_sync: failed to read dedup bookmark; "
+                "next run will be a full sweep",
+                exc_info=True,
+            )
+            return None
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(raw))
+        except (TypeError, ValueError):
+            self.logger.warning(
+                "names_sync: dedup bookmark unparseable (%r); "
+                "next run will be a full sweep",
+                raw,
+            )
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed
+
+    def _write_dedup_bookmark(self, ts: datetime) -> None:
+        """Persist the next-sweep cutoff to `invenio_cache`.
+
+        Stores `ts` as an ISO 8601 UTC string under
+        `_DEDUP_BOOKMARK_KEY` with `timeout=0` (never expire). A cache
+        write failure is logged but otherwise swallowed; the next run
+        will simply do a full sweep when it can't read a fresh
+        bookmark, which is benign.
+
+        Args:
+            ts: Timestamp the next incremental run should treat as the
+                lower bound. Naive datetimes are coerced to UTC. In
+                normal usage callers pass the *start* time of the
+                current sweep so any record updated during the sweep
+                gets re-evaluated next time.
+        """
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        try:
+            from invenio_cache import current_cache
+
+            current_cache.set(_DEDUP_BOOKMARK_KEY, ts.isoformat(), timeout=0)
+        except Exception:
+            self.logger.warning(
+                "names_sync: failed to write dedup bookmark; "
+                "next run will be a full sweep",
+                exc_info=True,
+            )
+
     def find_duplicate_candidates(
         self,
         *,
-        identity=None,
-        limit: int = 1000,
+        identity: Identity | None = None,
+        limit: int | None = None,
+        since: datetime | None = None,
+        full_sweep: bool = False,
     ) -> list[dict[str, Any]]:
         """Return likely-duplicate Names record pairs for human review.
 
@@ -1354,13 +1568,53 @@ class NamesSyncService(Service):
         side carries the other's UUID in `props.dismissed_duplicates`)
         are dropped so operators do not re-review them.
 
+        Incremental sweeps
+        ------------------
+        By default, the call resolves a bookmark from `invenio_cache`
+        (key `_DEDUP_BOOKMARK_KEY`) carrying the start time of the
+        previous successful sweep. Candidate pairs where neither side
+        has been updated at or after that bookmark are filtered out
+        before scoring is persisted, so a nightly sweep does only the
+        work the corpus's recent churn actually justifies. The bookmark
+        is rewritten to the *current* sweep's start time after the
+        scoring loop completes; a sweep that aborts (e.g. raises before
+        reaching that point) leaves the prior bookmark in place, so the
+        next run repeats the gap.
+
+        Pass `since` to override the bookmark explicitly (useful for
+        backfills and ad-hoc range checks). Pass `full_sweep=True` to
+        ignore any stored bookmark and process the whole corpus; this
+        still rewrites the bookmark on success, so a periodic full
+        sweep collapses any drift that incremental runs missed without
+        forfeiting the incremental cadence afterwards. Filtering happens
+        at pair-time rather than aggregation-time so a stale record on
+        one side of a pair still surfaces when its partner is freshly
+        touched.
+
+        A `full_sweep` run additionally performs the corpus-wide GC of
+        stale `possible_duplicates` cross-references via
+        `_prune_stale_cross_refs`. That step is only run on full
+        sweeps because it requires enumerating every live UUID, and
+        because deleted Names records are rare enough that piggybacking
+        the periodic full sweep is the right cadence.
+
         Args:
             identity: Optional Invenio identity. Defaults to
                 `system_identity`.
-            limit: Maximum number of family-name buckets returned by
-                the aggregation. Each bucket can yield multiple pairs;
-                the same pair may appear in multiple buckets but will
-                be deduplicated before return.
+            limit: Optional safety cap on the number of family-name
+                buckets collected per dedup pass (token, phonetic).
+                When `None` (default) each pass paginates exhaustively
+                via composite aggregation, so every bucket with at
+                least two records is considered. When set, each pass
+                stops paging once it has collected `limit` buckets and
+                logs that the cap fired.
+            since: Optional explicit cutoff timestamp. When given,
+                overrides the cached bookmark for this call. Naive
+                datetimes are treated as UTC.
+            full_sweep: When `True`, ignore any stored bookmark and
+                consider every candidate pair. The new bookmark is
+                still written on success so the next incremental run
+                resumes from this sweep's start time.
 
         Returns:
             A list of candidate-pair dicts, sorted by `score`
@@ -1396,14 +1650,21 @@ class NamesSyncService(Service):
         identity = identity or system_identity
         threshold = GIVEN_NAME_SIMILARITY_THRESHOLD
 
+        sweep_started_at = datetime.now(UTC)
+        bookmark: datetime | None
+        if full_sweep:
+            bookmark = None
+        elif since is not None:
+            bookmark = since
+        else:
+            bookmark = self._read_dedup_bookmark()
+
         buckets_by_pass = self._fetch_dedup_buckets(identity=identity, limit=limit)
 
         # Deduplicate pairs that surface in multiple buckets (the full
         # family form + each piece, plus each phonetic code) across
         # both passes. Key: frozenset of the two record UUIDs; value:
-        # highest-scoring candidate dict so far. A token-exact
-        # full-family hit (no discount) will beat any partial or
-        # phonetic match for the same pair.
+        # highest-scoring candidate dict so far.
         best_by_pair: dict[frozenset[str], dict[str, Any]] = {}
 
         for family_comparison in ("token", "phonetic"):
@@ -1414,6 +1675,10 @@ class NamesSyncService(Service):
                     threshold,
                     family_comparison=family_comparison,
                 ):
+                    if bookmark is not None and not _pair_touches_recent(
+                        cand, bookmark
+                    ):
+                        continue
                     key = frozenset((
                         cand["record_a"]["uuid"],
                         cand["record_b"]["uuid"],
@@ -1424,30 +1689,40 @@ class NamesSyncService(Service):
 
         candidates = list(best_by_pair.values())
         candidates.sort(key=lambda c: c["score"], reverse=True)
+        for c in candidates:
+            self._set_duplicates_for_pair(identity, **c)
+        # Remove stale `possible_duplicates` cross-references to records
+        # that no longer exist in the Names index.
+        if full_sweep:
+            self._prune_stale_cross_refs(identity=identity)
+        self._write_dedup_bookmark(sweep_started_at)
         return candidates
 
     def _fetch_dedup_buckets(
         self,
         *,
         identity,
-        limit: int,
+        limit: int | None = None,
     ) -> dict[str, list[tuple[str, list[NamesRecordDict]]]]:
-        """Run both dedup-pass aggregations in one OpenSearch request.
+        """Page exhaustively through both dedup-pass bucket spaces.
 
-        OpenSearch supports any number of sibling top-level aggs in a
-        single request, and both passes share the same base query
-        (Names permission filter + `exists props.family_part_tokens`),
-        so they are combined here to halve the round-trip cost. The
-        `exists` narrowing is keyed on `props.family_part_tokens`
+        Each pass uses a `composite` aggregation paged via `after_key`,
+        so every family-token / phonetic-code bucket with at least two
+        records is enumerated rather than only the top-N by doc_count.
+        A `bucket_selector` pipeline agg drops singletons server-side.
+        Each composite bucket carries a `top_hits` sub-aggregation
+        pulling the full record source so scoring runs in Python
+        without additional OS round trips.
+
+        The two passes share the same base query (Names permission
+        filter + `exists props.family_part_tokens`) but each needs its
+        own `after_key` cursor, so they run as separate paged loops.
+        The `exists` narrowing is keyed on `props.family_part_tokens`
         only because the payload builders always populate both fields
         together; a record with phonetic tokens always has part
-        tokens. The phonetic agg simply produces no buckets for docs
+        tokens. The phonetic pass simply produces no buckets for docs
         that lack `props.family_phonetic_tokens` (e.g. when Metaphone
         returned an empty code for every piece).
-
-        Each agg attaches a `top_hits` sub-aggregation pulling the
-        full record source so scoring runs in Python without
-        additional OS round trips.
 
         Logs and returns empty bucket lists for both passes on any
         OpenSearch error so the caller's downstream logic stays
@@ -1455,8 +1730,11 @@ class NamesSyncService(Service):
 
         Args:
             identity: Invenio identity to scope the search.
-            limit: `terms.size` for each aggregation; max bucket count
-                returned per pass.
+            limit: Optional safety cap on buckets collected per pass.
+                When `None` (default) each pass paginates exhaustively.
+                When set, paging stops once a pass has collected
+                `limit` buckets and an info log records that the cap
+                fired.
 
         Returns:
             A dict::
@@ -1470,67 +1748,103 @@ class NamesSyncService(Service):
             "token": [],
             "phonetic": [],
         }
-        service = self.names_service
-        # `create_search()` returns a permission-filtered DSL `Search`
-        # instance without the params/facets/sort interpreters that
-        # `search()` would layer on. We attach aggregations directly
-        # because the high-level `search()` API does not surface
-        # ad-hoc aggs and the configured Names search options have no
-        # facet for the dedup-index fields.
-        try:
-            search = service.create_search(
-                identity=identity,
-                record_cls=service.record_cls,
-                search_opts=service.config.search,
-                extra_filter=dsl.Q("exists", field="props.family_part_tokens"),
-            )
-        except Exception:
-            self.logger.warning(
-                "find_duplicate_candidates: create_search failed",
-                exc_info=True,
-            )
-            return empty
-
-        search = search.extra(size=0)  # we only want aggs
-        for agg_name, field in (
-            ("by_part", "props.family_part_tokens.keyword"),
-            ("by_phonetic", "props.family_phonetic_tokens.keyword"),
-        ):
-            search.aggs.bucket(
-                agg_name,
-                "terms",
-                field=field,
-                size=limit,
-                min_doc_count=2,
-            ).bucket(
-                "members",
-                "top_hits",
-                size=self._top_hits_per_dedup_bucket,
-            )
-
-        try:
-            response = search.execute()
-        except Exception:
-            self.logger.warning(
-                "find_duplicate_candidates: agg query failed",
-                exc_info=True,
-            )
-            return empty
-
         out: dict[str, list[tuple[str, list[NamesRecordDict]]]] = {
             "token": [],
             "phonetic": [],
         }
-        for pass_name, agg_name in (("token", "by_part"), ("phonetic", "by_phonetic")):
-            for bucket in response.aggregations[agg_name].buckets:
-                members = cast(
-                    list[NamesRecordDict],
-                    [
-                        hit["_source"]
-                        for hit in bucket.members.to_dict()["hits"]["hits"]
-                    ],
+        service = self.names_service
+        for pass_name, agg_name, field in (
+            ("token", "by_part", "props.family_part_tokens.keyword"),
+            ("phonetic", "by_phonetic", "props.family_phonetic_tokens.keyword"),
+        ):
+            after: dict | None = None
+            cap_hit = False
+            while not cap_hit:
+                # `create_search()` returns a permission-filtered DSL
+                # `Search` instance without the params/facets/sort
+                # interpreters `search()` would layer on. We attach
+                # aggregations directly because the high-level
+                # `search()` API does not surface ad-hoc aggs and the
+                # configured Names search options have no facet for
+                # the dedup-index fields.
+                try:
+                    search = service.create_search(
+                        identity=identity,
+                        record_cls=service.record_cls,
+                        search_opts=service.config.search,
+                        extra_filter=dsl.Q("exists", field="props.family_part_tokens"),
+                    )
+                except Exception:
+                    self.logger.warning(
+                        "find_duplicate_candidates: create_search failed (pass=%s)",
+                        pass_name,
+                        exc_info=True,
+                    )
+                    return empty
+
+                search = search.extra(size=0)
+                composite_kwargs: dict[str, Any] = {
+                    "sources": [{"term": {"terms": {"field": field}}}],
+                    "size": _DEDUP_PAGE_SIZE,
+                }
+                if after is not None:
+                    composite_kwargs["after"] = after
+                composite = search.aggs.bucket(
+                    agg_name, "composite", **composite_kwargs
                 )
-                out[pass_name].append((bucket.key, members))
+                composite.bucket(
+                    "members",
+                    "top_hits",
+                    size=self._top_hits_per_dedup_bucket,
+                )
+                composite.bucket(
+                    "ge_two",
+                    "bucket_selector",
+                    buckets_path={"count": "_count"},
+                    script="params.count >= 2",
+                )
+
+                try:
+                    response = search.execute()
+                except Exception:
+                    self.logger.warning(
+                        "find_duplicate_candidates: agg query failed (pass=%s)",
+                        pass_name,
+                        exc_info=True,
+                    )
+                    return empty
+
+                agg_response = response.aggregations[agg_name]
+                for bucket in agg_response.buckets:
+                    members = cast(
+                        list[NamesRecordDict],
+                        [
+                            hit["_source"]
+                            for hit in bucket.members.to_dict()["hits"]["hits"]
+                        ],
+                    )
+                    out[pass_name].append((bucket.key.term, members))
+                    if limit is not None and len(out[pass_name]) >= limit:
+                        self.logger.info(
+                            "find_duplicate_candidates: limit=%d reached "
+                            "on pass=%s, stopping pagination",
+                            limit,
+                            pass_name,
+                        )
+                        cap_hit = True
+                        break
+                if cap_hit:
+                    break
+
+                next_after = getattr(agg_response, "after_key", None)
+                if next_after is None:
+                    break
+                # AttrDict -> plain dict for the next request body.
+                after = (
+                    next_after.to_dict()
+                    if hasattr(next_after, "to_dict")
+                    else dict(next_after)
+                )
         return out
 
     def _score_bucket_pairs(
@@ -1674,6 +1988,316 @@ class NamesSyncService(Service):
         """Return the set of Names UUIDs the operator has dismissed for `record`."""
         return {str(u) for u in record.get("props", {}).get("dismissed_duplicates", [])}
 
+    def _set_duplicates_for_pair(
+        self,
+        identity: Identity | None,
+        score: float,
+        score_method: str,
+        family_token: str,
+        shared_orcid: str,
+        record_a: NamesRecordDict,
+        record_b: NamesRecordDict,
+    ) -> bool:
+        """Add or refresh a possible-duplicate cross-reference between two Names.
+
+        For each side of the pair, sets
+        `props.possible_duplicates[other_uuid]` to
+        `[score, score_method]`, overwriting any previous entry. The
+        cross-reference is symmetric: each side records the other. The
+        candidate scores flowing from `find_duplicate_candidates`
+        already represent the best across all buckets and passes for
+        the pair *in this sweep*, and each sweep operates on the
+        current state of both records — so the stored entry always
+        reflects this run's decision rather than a stale prior
+        maximum.
+
+        Persists each side via `NamesService.update`, but only if its
+        entry actually changed. A pair whose stored entry already
+        equals `[score, score_method]` on both sides is a no-op that
+        returns `True` without an OS round-trip.
+
+        Skips (returns `False` without writing) when either side has
+        dismissed the other (UUID present in the other's
+        `props.dismissed_duplicates`), or when `record_a` and
+        `record_b` resolve to the same record.
+
+        Args:
+            identity: Optional Invenio identity. Defaults to
+                `system_identity`.
+            score: Numerical similarity score for this pair.
+            score_method: Comparison-strategy code that produced
+                `score`.
+            family_token: Canonical singular family form. Currently
+                informational; accepted so the candidate dict from
+                `find_duplicate_candidates` can be passed via `**c`.
+            shared_orcid: Same-ORCID flag. Currently informational,
+                same reason as `family_token`.
+            record_a: Full Names record (search-index shape).
+            record_b: Full Names record (search-index shape).
+
+        Returns:
+            `True` on successful persistence, including the no-op case
+            when neither side's entry needed to change. `False` when
+            the pair is the same record, when either side has
+            dismissed the other, or when a `service.update` call
+            raises (the cause is logged).
+        """
+        identity = identity or system_identity
+        pid_a, pid_b = record_a["id"], record_b["id"]
+        if pid_a == pid_b:
+            self.logger.warning(
+                "set_duplicates_for_pair: refusing to act on a record "
+                "paired with itself (pid=%s)",
+                pid_a,
+            )
+            return False
+
+        uuid_a = record_a["uuid"]
+        uuid_b = record_b["uuid"]
+
+        if uuid_a in record_b["props"].get(
+            "dismissed_duplicates", []
+        ) or uuid_b in record_a["props"].get("dismissed_duplicates", []):
+            return False
+
+        new_entry = [score, score_method]
+        sides_to_persist: list[tuple[str, NamesRecordDict]] = []
+        for rec, other_uuid, pid in (
+            (record_a, uuid_b, pid_a),
+            (record_b, uuid_a, pid_b),
+        ):
+            pd = rec["props"].setdefault("possible_duplicates", {})
+            if pd.get(other_uuid) != new_entry:
+                pd[other_uuid] = new_entry
+                sides_to_persist.append((pid, rec))
+
+        if not sides_to_persist:
+            return True
+
+        service = self.names_service
+        try:
+            for pid, rec in sides_to_persist:
+                service.update(identity, pid, rec)
+        except Exception:
+            self.logger.warning(
+                "set_duplicates_for_pair: failed to update records "
+                "(pid_a=%s, pid_b=%s)",
+                pid_a,
+                pid_b,
+                exc_info=True,
+            )
+            return False
+
+        self.logger.info(
+            "set_duplicates_for_pair: %s (uuid %s) <-> %s (uuid %s), (%s, %s)",
+            pid_a,
+            uuid_a,
+            pid_b,
+            uuid_b,
+            str(score),
+            score_method,
+        )
+        return True
+
+    # ------------------------------------------------------------------
+    # Stale-cross-reference GC (full-sweep only)
+    # ------------------------------------------------------------------
+
+    def _fetch_live_uuids(self, *, identity: Identity) -> set[str]:
+        """Return the set of UUIDs currently present in the Names index.
+
+        Uses the standard search service entry point so the
+        permission filter and any soft-delete exclusion configured on
+        the Names index apply automatically: a record indexed and
+        readable by the caller's identity is "live" for prune
+        purposes; anything else is gone.
+
+        Projects only the `uuid` field via `_source` filtering so the
+        per-doc payload stays small even on large corpora; iteration
+        is via `scan()` (scroll API), which paginates server-side and
+        avoids holding the full result set in OS memory.
+
+        Failures (search build error or scroll error) log a warning
+        and return an empty set. The caller treats the empty set as a
+        signal to bail rather than declare the entire corpus stale.
+
+        Args:
+            identity: Invenio identity to scope the search.
+
+        Returns:
+            All Names record UUIDs visible to `identity`. Empty set
+            on any error.
+        """
+        service = self.names_service
+        try:
+            search = service.create_search(
+                identity=identity,
+                record_cls=service.record_cls,
+                search_opts=service.config.search,
+            )
+        except Exception:
+            self.logger.warning(
+                "prune_stale_cross_refs: live-UUID create_search failed",
+                exc_info=True,
+            )
+            return set()
+        search = search.source(["uuid"])
+        try:
+            return {str(hit.uuid) for hit in search.scan()}
+        except Exception:
+            self.logger.warning(
+                "prune_stale_cross_refs: live-UUID scan failed",
+                exc_info=True,
+            )
+            return set()
+
+    def _fetch_records_with_cross_refs(
+        self, *, identity: Identity
+    ) -> list[NamesRecordDict]:
+        """Return Names records that currently carry a `possible_duplicates` map.
+
+        Filtered server-side via `exists: props.possible_duplicates`
+        so the prune phase only handles the slice of the corpus that
+        actually has cross-references to potentially clean up. Pulls
+        the full source for each match because the prune step needs
+        the existing dict to mutate it in place before the write-back.
+
+        Iteration is via `scan()`; for any reasonable corpus the slice
+        of records carrying cross-refs should be small enough to
+        materialize, but `scan()` keeps us safe if it isn't.
+
+        Args:
+            identity: Invenio identity to scope the search.
+
+        Returns:
+            List of `NamesRecordDict`-shaped records as indexed.
+            Empty list on any error.
+        """
+        service = self.names_service
+        try:
+            search = service.create_search(
+                identity=identity,
+                record_cls=service.record_cls,
+                search_opts=service.config.search,
+                extra_filter=dsl.Q("exists", field="props.possible_duplicates"),
+            )
+        except Exception:
+            self.logger.warning(
+                "prune_stale_cross_refs: cross-ref create_search failed",
+                exc_info=True,
+            )
+            return []
+        try:
+            return [cast(NamesRecordDict, hit.to_dict()) for hit in search.scan()]
+        except Exception:
+            self.logger.warning(
+                "prune_stale_cross_refs: cross-ref scan failed",
+                exc_info=True,
+            )
+            return []
+
+    def _prune_stale_cross_refs(
+        self, *, identity: Identity | None = None
+    ) -> dict[str, int]:
+        """Drop `possible_duplicates` entries pointing to deleted records.
+
+        Names records are rarely hard-deleted, but when one is, every
+        cross-reference to its UUID becomes a dangling pointer in
+        another record's `props.possible_duplicates` dict. This method
+        is the periodic GC for those pointers and is intended to run
+        from `find_duplicate_candidates` only when `full_sweep=True`.
+
+        Algorithm:
+
+        1. Query the Names index for the set of all live UUIDs
+           (`_fetch_live_uuids`).
+        2. Query the Names index for every record that currently has
+           a `props.possible_duplicates` map
+           (`_fetch_records_with_cross_refs`).
+        3. For each such record, drop any `possible_duplicates` key
+           whose UUID is not in the live set, then `service.update`
+           it back. Records with no stale entries are left alone — no
+           gratuitous writes.
+
+        A defensive empty-live-set check bails before mutating
+        anything. If the live-UUID query failed silently and returned
+        an empty set, treating every cross-ref as stale would nuke
+        the entire `possible_duplicates` graph in one sweep; the
+        check makes that impossible.
+
+        Per-record write failures are logged but do not abort the
+        prune walk; one bad write shouldn't strand the rest of the
+        cleanup.
+
+        Note that this only handles deletions of Names records
+        themselves. User-account deletions deliberately do not cascade
+        into Names deletion in KCWorks (the Names entry is the
+        authority record and persists across user lifecycle events),
+        so the corresponding cross-refs survive a user delete on
+        purpose.
+
+        Args:
+            identity: Optional Invenio identity. Defaults to
+                `system_identity`.
+
+        Returns:
+            A counters dict with three keys:
+
+            * `inspected`: records examined (i.e. records that
+              carried a `possible_duplicates` map at scan time).
+            * `pruned`: records whose stored doc was actually
+              rewritten (had at least one stale entry).
+            * `keys_dropped`: total stale entries removed across all
+              `pruned` records.
+        """
+        identity = identity or system_identity
+
+        live_uuids = self._fetch_live_uuids(identity=identity)
+        if not live_uuids:
+            self.logger.warning(
+                "prune_stale_cross_refs: live-UUID set empty; "
+                "skipping prune to avoid clearing every cross-reference"
+            )
+            return {"inspected": 0, "pruned": 0, "keys_dropped": 0}
+
+        inspected = 0
+        pruned = 0
+        keys_dropped = 0
+        for rec in self._fetch_records_with_cross_refs(identity=identity):
+            inspected += 1
+            pd = rec.get("props", {}).get("possible_duplicates")
+            if not isinstance(pd, dict):
+                continue
+            stale = [u for u in pd if u not in live_uuids]
+            if not stale:
+                continue
+            for u in stale:
+                del pd[u]
+            try:
+                self.names_service.update(identity, rec["id"], rec)
+            except Exception:
+                self.logger.warning(
+                    "prune_stale_cross_refs: update failed (pid=%s)",
+                    rec.get("id"),
+                    exc_info=True,
+                )
+                continue
+            pruned += 1
+            keys_dropped += len(stale)
+
+        if pruned:
+            self.logger.info(
+                "prune_stale_cross_refs: inspected=%d pruned=%d keys_dropped=%d",
+                inspected,
+                pruned,
+                keys_dropped,
+            )
+        return {
+            "inspected": inspected,
+            "pruned": pruned,
+            "keys_dropped": keys_dropped,
+        }
+
     # ------------------------------------------------------------------
     # Dismissed-duplicate registry
     # ------------------------------------------------------------------
@@ -1696,7 +2320,7 @@ class NamesSyncService(Service):
         pid_a: str,
         pid_b: str,
         *,
-        identity,
+        identity: Identity,
         add: bool,
     ) -> bool:
         """Shared backend for dismiss/undismiss of a Names duplicate pair.
@@ -1742,6 +2366,18 @@ class NamesSyncService(Service):
             rec["props"]["dismissed_duplicates"] = list(
                 existing | {other_uuid} if add else existing - {other_uuid}
             )
+            # When dismissing a pair, also drop any standing
+            # `possible_duplicates` cross-reference so the dismissal
+            # immediately removes the pair from the review surface
+            # (rather than waiting for the next dedup sweep to notice
+            # the dismissal). Undismissal is asymmetric here on
+            # purpose: the next sweep is what re-establishes
+            # `possible_duplicates`, scored against the records'
+            # current state; we don't want to fabricate a stale entry.
+            if add:
+                pd = rec["props"].get("possible_duplicates")
+                if isinstance(pd, dict):
+                    pd.pop(other_uuid, None)
 
         try:
             service.update(identity, pid_a, rec_a)
@@ -1772,7 +2408,7 @@ class NamesSyncService(Service):
         pid_a: str,
         pid_b: str,
         *,
-        identity=None,
+        identity: Identity | None = None,
     ) -> bool:
         """Mark two Names records as not-duplicates of each other.
 
@@ -1804,7 +2440,7 @@ class NamesSyncService(Service):
         pid_a: str,
         pid_b: str,
         *,
-        identity=None,
+        identity: Identity | None = None,
     ) -> bool:
         """Reverse a previous `dismiss_duplicate_pair()` call.
 
@@ -1830,10 +2466,128 @@ class NamesSyncService(Service):
             add=False,
         )
 
+    def list_duplicate_pairs(
+        self,
+        *,
+        identity: Identity | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return all Names record pairs currently flagged as possible duplicates.
+
+        Reads the persisted output of `find_duplicate_candidates` /
+        `_set_duplicates_for_pair`: every record carrying a non-empty
+        `props.possible_duplicates` map contributes one row per
+        cross-reference, deduped to one row per symmetric edge.
+
+        Reuses `_fetch_records_with_cross_refs`, so the OS scan is
+        already filtered server-side to the slice of the corpus that
+        actually carries cross-refs (no full-index walk).
+
+        Each side of a pair stores its own `[score, score_method]`
+        copy. Both sides are written in the same `_set_duplicates_for_pair`
+        call, so they should always agree, but a partial-failure mode
+        can desync them. When the two stored entries disagree, this
+        method takes the **higher** score (and its method), and logs
+        a warning so the desync is visible. One-sided edges (the
+        partner record has no matching reverse entry) are likewise
+        logged and skipped — that condition usually means the partner
+        was deleted between the two writes or one update failed.
+
+        Args:
+            identity: Optional Invenio identity. Defaults to
+                `system_identity`.
+
+        Returns:
+            A list of dicts, sorted by score descending and then by
+            `(a_pid, b_pid)` for stable ordering. Each row is shaped::
+
+                {
+                    "score": 0.95,
+                    "score_method": "family_exact+given_fuzzy",
+                    "a_uuid": "...", "a_pid": "kc|jdoe",  "a_name": "Doe, John",
+                    "b_uuid": "...", "b_pid": "0000-...", "b_name": "Doe, Jonathan",
+                }
+        """
+        identity = identity or system_identity
+        records = self._fetch_records_with_cross_refs(identity=identity)
+
+        by_uuid: dict[str, tuple[str, str | None]] = {}
+        side_entries: dict[tuple[str, str], list[Any]] = {}
+
+        for rec in records:
+            uuid_self = rec.get("uuid")
+            pid = rec.get("id")
+            if not uuid_self or not pid:
+                continue
+            by_uuid[uuid_self] = (pid, rec.get("name"))
+            for partner_uuid, entry in (
+                rec.get("props", {}).get("possible_duplicates", {}).items()
+            ):
+                side_entries[(uuid_self, str(partner_uuid))] = list(entry)
+
+        edges: set[tuple[str, str]] = {
+            tuple(sorted([u_self, u_partner]))  # type: ignore[misc]
+            for u_self, u_partner in side_entries
+        }
+
+        out: list[dict[str, Any]] = []
+        for a_uuid, b_uuid in edges:
+            a = by_uuid.get(a_uuid)
+            b = by_uuid.get(b_uuid)
+            if a is None or b is None:
+                self.logger.warning(
+                    "list_duplicate_pairs: one-sided possible_duplicates "
+                    "reference for pair (%s, %s); partner record missing "
+                    "from the cross-ref scan — investigate possible "
+                    "deletion or partial write",
+                    a_uuid,
+                    b_uuid,
+                )
+                continue
+            entry_a = side_entries.get((a_uuid, b_uuid))
+            entry_b = side_entries.get((b_uuid, a_uuid))
+            if entry_a is None or entry_b is None:
+                self.logger.warning(
+                    "list_duplicate_pairs: one-sided possible_duplicates "
+                    "entry for pair (%s, %s); reverse entry missing — "
+                    "investigate possible partial write",
+                    a_uuid,
+                    b_uuid,
+                )
+                continue
+            if entry_a != entry_b:
+                self.logger.warning(
+                    "list_duplicate_pairs: score mismatch on pair "
+                    "(%s, %s): a=%s, b=%s; using higher score",
+                    a_uuid,
+                    b_uuid,
+                    entry_a,
+                    entry_b,
+                )
+            score_a, method_a = entry_a
+            score_b, method_b = entry_b
+            score, method = (
+                (score_a, method_a) if score_a >= score_b else (score_b, method_b)
+            )
+            a_pid, a_name = a
+            b_pid, b_name = b
+            out.append({
+                "score": score,
+                "score_method": method,
+                "a_uuid": a_uuid,
+                "a_pid": a_pid,
+                "a_name": a_name,
+                "b_uuid": b_uuid,
+                "b_pid": b_pid,
+                "b_name": b_name,
+            })
+
+        out.sort(key=lambda r: (-r["score"], r["a_pid"], r["b_pid"]))
+        return out
+
     def list_dismissed_duplicate_pairs(
         self,
         *,
-        identity=None,
+        identity: Identity | None = None,
     ) -> list[dict[str, Any]]:
         """Return all Names record pairs currently marked as not-duplicates.
 

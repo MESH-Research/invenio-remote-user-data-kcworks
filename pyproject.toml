@@ -48,9 +48,8 @@ optional-dependencies.tests = [
   "requests-mock",
 ]
 urls.Homepage = "https://github.com/MESH-Research/invenio-remote-user-data-kcworks"
-scripts.user-data = "invenio_remote_user_data_kcworks.cli:cli"
-entry-points."flask.commands".user-data = "invenio_remote_user_data_kcworks.cli:cli"
-entry-points."flask.commands".kcworks-names = "invenio_remote_user_data_kcworks.cli:names_cli"
+scripts.user-data = "invenio_remote_user_data_kcworks.cli.main:cli"
+entry-points."flask.commands".user-data = "invenio_remote_user_data_kcworks.cli.main:cli"
 entry-points."invenio_base.api_apps".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:InvenioRemoteUserData"
 entry-points."invenio_base.api_blueprints".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.blueprints:create_api_blueprint"
 entry-points."invenio_base.apps".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:InvenioRemoteUserData"
@@ -61,8 +60,8 @@ entry-points."invenio_queues.queues".invenio_remote_user_data_kcworks = "invenio
 [dependency-groups]
 dev = ["bumpver>=2025.1131"]
 
-[tool.setuptools.package-data]
-invenio_remote_user_data_kcworks = [
+[tool.setuptools]
+package-data.invenio_remote_user_data_kcworks = [
   "data/given_name_variants/*.csv",
   "data/given_name_variants/LICENSE",
   "data/given_name_variants/README.md",

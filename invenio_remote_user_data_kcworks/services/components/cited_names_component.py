@@ -4,7 +4,7 @@
 # and/or modify it under the terms of the MIT License; see LICENSE file for
 # more details.
 
-"""Service component that materializes Names records from ORCID-bearing creators.
+"""Service component that creates or updates Names records from ORCID-bearing creators.
 
 When a deposit draft is saved (created or updated) with creators or contributors
 carrying ORCID iDs, this component invokes
@@ -30,61 +30,7 @@ from flask_principal import Identity
 from invenio_drafts_resources.services.records.components import ServiceComponent
 
 from ...proxies import current_names_sync_service
-
-
-def _build_payload(
-    bare_orcid: str,
-    person_or_org: dict[str, Any],
-    affiliations: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Assemble a ``NamesRecordDict``-shaped payload for ``upsert_cited_orcid_name``.
-
-    The resulting dict's ``id`` is the bare ORCID (used as PID), and its
-    contents are derived entirely from data already in the draft (no API I/O).
-    """
-    family = person_or_org.get("family_name", "").strip()
-    given = person_or_org.get("given_name", "").strip()
-    full_name = person_or_org.get("name", "").strip()
-    display_name = full_name or ", ".join(p for p in (family, given) if p) or bare_orcid
-    affiliation_names = [a.get("name", "").strip() for a in affiliations]
-    return {
-        "id": bare_orcid,
-        "given_name": given,
-        "family_name": family,
-        "name": display_name,
-        "identifiers": [{"scheme": "orcid", "identifier": bare_orcid}],
-        "affiliations": [{"name": n} for n in affiliation_names if n],
-    }
-
-
-def _collect_orcid_payloads(metadata: dict[str, Any]) -> list[dict[str, Any]]:
-    """Build one Names payload per personal-type creator/contributor with an ORCID iD.
-
-    Duplicate ORCIDs within a single draft are de-duplicated; only the first
-    occurrence yields a payload.
-
-    Returns:
-        A list of ``NamesRecordDict``-shaped payloads (possibly empty).
-    """
-    entries = metadata.get("creators", []) + metadata.get("contributors", [])
-    payloads: list[dict[str, Any]] = []
-    seen_orcids: set[str] = set()
-    for entry in entries:
-        person_or_org = entry["person_or_org"]
-        # ORCID iDs only make sense for personal entries; orgs may carry an
-        # ORCID-shaped identifier by accident but shouldn't yield a Names person.
-        if person_or_org["type"] != "personal":
-            continue
-        ids = person_or_org.get("identifiers", [])
-        orcid = next((i["identifier"] for i in ids if i["scheme"] == "orcid"), "")
-
-        if not orcid or orcid in seen_orcids:
-            continue
-        seen_orcids.add(orcid)
-        payloads.append(
-            _build_payload(orcid, person_or_org, entry.get("affiliations", []))
-        )
-    return payloads
+from ...utils.orcid_payload import collect_orcid_payloads
 
 
 class CitedNamesUpsertComponent(ServiceComponent):
@@ -106,7 +52,7 @@ class CitedNamesUpsertComponent(ServiceComponent):
         """Build ORCID payloads from ``data`` and upsert each via the Names service."""
         if not data:
             return
-        payloads = _collect_orcid_payloads(data["metadata"])
+        payloads = collect_orcid_payloads(data["metadata"])
         for payload in payloads:
             try:
                 current_names_sync_service.upsert_cited_orcid_name(

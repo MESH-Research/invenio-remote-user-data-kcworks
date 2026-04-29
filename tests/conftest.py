@@ -1,594 +1,502 @@
-# -*- coding: utf-8 -*-
+# Part of invenio-remote-user-data-kcworks.
+# Copyright (C) 2023-2026, MESH Research.
 #
-# Copyright (C) 2023-4 Mesh Research
-#
-# invenio-remote-user-data-kcworks is free software; you can redistribute
-# it and/or modify it under the terms of the MIT License; see LICENSE file
+# invenio-remote-user-data-kcworks is free software; you can redistribute it
+# and/or modify it under the terms of the MIT License; see LICENSE file
 # for more details.
 
-"""Pytest configuration.
+"""Top-level pytest configuration for invenio-remote-user-data-kcworks tests.
 
-See https://pytest-invenio.readthedocs.io/ for documentation on which test
-fixtures are available.
+This conftest mirrors the structure used by the sibling KCWorks packages
+(``invenio-stats-dashboard`` in particular), so that fixture composition
+stays consistent across the family. Two intentional differences from the
+root KCWorks ``conftest.py``:
+
+1. ``create_app`` returns ``invenio_app.factory.create_api`` (not
+   ``create_app``). The package's own tests focus on REST API resources
+   and CLI commands; using ``create_api`` lets us exercise blueprints
+   registered under ``invenio_base.api_apps`` without spinning up the
+   UI app.
+2. ``test_config`` keys are set inline rather than loaded from an
+   ``invenio.cfg`` (the root project's config is much larger and full of
+   deployment-specific values). The bulk of root's ``invenio.cfg`` keys
+   that can be useful for these tests are listed below as commented
+   placeholders so a contributor can flip them on without hunting.
+
+Per the agreed plan, all the bespoke ``COMMUNITIES_*`` overrides and
+duplicate vocabulary/user/role fixtures previously defined here have
+been removed in favour of the shared fixture modules vendored from
+``kcworks-test-fixtures`` (the ``tests/fixtures`` submodule).
 """
 
+from collections import namedtuple
+from collections.abc import Callable, Generator
+from pathlib import Path
+from typing import Any
+
+import jinja2
 import pytest
-from flask_security import login_user
-from flask_security.utils import hash_password
-from invenio_access.models import ActionRoles, Role
-from invenio_access.permissions import superuser_access, system_identity
-from invenio_accounts.testutils import login_user_via_session
-from invenio_administration.permissions import administration_access_action
-from invenio_app.factory import create_api  # create_app as create_ui_api
-from invenio_communities.proxies import (
-    current_communities,
+from flask import Flask
+from invenio_app.factory import create_api as _create_app
+from invenio_files_rest.models import Location
+from invenio_queues import current_queues
+from invenio_search.proxies import current_search_client
+from opensearchpy import OpenSearch
+
+from .fixtures.custom_fields import test_config_fields
+from .fixtures.frontend import MockManifestLoader
+from .fixtures.identifiers import test_config_identifiers
+
+pytest_plugins = (
+    "celery.contrib.pytest",
+    "tests.fixtures.caching",
+    "tests.fixtures.cli",
+    "tests.fixtures.communities",
+    "tests.fixtures.community_events",
+    "tests.fixtures.custom_fields",
+    "tests.fixtures.files",
+    "tests.fixtures.fixtures",
+    "tests.fixtures.frontend",
+    "tests.fixtures.identifiers",
+    "tests.fixtures.idms",
+    "tests.fixtures.mail",
+    "tests.fixtures.records",
+    "tests.fixtures.roles",
+    "tests.fixtures.search_provisioning",
+    "tests.fixtures.stats",
+    "tests.fixtures.uow",
+    "tests.fixtures.users",
+    "tests.fixtures.vocabularies.affiliations",
+    "tests.fixtures.vocabularies.community_types",
+    "tests.fixtures.vocabularies.date_types",
+    "tests.fixtures.vocabularies.descriptions",
+    "tests.fixtures.vocabularies.funding_and_awards",
+    "tests.fixtures.vocabularies.languages",
+    "tests.fixtures.vocabularies.licenses",
+    "tests.fixtures.vocabularies.resource_types",
+    "tests.fixtures.vocabularies.roles",
+    "tests.fixtures.vocabularies.subjects",
+    "tests.fixtures.vocabularies.title_types",
+    "tests.pytest_plugins.pytest_live_status",
 )
-from invenio_oauthclient.models import UserIdentity
-from invenio_oauth2server.models import Token
-from invenio_queues.proxies import current_queues
-from invenio_records_resources.services.custom_fields import (
-    TextCF,
-)
-from invenio_records_resources.services.custom_fields.errors import (
-    CustomFieldsException,
-)
-from invenio_records_resources.services.custom_fields.mappings import (
-    Mapping,
-)
-from invenio_records_resources.services.custom_fields.validate import (
-    validate_custom_fields,
-)
-from invenio_search import current_search_client
-from invenio_search.engine import dsl
-from invenio_search.engine import search as search_engine
-from invenio_search.utils import build_alias_name
-from invenio_vocabularies.proxies import current_service as vocabulary_service
-from invenio_vocabularies.records.api import Vocabulary
-from kombu import Exchange
-
-from marshmallow import Schema, fields
-import os
-
-# from pprint import pformat
-
-pytest_plugins = ("celery.contrib.pytest",)
-
-AllowAllPermission = type(
-    "Allow",
-    (),
-    {"can": lambda self: True, "allows": lambda *args: True},
-)()
 
 
-def AllowAllPermissionFactory(obj_id, action):
-    return AllowAllPermission
+def _(x: Any) -> Any:
+    """Identity function for string extraction.
 
-
-def _(x):
-    """Identity function for string extraction."""
+    Returns:
+        Any: The input value unchanged.
+    """
     return x
 
 
-test_config = {
-    # "THEME_FRONTPAGE_TEMPLATE": "invenio_remote_user_data_kcworks/base.html",
+test_config: dict[str, Any] = {
+    **test_config_identifiers,
+    **test_config_fields,
+    # --- Database -----------------------------------------------------------
     "SQLALCHEMY_DATABASE_URI": (
-        "postgresql+psycopg2://invenio:invenio@localhost/invenio"
+        "postgresql+psycopg2://invenio:invenio@localhost:5432/invenio"
     ),
-    "SQLALCHEMY_TRACK_MODIFICATIONS": True,
-    "SQLALCHEMY_POOL_SIZE": None,
-    "SQLALCHEMY_POOL_TIMEOUT": None,
-    "FILES_REST_DEFAULT_STORAGE_CLASS": "L",
-    "INVENIO_WTF_CSRF_ENABLED": False,
-    "INVENIO_WTF_CSRF_METHODS": [],
+    "SQLALCHEMY_TRACK_MODIFICATIONS": False,
+    # "SQLALCHEMY_POOL_SIZE": None,        # uncomment to disable pooling
+    # "SQLALCHEMY_POOL_TIMEOUT": None,
+    # --- Search -------------------------------------------------------------
+    "SEARCH_INDEX_PREFIX": "",
+    # --- Postgres connection (for tooling that reads these directly) -------
+    "POSTGRES_USER": "invenio",
+    "POSTGRES_PASSWORD": "invenio",
+    "POSTGRES_DB": "invenio",
+    # --- Web/security -------------------------------------------------------
+    "WTF_CSRF_ENABLED": False,
+    "WTF_CSRF_METHODS": [],
+    "RATELIMIT_ENABLED": False,
     "APP_DEFAULT_SECURE_HEADERS": {
         "content_security_policy": {"default-src": []},
         "force_https": False,
     },
+    # --- Queues / Celery ----------------------------------------------------
     "BROKER_URL": "amqp://guest:guest@localhost:5672//",
-    "QUEUES_BROKER_URL": "amqp://guest:guest@localhost:5672//",
-    "REMOTE_USER_DATA_MQ_EXCHANGE": Exchange(
-        "user-data-updates",
-        type="direct",
-        delivery_mode="transient",  # in-memory queue
-        durable=True,
-    ),
-    "CELERY_CACHE_BACKEND": "memory",
-    "CELERY_RESULT_BACKEND": "cache",
     "CELERY_TASK_ALWAYS_EAGER": True,
     "CELERY_TASK_EAGER_PROPAGATES_EXCEPTIONS": True,
-    "RATELIMIT_ENABLED": False,
+    "CELERY_LOGLEVEL": "DEBUG",
+    "CELERY_CACHE_BACKEND": "memory",
+    "CELERY_RESULT_BACKEND": "cache",
+    # --- Invenio paths ------------------------------------------------------
+    "INVENIO_INSTANCE_PATH": "/opt/invenio/var/instance",
+    # --- Mail ---------------------------------------------------------------
+    # The package's tests don't actually send mail, but invenio-mail still
+    # wants the keys to exist; uncomment if a test needs real configuration.
+    # "MAIL_SUPPRESS_SEND": True,
+    # "MAIL_SERVER": "localhost",
+    # "MAIL_PORT": 25,
+    # "MAIL_USE_TLS": False,
+    # "MAIL_USE_SSL": False,
+    # "MAIL_USERNAME": None,
+    # "MAIL_PASSWORD": None,
+    # "MAIL_DEFAULT_SENDER": "no-reply@example.com",
+    # --- Test secrets -------------------------------------------------------
     "SECRET_KEY": "test-secret-key",
     "SECURITY_PASSWORD_SALT": "test-secret-key",
+    # --- Webpack / Frontend stub -------------------------------------------
+    "WEBPACKEXT_MANIFEST_LOADER": MockManifestLoader,
+    # --- Test mode ----------------------------------------------------------
     "TESTING": True,
+    "DEBUG": True,
+    # --- DataCite (faked; see explicit block below) ------------------------
+    # "DATACITE_ENABLED": True,
+    # "DATACITE_USERNAME": "INVALID",
+    # "DATACITE_PASSWORD": "INVALID",
+    # "DATACITE_DATACENTER_SYMBOL": "TEST",
+    # "DATACITE_PREFIX": "10.17613",
+    # "DATACITE_TEST_MODE": True,
+    # --- Site URLs (overridden below from environment) ---------------------
+    # "SITE_API_URL": "https://127.0.0.1:5000/api",
+    # "SITE_UI_URL": "https://127.0.0.1:5000",
+    # ----------------------------------------------------------------------
+    # invenio-remote-user-data-kcworks specific overrides
+    # ----------------------------------------------------------------------
+    # The package config defaults (see invenio_remote_user_data_kcworks/
+    # config.py) are appropriate for tests as-is. Override here if a test
+    # case needs different behaviour.
+    #
+    # "REMOTE_USER_DATA_NAMES_AUTO_MERGE_ON_ORCID": True,
+    # "REMOTE_USER_DATA_NAMES_DEDUPE_REPORT_PATH": None,
+    # "REMOTE_USER_DATA_ORCID_PROXY_ENABLED": False,
+    # "REMOTE_USER_DATA_ORCID_USE_SANDBOX": False,
+    # "REMOTE_USER_DATA_ORCID_DAILY_QUOTA": 90_000,
+    # "REMOTE_USER_DATA_ORCID_REQUESTS_PER_SECOND": 8,
+    # "REMOTE_USER_DATA_API_TIMEOUT": 5,
+    # "REMOTE_USER_DATA_UPDATE_INTERVAL": 1,
+    # "REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY": 3600,
+    #
+    # "SSO_BROKER_LOGIN_URL": None,
+    # "SSO_BROKER_SILENT_LOGIN_URL": None,
+    # "SSO_BROKER_VERIFY_NONCE_URL": None,
+    # "SSO_BROKER_RETRY_COOKIE_NAME": "_sso_checked",
+    # "SSO_BROKER_COOKIE_TTL": 300,
+    # "SSO_BROKER_SILENT_LOGIN_TIMEOUT": 3,
 }
 
-test_config["COMMUNITIES_ROLES"] = [
-    dict(
-        name="reader",
-        title=_("Reader"),
-        description=_("Can view restricted records."),
-        can_view=True,
-    ),
-    dict(
-        name="curator",
-        title=_("Curator"),
-        description=_("Can curate records and view restricted records."),
-        can_curate=True,
-        can_view=True,
-    ),
-    dict(
-        name="manager",
-        title=_("Manager"),
-        description=_(
-            "Can manage members, curate records and view restricted records."
-        ),
-        can_manage_roles=["manager", "curator", "reader"],
-        can_manage=True,
-        can_curate=True,
-        can_view=True,
-    ),
-    # dict(
-    #     name="administrator",
-    #     title=_("Administrator"),
-    #     description=_("Full administrative access to the entire community."),
-    #     can_manage_roles=["administrator", "manager", "curator", "reader"],
-    #     can_manage=True,
-    #     can_curate=True,
-    #     can_view=True,
-    # ),
-    dict(
-        name="owner",
-        title=_("Owner"),
-        description=_("Full administrative access to the entire community."),
-        can_manage_roles=[
-            "owner",
-            "administrator",
-            "manager",
-            "curator",
-            "reader",
-        ],
-        can_manage=True,
-        can_curate=True,
-        can_view=True,
-        is_owner=True,
-    ),
-]
-"""Community roles."""
+# --- Logging ---------------------------------------------------------------
+parent_path = Path(__file__).parent
+log_folder_path = parent_path / "test_logs"
+log_file_path = log_folder_path / "invenio.log"
+if not log_file_path.exists():
+    log_file_path.parent.mkdir(parents=True, exist_ok=True)
+    log_file_path.touch()
 
-test_config["COMMUNITIES_NAMESPACES"] = {
-    "kcr": "https://invenio-dev.hcommons-staging.org/terms/"
-}
+test_config["LOGGING_FS_LEVEL"] = "DEBUG"
+test_config["LOGGING_FS_LOGFILE"] = str(log_file_path)
+test_config["LOGGING_CONSOLE_LEVEL"] = "DEBUG"
+test_config["CELERY_LOGFILE"] = str(log_folder_path / "celery.log")
 
-test_config["COMMUNITIES_CUSTOM_FIELDS"] = [
-    TextCF(name="kcr:commons_instance"),
-    TextCF(name="kcr:commons_group_id"),
-    TextCF(name="kcr:commons_group_name"),
-    TextCF(name="kcr:commons_group_description"),
-    TextCF(name="kcr:commons_group_visibility"),
-]
+# --- DataCite (faked) ------------------------------------------------------
+test_config["DATACITE_ENABLED"] = True
+test_config["DATACITE_USERNAME"] = "INVALID"
+test_config["DATACITE_PASSWORD"] = "INVALID"
+test_config["DATACITE_DATACENTER_SYMBOL"] = "TEST"
+test_config["DATACITE_PREFIX"] = "10.17613"
+test_config["DATACITE_TEST_MODE"] = True
 
-test_config["COMMUNITIES_CUSTOM_FIELDS_UI"] = [
-    {
-        "section": "Linked Commons Group",
-        "hidden": False,
-        "description": ("Information about a Commons group that owns the collection"),
-        "fields": [
-            {
-                "field": "kcr:commons_group_name",
-                "ui_widget": "Input",
-                "props": {
-                    "label": "Commons Group Name",
-                    "placeholder": "",
-                    "icon": "",
-                    "description": ("Name of the Commons group."),
-                    "disabled": True,
-                },
-            },
-            {
-                "field": "kcr:commons_group_id",
-                "ui_widget": "Input",
-                "props": {
-                    "label": "Commons Group ID",
-                    "placeholder": "",
-                    "icon": "",
-                    "description": ("ID of the Commons group"),
-                    "disabled": True,
-                },
-            },
-            {
-                "field": "kcr:commons_instance",
-                "ui_widget": "Input",
-                "props": {
-                    "label": "Commons Instance",
-                    "placeholder": "",
-                    "icon": "",
-                    "description": (
-                        "The Commons to which the group belongs (e.g., "
-                        "STEMEd+ Commons, MLA Commons, Humanities Commons)"
-                    ),
-                    "disabled": True,
-                },
-            },
-            {
-                "field": "kcr:commons_group_description",
-                "ui_widget": "Input",
-                "props": {
-                    "label": "Commons Group Description",
-                    "placeholder": "",
-                    "icon": "",
-                    "description": ("Description of the Commons group."),
-                    "disabled": True,
-                },
-            },
-            {
-                "field": "kcr:commons_group_visibility",
-                "ui_widget": "Input",
-                "props": {
-                    "label": "Commons Group Visibility",
-                    "placeholder": "",
-                    "icon": "",
-                    "description": ("Visibility of the Commons group."),
-                    "disabled": True,
-                },
-            },
-        ],
-    }
-]
+# --- Site URLs (env-overridable for cross-environment runs) ----------------
+import os  # noqa: E402
+
+test_config["SITE_API_URL"] = os.environ.get(
+    "INVENIO_SITE_API_URL", "https://127.0.0.1:5000/api"
+)
+test_config["SITE_UI_URL"] = os.environ.get(
+    "INVENIO_SITE_UI_URL", "https://127.0.0.1:5000"
+)
 
 
-SITE_UI_URL = os.environ.get("INVENIO_SITE_UI_URL", "http://localhost:5000")
+@pytest.fixture(scope="session")
+def celery_config(celery_config) -> dict:
+    """Celery config fixture for invenio-remote-user-data-kcworks.
+
+    Returns:
+        dict: Celery configuration dictionary.
+    """
+    celery_config["logfile"] = str(log_folder_path / "celery.log")
+    celery_config["loglevel"] = "DEBUG"
+    celery_config["task_always_eager"] = True
+    celery_config["cache_backend"] = "memory"
+    celery_config["result_backend"] = "cache"
+    celery_config["task_eager_propagates_exceptions"] = True
+
+    return dict(celery_config)
 
 
-# Vocabularies
+@pytest.fixture(scope="session")
+def celery_enable_logging() -> bool:
+    """Enable Celery logging for tests.
+
+    Returns:
+        bool: True to enable Celery logging.
+    """
+    return True
+
+
+@pytest.yield_fixture(scope="module")
+def location(database: Callable) -> Generator[Location, None, None]:
+    """Create a default ``Location`` for the module's tests.
+
+    Use this fixture if your test requires a `files location <https://invenio-
+    files-rest.readthedocs.io/en/latest/api.html#invenio_files_rest.models.
+    Location>`_. The location will be a default location with the name
+    ``pytest-location``.
+
+    Yields:
+        Location: The created test location.
+    """
+    import shutil
+    import tempfile
+
+    uri = tempfile.mkdtemp()
+    location_obj = Location(name="pytest-location", uri=uri, default=True)
+
+    database.session.add(location_obj)
+    database.session.commit()
+
+    yield location_obj
+
+    shutil.rmtree(uri)
+
+
+# Namedtuple aggregating the fixtures most tests need together. Mirrors the
+# stats-dashboard ``RunningApp`` so a developer moving between packages sees
+# the same surface.
+RunningApp = namedtuple(
+    "RunningApp",
+    [
+        "app",
+        "location",
+        "cache",
+        "affiliations_v",
+        "awards_v",
+        "community_type_v",
+        "contributors_role_v",
+        "creators_role_v",
+        "date_type_v",
+        "description_type_v",
+        "funders_v",
+        "language_v",
+        "licenses_v",
+        # "relation_type_v",
+        "resource_type_v",
+        "subject_v",
+        "title_type_v",
+        "create_communities_custom_fields",
+        "create_records_custom_fields",
+    ],
+)
+
+
+@pytest.fixture(scope="function")
+def running_app(
+    app,
+    location,
+    cache,
+    affiliations_v,
+    awards_v,
+    community_type_v,
+    contributors_role_v,
+    creators_role_v,
+    date_type_v,
+    description_type_v,
+    funders_v,
+    language_v,
+    licenses_v,
+    # relation_type_v,
+    resource_type_v,
+    subject_v,
+    title_type_v,
+    create_communities_custom_fields,
+    create_records_custom_fields,
+) -> RunningApp:
+    """Provide an app with the typically needed db data loaded.
+
+    All of these fixtures are often needed together, so collecting them
+    under a semantic umbrella makes sense.
+
+    Returns:
+        RunningApp: The running application instance fixture.
+    """
+    return RunningApp(
+        app,
+        location,
+        cache,
+        affiliations_v,
+        awards_v,
+        community_type_v,
+        contributors_role_v,
+        creators_role_v,
+        date_type_v,
+        description_type_v,
+        funders_v,
+        language_v,
+        licenses_v,
+        # relation_type_v,
+        resource_type_v,
+        subject_v,
+        title_type_v,
+        create_communities_custom_fields,
+        create_records_custom_fields,
+    )
+
+
+@pytest.fixture(scope="function")
+def search_clear(search_clear) -> Generator[OpenSearch, None, None]:
+    """Clear search indices and templates between tests (function scope).
+
+    Extends the ``pytest_invenio.search_clear`` fixture to also drop stats
+    indices/templates and to flush the community identity cache before each
+    test (preventing stale role data leaking across tests).
+
+    Yields:
+        The OpenSearch client (same as the base ``search_clear`` fixture).
+    """
+    from invenio_communities.proxies import current_identities_cache
+
+    current_identities_cache.flush()
+
+    yield search_clear
+
+    current_search_client.indices.delete("*stats*", ignore=[404])
+    current_search_client.indices.delete_template("*stats*", ignore=[404])
 
 
 @pytest.fixture(scope="module")
-def resource_type_type(app):
-    """Resource type vocabulary type."""
-    return vocabulary_service.create_type(system_identity, "resourcetypes", "rsrct")
+def template_loader() -> Callable:
+    """Provide overloaded and custom templates to the test app.
+
+    Returns:
+        Callable: A function that loads templates for the test app.
+    """
+
+    def load_templates(app):
+        """Load templates for the test app."""
+        package_root = Path(__file__).parent.parent
+
+        # Package's own templates (if/when the package adds any)
+        package_template_path = (
+            package_root
+            / "invenio_remote_user_data_kcworks"
+            / "templates"
+            / "semantic-ui"
+        )
+        # Test stubs that override anything else
+        test_template_path = (
+            Path(__file__).parent / "helpers" / "templates" / "semantic-ui"
+        )
+
+        # Find installed package template paths
+        theme_template_paths: list[str] = []
+        package_template_paths = {
+            "invenio_theme": ["templates", "semantic-ui"],
+            "invenio_app_rdm": ["theme", "templates", "semantic-ui"],
+            "invenio_banners": ["templates", "semantic-ui"],
+        }
+        for package_name, path_parts in package_template_paths.items():
+            try:
+                package = __import__(package_name)
+                if hasattr(package, "__file__") and package.__file__:
+                    base_path = Path(package.__file__).parent
+                    template_path = base_path
+                    for part in path_parts:
+                        template_path = template_path / part
+                    if template_path.exists():
+                        theme_template_paths.append(str(template_path))
+            except (ImportError, AttributeError):
+                pass
+
+        template_paths: list[str] = []
+        candidates: list[str | Path] = [
+            test_template_path,
+            package_template_path,
+            *[Path(p) for p in theme_template_paths],
+        ]
+        for path in candidates:
+            path_obj = Path(path) if isinstance(path, str) else path
+            if path_obj.exists():
+                template_paths.append(str(path_obj))
+
+        custom_loader = jinja2.ChoiceLoader([
+            app.jinja_loader,
+            jinja2.FileSystemLoader(template_paths),
+        ])
+        app.jinja_loader = custom_loader
+        app.jinja_env.loader = custom_loader
+
+    return load_templates
 
 
 @pytest.fixture(scope="module")
-def resource_type_v(app, resource_type_type):
-    """Resource type vocabulary record."""
-    vocabulary_service.create(
-        system_identity,
-        {
-            "id": "dataset",
-            "icon": "table",
-            "props": {
-                "csl": "dataset",
-                "datacite_general": "Dataset",
-                "datacite_type": "",
-                "openaire_resourceType": "21",
-                "openaire_type": "dataset",
-                "eurepo": "info:eu-repo/semantics/other",
-                "schema.org": "https://schema.org/Dataset",
-                "subtype": "",
-                "type": "dataset",
-            },
-            "title": {"en": "Dataset"},
-            "tags": ["depositable", "linkable"],
-            "type": "resourcetypes",
-        },
-    )
+def app(
+    app,
+    app_config,
+    database,
+    search,
+    template_loader,
+    admin_roles,
+) -> Generator[Flask, None, None]:
+    """Provide an app with the typically needed basic fixtures.
 
-    vocabulary_service.create(
-        system_identity,
-        {  # create base resource type
-            "id": "image",
-            "props": {
-                "csl": "figure",
-                "datacite_general": "Image",
-                "datacite_type": "",
-                "openaire_resourceType": "25",
-                "openaire_type": "dataset",
-                "eurepo": "info:eu-repo/semantic/other",
-                "schema.org": "https://schema.org/ImageObject",
-                "subtype": "",
-                "type": "image",
-            },
-            "icon": "chart bar outline",
-            "title": {"en": "Image"},
-            "tags": ["depositable", "linkable"],
-            "type": "resourcetypes",
-        },
-    )
+    Use in conjunction with the ``running_app`` fixture for a complete
+    app + db data set. This fixture sets up the basic services (db,
+    search, template loader, queues) once per module; ``running_app`` is
+    function-scoped and resets per-test data.
 
-    vocab = vocabulary_service.create(
-        system_identity,
-        {
-            "id": "image-photograph",
-            "props": {
-                "csl": "graphic",
-                "datacite_general": "Image",
-                "datacite_type": "Photo",
-                "openaire_resourceType": "25",
-                "openaire_type": "dataset",
-                "eurepo": "info:eu-repo/semantic/other",
-                "schema.org": "https://schema.org/Photograph",
-                "subtype": "image-photograph",
-                "type": "image",
-            },
-            "icon": "chart bar outline",
-            "title": {"en": "Photo"},
-            "tags": ["depositable", "linkable"],
-            "type": "resourcetypes",
-        },
-    )
-
-    Vocabulary.index.refresh()
-
-    return vocab
-
-
-# Basic app fixtures
+    Yields:
+        Flask: The Flask application instance.
+    """
+    current_queues.declare()
+    template_loader(app)
+    yield app
 
 
 @pytest.fixture(scope="module")
 def app_config(app_config) -> dict:
+    """Override the ``pytest_invenio`` app_config with our ``test_config``.
+
+    Returns:
+        dict: The application configuration dictionary.
+    """
     for k, v in test_config.items():
         app_config[k] = v
-    return app_config
+
+    return dict(app_config)
 
 
 @pytest.fixture(scope="module")
-def create_app(entry_points):
-    return create_api
+def create_app(instance_path, entry_points):
+    """Provide the application factory used to build the Flask app.
+
+    Returns ``invenio_app.factory.create_api`` so that REST API blueprints
+    registered under ``invenio_base.api_apps`` (e.g. the package's webhook
+    receiver) are wired into the test app. See the module docstring for
+    why this differs from the root KCWorks ``conftest.py``.
+
+    Returns:
+        Callable: The application factory function.
+    """
+    return _create_app
+
+
+# --- Package-specific fixtures (genuinely unique to user-data) -------------
 
 
 @pytest.fixture()
 def event_queues(app):
-    """Delete and declare test queues."""
+    """Declare and tear down the user-data update message queues.
+
+    The package writes Profiles webhook events onto a Kombu exchange
+    declared via ``REMOTE_USER_DATA_MQ_EXCHANGE`` (see
+    ``invenio_remote_user_data_kcworks/config.py``). Tests that exercise
+    that path need the queues to exist and be empty.
+    """
     current_queues.delete()
     try:
         current_queues.declare()
         yield
     finally:
         current_queues.delete()
-
-
-@pytest.fixture(scope="function")
-def db_session_options():
-    """Database session options.
-
-    Use to override options like ``expire_on_commit`` for the database session, which
-    helps with ``sqlalchemy.orm.exc.DetachedInstanceError`` when models are not bound
-    to the session between transactions/requests/service-calls.
-
-    .. code-block:: python
-
-        @pytest.fixture(scope='function')
-        def db_session_options():
-            return dict(expire_on_commit=False)
-    """
-    return {"expire_on_commit": False}
-
-
-@pytest.fixture(scope="function")
-def custom_fields(app):
-    create_communities_custom_fields(app)
-    return True
-
-
-def create_communities_custom_fields(app):
-    """Creates one or all custom fields for communities.
-
-    $ invenio custom-fields communities create [field].
-    """
-    available_fields = app.config.get("COMMUNITIES_CUSTOM_FIELDS")
-    namespaces = set(app.config.get("COMMUNITIES_NAMESPACES").keys())
-    try:
-        validate_custom_fields(
-            given_fields=None,
-            available_fields=available_fields,
-            namespaces=namespaces,
-        )
-    except CustomFieldsException as e:
-        print(f"Custom fields configuration is not valid. {e.description}")
-    # multiple=True makes it an iterable
-    properties = Mapping.properties_for_fields(None, available_fields)
-
-    try:
-        communities_index = dsl.Index(
-            build_alias_name(current_communities.service.config.record_cls.index._name),
-            using=current_search_client,
-        )
-        communities_index.put_mapping(body={"properties": properties})
-        communities_index.refresh()
-
-    except search_engine.RequestError as e:
-        print("An error occured while creating custom fields.")
-        print(e.info["error"]["reason"])
-
-
-@pytest.fixture(scope="function")
-def user_factory(app, db, UserFixture):
-    def make_user(email="info@inveniosoftware.org", password="password", **kwargs):
-        # with db.session.begin_nested():
-        #     datastore = app.extensions["security"].datastore
-        #     user1 = datastore.create_user(
-        #         email=email,
-        #         password=hash_password(password),
-        #         active=True,
-        #         **kwargs,
-        #     )
-        # db.session.commit()
-        u = UserFixture(
-            email=email,
-            password=password,
-        )
-        u.create(app, db)
-
-        return u.user
-
-    return make_user
-
-
-@pytest.fixture(scope="function")
-def user_factory_logged_in(app, db, user_factory):
-    def client_with_login(
-        client, email="info@inveniosoftware.org", password="password", **kwargs
-    ):
-        """Log in a user to the client."""
-        user = user_factory(email, password)
-        login_user(user)
-        login_user_via_session(client, email=user.email)
-        return client
-
-    return client_with_login
-
-
-@pytest.fixture(scope="function")
-def myuser(UserFixture, app, db):
-    u = UserFixture(
-        email="auser@inveniosoftware.org",
-        password="auser",
-    )
-    u.create(app, db)
-    u.roles = u.user.roles
-    return u
-
-
-@pytest.fixture(scope="function")
-def myuser2(UserFixture, app, db):
-    u = UserFixture(
-        email="myuser2@inveniosoftware.org",
-        password="auser2",
-    )
-    u.create(app, db)
-    u.roles = u.user.roles
-    return u
-
-
-@pytest.fixture()
-def minimal_record():
-    """Minimal record data as dict coming from the external world."""
-    return {
-        "pids": {},
-        "access": {
-            "record": "public",
-            "files": "public",
-        },
-        "files": {
-            "enabled": False,  # Most tests don't care about files
-        },
-        "metadata": {
-            "creators": [
-                {
-                    "person_or_org": {
-                        "family_name": "Brown",
-                        "given_name": "Troy",
-                        "type": "personal",
-                    }
-                },
-                {
-                    "person_or_org": {
-                        "name": "Troy Inc.",
-                        "type": "organizational",
-                    },
-                },
-            ],
-            "publication_date": "2020-06-01",
-            # because DATACITE_ENABLED is True, this field is required
-            "publisher": "Acme Inc",
-            "resource_type": {"id": "image-photograph"},
-            "title": "A Romans story",
-        },
-    }
-
-
-@pytest.fixture()
-def admin_role_need(db):
-    """Store 1 role with 'administration' that has administration-access ActionNeed.
-
-    WHY: This is needed because expansion of ActionNeed is
-         done on the basis of a User/Role being associated with that Need.
-         If no User/Role is associated with that Need (in the DB), the
-         permission is expanded to an empty list.
-    """
-    role = Role(name="administration")
-    db.session.add(role)
-
-    action_role = ActionRoles.create(action=administration_access_action, role=role)
-    db.session.add(action_role)
-
-    db.session.commit()
-
-    return action_role.need
-
-
-@pytest.fixture()
-def admin(UserFixture, app, db, admin_role_need):
-    """Admin user for requests."""
-    u = UserFixture(
-        email="admin@inveniosoftware.org",
-        password="admin",
-    )
-    u.create(app, db)
-
-    u.allowed_token = Token.create_personal(
-        "webhook",
-        u.id,
-        scopes=[],  # , is_internal=False
-    ).access_token
-
-    db.session.commit()
-
-    datastore = app.extensions["security"].datastore
-    _, role = datastore._prepare_role_modify_args(u.user, "administration")
-
-    UserIdentity.create(u.user, "knowledgeCommons", "myuser")
-
-    datastore.add_role_to_user(u.user, role)
-    db.session.commit()
-    return u
-
-
-@pytest.fixture()
-def superuser_role_need(db):
-    """Store 1 role with 'superuser-access' ActionNeed.
-
-    WHY: This is needed because expansion of ActionNeed is
-         done on the basis of a User/Role being associated with that Need.
-         If no User/Role is associated with that Need (in the DB), the
-         permission is expanded to an empty list.
-    """
-    role = Role(name="superuser-access")
-    db.session.add(role)
-
-    action_role = ActionRoles.create(action=superuser_access, role=role)
-    db.session.add(action_role)
-
-    db.session.commit()
-
-    return action_role.need
-
-
-@pytest.fixture()
-def delete_role_need(db):
-    """Store 1 role with 'delete' ActionNeed.
-
-    WHY: This is needed because expansion of ActionNeed is
-         done on the basis of a User/Role being associated with that Need.
-         If no User/Role is associated with that Need (in the DB), the
-         permission is expanded to an empty list.
-    """
-    role = Role(name="delete")
-    db.session.add(role)
-
-    action_role = ActionRoles.create(action=superuser_access, role=role)
-    db.session.add(action_role)
-
-    db.session.commit()
-
-    return action_role.need
-
-
-@pytest.fixture()
-def superuser_identity(admin, superuser_role_need, delete_role_need):
-    """Superuser identity fixture."""
-    identity = admin.identity
-    identity.provides.add(superuser_role_need)
-    identity.provides.add(delete_role_need)
-    return identity

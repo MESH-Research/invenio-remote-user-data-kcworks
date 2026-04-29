@@ -17,6 +17,7 @@ runs without paying the ~1 s / ~230 MB CSV load cost incurred by
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -52,7 +53,7 @@ def stub_equivalence_index(monkeypatch):
 
 
 @pytest.fixture()
-def service(base_app) -> NamesSyncService:
+def service(base_app, monkeypatch) -> NamesSyncService:
     """Construct a `NamesSyncService` against the pytest-invenio base app.
 
     `__init__` only reads `app.config` and `app.logger`; no
@@ -61,11 +62,45 @@ def service(base_app) -> NamesSyncService:
     (`_fetch_dedup_buckets`, the only OS-using method, is patched
     per-test), so no OpenSearch / DB connectivity is needed.
 
+    Side-effect writes are stubbed out so each test can assert the
+    pure shape of `find_duplicate_candidates`'s return value:
+
+    * `_set_duplicates_for_pair` -> no-op returning `True`. The real
+      implementation calls `names_service.update`, which would require
+      a live records resources binding the corpus tests deliberately
+      do not stand up.
+    * `_read_dedup_bookmark` -> returns `None`. Keeps each test's
+      `find_duplicate_candidates(...)` deterministic regardless of
+      whatever any earlier test happened to write to the cache.
+    * `_write_dedup_bookmark` -> no-op. Same reasoning, in reverse:
+      no test should leave a bookmark behind for the next one.
+
+    Tests that exercise the bookmark plumbing override these stubs
+    locally (see the bookmark scenarios further down).
+
     Returns:
         A freshly constructed `NamesSyncService` bound to the
-        pytest-invenio `base_app`.
+        pytest-invenio `base_app` with side-effect writes stubbed.
     """
-    return NamesSyncService(base_app)
+    svc = NamesSyncService(base_app)
+    monkeypatch.setattr(
+        svc, "_set_duplicates_for_pair",
+        lambda *args, **kwargs: True,
+    )
+    monkeypatch.setattr(svc, "_read_dedup_bookmark", lambda: None)
+    monkeypatch.setattr(svc, "_write_dedup_bookmark", lambda ts: None)
+    # The full-sweep GC needs `names_service.update`, which the
+    # corpus tests deliberately don't stand up; stub to a stats-shaped
+    # no-op so `full_sweep=True` paths in these scenarios stay pure.
+    # The dedicated `_prune_stale_cross_refs` scenario re-stubs the
+    # underlying I/O seams instead.
+    monkeypatch.setattr(
+        svc, "_prune_stale_cross_refs",
+        lambda *, identity=None: {
+            "inspected": 0, "pruned": 0, "keys_dropped": 0,
+        },
+    )
+    return svc
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +118,7 @@ def _make_record(
     family_phonetic_tokens: list[str] | None = None,
     orcid: str | None = None,
     dismissed_duplicates: list[str] | None = None,
+    updated: str | None = None,
 ) -> dict[str, Any]:
     """Build a `NamesRecordDict`-shaped literal for scoring tests.
 
@@ -112,7 +148,7 @@ def _make_record(
     identifiers: list[dict[str, str]] = []
     if orcid:
         identifiers.append({"scheme": "orcid", "identifier": orcid})
-    return {
+    rec: dict[str, Any] = {
         "uuid": uuid,
         "id": f"kc|{uuid[:8]}",
         "given_name": given_name,
@@ -120,6 +156,9 @@ def _make_record(
         "props": props,
         "identifiers": identifiers,
     }
+    if updated is not None:
+        rec["updated"] = updated
+    return rec
 
 
 def make_buckets_payload(
@@ -165,7 +204,7 @@ def _patch_buckets(monkeypatch, service, payload):
     """Replace `_fetch_dedup_buckets` with a fixed-payload stub."""
     monkeypatch.setattr(
         service, "_fetch_dedup_buckets",
-        lambda *, identity, limit: payload,
+        lambda *, identity, limit=None: payload,
     )
 
 
@@ -354,7 +393,7 @@ def test_mixed_corpus_yields_full_expected_candidate_list(
             "record_b": obrian,
         },
     ]
-    assert service.find_duplicate_candidates(limit=100) == expected
+    assert service.find_duplicate_candidates() == expected
 
 
 # ---------------------------------------------------------------------------
@@ -400,7 +439,7 @@ def test_no_duplicates_corpus_returns_empty_list(service, monkeypatch):
     ]
     _patch_buckets(monkeypatch, service, make_buckets_payload(corpus))
 
-    assert service.find_duplicate_candidates(limit=100) == []
+    assert service.find_duplicate_candidates() == []
 
 
 # ---------------------------------------------------------------------------
@@ -439,7 +478,7 @@ def test_pair_surfacing_in_many_buckets_is_kept_once_at_best_score(
     )
     _patch_buckets(monkeypatch, service, make_buckets_payload([rec_a, rec_b]))
 
-    assert service.find_duplicate_candidates(limit=100) == [
+    assert service.find_duplicate_candidates() == [
         {
             "score": 1.0,
             "score_method": "family_exact+given_fuzzy",
@@ -449,3 +488,498 @@ def test_pair_surfacing_in_many_buckets_is_kept_once_at_best_score(
             "record_b": rec_b,
         },
     ]
+
+
+# ---------------------------------------------------------------------------
+# Scenario D — Incremental sweep: bookmark filters stale pairs
+# ---------------------------------------------------------------------------
+
+
+def _iso(ts: datetime) -> str:
+    """Render `ts` as an ISO 8601 string of the form OS would index.
+
+    Returns:
+        UTC-normalized ISO 8601 representation of `ts`, matching the
+        shape `_pair_touches_recent` will parse via `fromisoformat`.
+    """
+    return ts.astimezone(UTC).isoformat()
+
+
+def test_since_drops_pairs_where_neither_side_has_been_touched(
+    service, monkeypatch
+):
+    """A pair whose both sides predate the cutoff is dropped from the result.
+
+    Models the steady-state incremental case: nothing in the corpus
+    has changed since the last sweep, so even though the OS
+    aggregation would still return the bucket, the candidate is
+    skipped at pair-time.
+    """
+    bookmark = datetime(2026, 4, 20, 0, 0, tzinfo=UTC)
+    stale_a = _make_record(
+        uuid="stale-a", given_name="Mei", family_name="Lin",
+        family_token="lin", family_phonetic_tokens=["LN"],
+        updated=_iso(bookmark - timedelta(days=7)),
+    )
+    stale_b = _make_record(
+        uuid="stale-b", given_name="Mei", family_name="Lin",
+        family_token="lin", family_phonetic_tokens=["LN"],
+        updated=_iso(bookmark - timedelta(days=2)),
+    )
+    _patch_buckets(monkeypatch, service, make_buckets_payload([stale_a, stale_b]))
+
+    assert service.find_duplicate_candidates(since=bookmark) == []
+
+
+def test_since_keeps_pair_when_one_side_was_touched_after_bookmark(
+    service, monkeypatch
+):
+    """A pair with one fresh side (and one stale side) survives the filter.
+
+    The whole point of pair-time filtering is to catch new joins
+    where the freshly-touched record (e.g. a just-created cited stub)
+    matches an older incumbent. Aggregation-time filtering on
+    `updated` would miss this; pair-time filtering catches it.
+    """
+    bookmark = datetime(2026, 4, 20, 0, 0, tzinfo=UTC)
+    incumbent = _make_record(
+        uuid="incumbent", given_name="Mei", family_name="Lin",
+        family_token="lin", family_phonetic_tokens=["LN"],
+        updated=_iso(bookmark - timedelta(days=400)),
+    )
+    fresh = _make_record(
+        uuid="fresh", given_name="Mei", family_name="Lin",
+        family_token="lin", family_phonetic_tokens=["LN"],
+        updated=_iso(bookmark + timedelta(hours=1)),
+    )
+    _patch_buckets(monkeypatch, service, make_buckets_payload([incumbent, fresh]))
+
+    assert service.find_duplicate_candidates(since=bookmark) == [
+        {
+            "score": 1.0,
+            "score_method": "family_exact+given_fuzzy",
+            "family_token": "lin",
+            "shared_orcid": False,
+            "record_a": incumbent,
+            "record_b": fresh,
+        },
+    ]
+
+
+def test_full_sweep_ignores_bookmark_and_returns_stale_pair(
+    service, monkeypatch
+):
+    """`full_sweep=True` overrides the cached bookmark *and* `since`.
+
+    Mixes both override paths in one call: the fixture's
+    `_read_dedup_bookmark` returns `None` already, but we also pass
+    `since=` in the future to confirm `full_sweep` wins. A periodic
+    full sweep is the only way to catch pairs whose `updated`
+    timestamps drifted (e.g. due to an upstream reindex) without
+    actually changing the duplicate-relevant fields.
+    """
+    bookmark = datetime(2026, 4, 20, 0, 0, tzinfo=UTC)
+    stale_a = _make_record(
+        uuid="stale-a", given_name="Mei", family_name="Lin",
+        family_token="lin", family_phonetic_tokens=["LN"],
+        updated=_iso(bookmark - timedelta(days=7)),
+    )
+    stale_b = _make_record(
+        uuid="stale-b", given_name="Mei", family_name="Lin",
+        family_token="lin", family_phonetic_tokens=["LN"],
+        updated=_iso(bookmark - timedelta(days=2)),
+    )
+    _patch_buckets(monkeypatch, service, make_buckets_payload([stale_a, stale_b]))
+
+    assert service.find_duplicate_candidates(
+        since=bookmark, full_sweep=True
+    ) == [
+        {
+            "score": 1.0,
+            "score_method": "family_exact+given_fuzzy",
+            "family_token": "lin",
+            "shared_orcid": False,
+            "record_a": stale_a,
+            "record_b": stale_b,
+        },
+    ]
+
+
+def test_missing_updated_timestamp_keeps_pair_in_scope(service, monkeypatch):
+    """Records without an `updated` field always pass the bookmark filter.
+
+    Older records pre-dating the field, or upstream paths that don't
+    project `updated` into the indexed doc, must not be silently
+    dropped from incremental sweeps. Defaulting "missing timestamp"
+    to "include the pair" keeps recall conservative.
+    """
+    bookmark = datetime(2026, 4, 20, 0, 0, tzinfo=UTC)
+    no_ts_a = _make_record(
+        uuid="no-ts-a", given_name="Mei", family_name="Lin",
+        family_token="lin", family_phonetic_tokens=["LN"],
+    )
+    no_ts_b = _make_record(
+        uuid="no-ts-b", given_name="Mei", family_name="Lin",
+        family_token="lin", family_phonetic_tokens=["LN"],
+    )
+    _patch_buckets(monkeypatch, service, make_buckets_payload([no_ts_a, no_ts_b]))
+
+    assert service.find_duplicate_candidates(since=bookmark) == [
+        {
+            "score": 1.0,
+            "score_method": "family_exact+given_fuzzy",
+            "family_token": "lin",
+            "shared_orcid": False,
+            "record_a": no_ts_a,
+            "record_b": no_ts_b,
+        },
+    ]
+
+
+def test_default_run_consults_cached_bookmark_via_helper(
+    service, monkeypatch
+):
+    """Without `since` or `full_sweep`, the helper-cached bookmark applies.
+
+    Confirms the wiring path the production code actually uses: the
+    cache layer is consulted via `_read_dedup_bookmark`, the result
+    flows into the same pair-time filter, and a successful run
+    rewrites the bookmark via `_write_dedup_bookmark`. The fixture
+    stubs both helpers; this test re-stubs them locally to exercise
+    the contract.
+    """
+    bookmark = datetime(2026, 4, 20, 0, 0, tzinfo=UTC)
+
+    written: list[datetime] = []
+    monkeypatch.setattr(service, "_read_dedup_bookmark", lambda: bookmark)
+    monkeypatch.setattr(service, "_write_dedup_bookmark", written.append)
+
+    stale_a = _make_record(
+        uuid="stale-a", given_name="Mei", family_name="Lin",
+        family_token="lin", family_phonetic_tokens=["LN"],
+        updated=_iso(bookmark - timedelta(days=7)),
+    )
+    stale_b = _make_record(
+        uuid="stale-b", given_name="Mei", family_name="Lin",
+        family_token="lin", family_phonetic_tokens=["LN"],
+        updated=_iso(bookmark - timedelta(days=2)),
+    )
+    _patch_buckets(monkeypatch, service, make_buckets_payload([stale_a, stale_b]))
+
+    assert service.find_duplicate_candidates() == []
+    # Bookmark is advanced once even when no candidates were emitted;
+    # the next run is then anchored at this sweep's start time, not
+    # the prior bookmark, so the corpus does not get re-evaluated
+    # against an ever-older cutoff.
+    assert len(written) == 1
+    assert written[0] >= bookmark
+
+
+# ---------------------------------------------------------------------------
+# Scenario E — Stale-cross-reference GC (full-sweep only)
+# ---------------------------------------------------------------------------
+
+
+def test_prune_stale_cross_refs_drops_dead_uuids_and_preserves_live(
+    base_app, monkeypatch
+):
+    """`_prune_stale_cross_refs` rewrites only records that need it.
+
+    Three records carry `possible_duplicates` maps:
+
+    * `mixed` — one live ref + one dead ref. Should be rewritten with
+      only the live entry surviving.
+    * `only-stale` — sole entry points to a deleted UUID. Should be
+      rewritten with the entry dropped (resulting empty dict is left
+      in place; reaping empty dicts is the indexer's problem, not
+      ours).
+    * `only-live` — sole entry points to a live UUID. Should be left
+      alone — no gratuitous write.
+
+    The test stubs the two I/O seams (`_fetch_live_uuids`,
+    `_fetch_records_with_cross_refs`) and replaces the `names_service`
+    descriptor with a stand-in whose `update` records the writes,
+    rather than standing up a live records-resources binding.
+    """
+    svc = NamesSyncService(base_app)
+
+    mixed: dict[str, Any] = {
+        "uuid": "alive-1",
+        "id": "kc|alive1",
+        "props": {
+            "possible_duplicates": {
+                "alive-2": [1.0, "family_exact+given_fuzzy"],
+                "ghost-x": [0.9, "family_partial+given_fuzzy"],
+            },
+        },
+    }
+    only_stale: dict[str, Any] = {
+        "uuid": "alive-3",
+        "id": "kc|alive3",
+        "props": {
+            "possible_duplicates": {
+                "ghost-y": [0.85, "family_phonetic+given_fuzzy"],
+            },
+        },
+    }
+    only_live: dict[str, Any] = {
+        "uuid": "alive-4",
+        "id": "kc|alive4",
+        "props": {
+            "possible_duplicates": {
+                "alive-2": [1.0, "family_exact+given_fuzzy"],
+            },
+        },
+    }
+
+    monkeypatch.setattr(
+        svc, "_fetch_live_uuids",
+        lambda *, identity: {"alive-1", "alive-2", "alive-3", "alive-4"},
+    )
+    monkeypatch.setattr(
+        svc, "_fetch_records_with_cross_refs",
+        lambda *, identity: [mixed, only_stale, only_live],
+    )
+
+    # Replace the `names_service` property at class level for this
+    # test so `service.update(...)` lands in a capture list. The
+    # stand-in only needs the one method `_prune_stale_cross_refs`
+    # actually calls.
+    captured: list[tuple[str, dict[str, Any]]] = []
+
+    class _FakeNamesService:
+        def update(self, identity, pid, rec):
+            captured.append((pid, rec))
+
+    monkeypatch.setattr(
+        NamesSyncService, "names_service", _FakeNamesService()
+    )
+
+    stats = svc._prune_stale_cross_refs()
+
+    assert stats == {"inspected": 3, "pruned": 2, "keys_dropped": 2}
+    assert [pid for pid, _ in captured] == ["kc|alive1", "kc|alive3"]
+    assert captured[0][1]["props"]["possible_duplicates"] == {
+        "alive-2": [1.0, "family_exact+given_fuzzy"],
+    }
+    assert captured[1][1]["props"]["possible_duplicates"] == {}
+    # only_live was untouched — no third write.
+    assert len(captured) == 2
+
+
+def test_prune_stale_cross_refs_bails_on_empty_live_set(
+    base_app, monkeypatch
+):
+    """An empty live-set short-circuits without writing anything.
+
+    Defensive guard: if the live-UUID query returned `set()` (e.g.
+    because the search backend errored and the helper logged + bailed),
+    treating every cross-ref as stale would clear the entire
+    `possible_duplicates` graph in one sweep. The guard makes that
+    impossible.
+    """
+    svc = NamesSyncService(base_app)
+
+    rec: dict[str, Any] = {
+        "uuid": "alive-1",
+        "id": "kc|alive1",
+        "props": {
+            "possible_duplicates": {
+                "alive-2": [1.0, "family_exact+given_fuzzy"],
+            },
+        },
+    }
+
+    monkeypatch.setattr(svc, "_fetch_live_uuids", lambda *, identity: set())
+    # Should never even be called given the early return; assert so
+    # by raising if it is.
+
+    def _should_not_be_called(*args, **kwargs):
+        raise AssertionError(
+            "_fetch_records_with_cross_refs called despite empty live set"
+        )
+
+    monkeypatch.setattr(
+        svc, "_fetch_records_with_cross_refs", _should_not_be_called
+    )
+
+    captured: list[tuple[str, dict[str, Any]]] = []
+
+    class _FakeNamesService:
+        def update(self, identity, pid, rec):
+            captured.append((pid, rec))
+
+    monkeypatch.setattr(
+        NamesSyncService, "names_service", _FakeNamesService()
+    )
+
+    stats = svc._prune_stale_cross_refs()
+
+    assert stats == {"inspected": 0, "pruned": 0, "keys_dropped": 0}
+    assert captured == []
+    # Original record is untouched — if a future change starts
+    # mutating in place before the live-set check, this catches it.
+    assert rec["props"]["possible_duplicates"] == {
+        "alive-2": [1.0, "family_exact+given_fuzzy"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Scenario F — list_duplicate_pairs (read-only view of marked duplicates)
+# ---------------------------------------------------------------------------
+
+
+def test_list_duplicate_pairs_emits_one_row_per_symmetric_edge(
+    base_app, monkeypatch
+):
+    """Two distinct edges produce two rows, sorted by score descending.
+
+    Stubs `_fetch_records_with_cross_refs` with four records forming
+    two symmetric edges:
+
+    * `(alive-1, alive-2)` at score 0.95 — the higher pair.
+    * `(alive-3, alive-4)` at score 0.80.
+
+    Each side carries the reverse cross-reference, so no warnings
+    fire and both edges land in the output. The result is sorted by
+    score descending and dedup'd to one row per edge (the four
+    records produce two rows, not four).
+    """
+    svc = NamesSyncService(base_app)
+
+    rec_1 = {
+        "uuid": "alive-1", "id": "kc|alive1", "name": "Doe, John",
+        "props": {"possible_duplicates": {
+            "alive-2": [0.95, "family_exact+given_fuzzy"],
+        }},
+    }
+    rec_2 = {
+        "uuid": "alive-2", "id": "kc|alive2", "name": "Doe, Jonathan",
+        "props": {"possible_duplicates": {
+            "alive-1": [0.95, "family_exact+given_fuzzy"],
+        }},
+    }
+    rec_3 = {
+        "uuid": "alive-3", "id": "kc|alive3", "name": "Lin, Mei",
+        "props": {"possible_duplicates": {
+            "alive-4": [0.80, "family_phonetic+given_fuzzy"],
+        }},
+    }
+    rec_4 = {
+        "uuid": "alive-4", "id": "kc|alive4", "name": "Lin, May",
+        "props": {"possible_duplicates": {
+            "alive-3": [0.80, "family_phonetic+given_fuzzy"],
+        }},
+    }
+
+    monkeypatch.setattr(
+        svc, "_fetch_records_with_cross_refs",
+        lambda *, identity: [rec_1, rec_2, rec_3, rec_4],
+    )
+
+    rows = svc.list_duplicate_pairs()
+
+    assert rows == [
+        {
+            "score": 0.95,
+            "score_method": "family_exact+given_fuzzy",
+            "a_uuid": "alive-1", "a_pid": "kc|alive1", "a_name": "Doe, John",
+            "b_uuid": "alive-2", "b_pid": "kc|alive2", "b_name": "Doe, Jonathan",
+        },
+        {
+            "score": 0.80,
+            "score_method": "family_phonetic+given_fuzzy",
+            "a_uuid": "alive-3", "a_pid": "kc|alive3", "a_name": "Lin, Mei",
+            "b_uuid": "alive-4", "b_pid": "kc|alive4", "b_name": "Lin, May",
+        },
+    ]
+
+
+def test_list_duplicate_pairs_takes_higher_score_on_mismatch(
+    base_app, monkeypatch, caplog
+):
+    """Score desync between the two sides: higher wins, warning logs.
+
+    Both sides write `[score, method]` in the same
+    `_set_duplicates_for_pair` call, so a desync only happens after
+    a partial-failure mode (e.g. one side's `service.update` failed
+    while the other succeeded, then a later sweep rewrote one side
+    with a different score). The lister surfaces the live state by
+    taking the higher score and its method, and emits a warning so
+    the desync is observable.
+    """
+    svc = NamesSyncService(base_app)
+
+    rec_a = {
+        "uuid": "alive-1", "id": "kc|alive1", "name": "Doe, John",
+        "props": {"possible_duplicates": {
+            "alive-2": [0.70, "family_phonetic+given_fuzzy"],
+        }},
+    }
+    rec_b = {
+        "uuid": "alive-2", "id": "kc|alive2", "name": "Doe, Jonathan",
+        "props": {"possible_duplicates": {
+            "alive-1": [0.95, "family_exact+given_fuzzy"],
+        }},
+    }
+
+    monkeypatch.setattr(
+        svc, "_fetch_records_with_cross_refs",
+        lambda *, identity: [rec_a, rec_b],
+    )
+
+    with caplog.at_level("WARNING"):
+        rows = svc.list_duplicate_pairs()
+
+    assert rows == [{
+        "score": 0.95,
+        "score_method": "family_exact+given_fuzzy",
+        "a_uuid": "alive-1", "a_pid": "kc|alive1", "a_name": "Doe, John",
+        "b_uuid": "alive-2", "b_pid": "kc|alive2", "b_name": "Doe, Jonathan",
+    }]
+    assert any(
+        "score mismatch on pair" in r.message
+        for r in caplog.records
+    )
+
+
+def test_list_duplicate_pairs_skips_one_sided_reverse_entry(
+    base_app, monkeypatch, caplog
+):
+    """A points at B, but B's `possible_duplicates` does not include A.
+
+    Both records appear in the cross-ref scan (both have non-empty
+    `possible_duplicates` maps — B happens to point at C instead),
+    so the partner-record-missing branch does *not* fire; the
+    reverse-entry-missing branch does. The pair is skipped and a
+    warning logs.
+    """
+    svc = NamesSyncService(base_app)
+
+    rec_a = {
+        "uuid": "alive-1", "id": "kc|alive1", "name": "Doe, John",
+        "props": {"possible_duplicates": {
+            "alive-2": [0.95, "family_exact+given_fuzzy"],
+        }},
+    }
+    rec_b = {
+        "uuid": "alive-2", "id": "kc|alive2", "name": "Doe, Jonathan",
+        "props": {"possible_duplicates": {
+            "alive-3": [0.80, "family_phonetic+given_fuzzy"],
+        }},
+    }
+
+    monkeypatch.setattr(
+        svc, "_fetch_records_with_cross_refs",
+        lambda *, identity: [rec_a, rec_b],
+    )
+
+    with caplog.at_level("WARNING"):
+        rows = svc.list_duplicate_pairs()
+
+    # No symmetric edge survives. (`(alive-2, alive-3)` would also
+    # trip the partner-missing branch since `alive-3` is not in the
+    # scan; both branches log warnings, no rows are emitted.)
+    assert rows == []
+    messages = [r.message for r in caplog.records]
+    assert any("one-sided possible_duplicates" in m for m in messages)

@@ -29,8 +29,12 @@ from invenio_remote_user_data_kcworks.services.components import (
 )
 from invenio_remote_user_data_kcworks.services.components.cited_names_component import (
     CitedNamesUpsertComponent,
-    _build_payload,
-    _collect_orcid_payloads,
+)
+from invenio_remote_user_data_kcworks.utils.orcid_payload import (
+    build_orcid_payload as _build_payload,
+)
+from invenio_remote_user_data_kcworks.utils.orcid_payload import (
+    collect_orcid_payloads as _collect_orcid_payloads,
 )
 
 # ---------------------------------------------------------------------------
@@ -161,9 +165,7 @@ class TestBuildPayload:
             "given_name": "Marie",
             "family_name": "Curie",
             "name": "Curie, Marie",
-            "identifiers": [
-                {"scheme": "orcid", "identifier": "0000-0002-1825-0097"}
-            ],
+            "identifiers": [{"scheme": "orcid", "identifier": "0000-0002-1825-0097"}],
             "affiliations": [
                 {"name": "University of Paris"},
                 {"name": "Sorbonne"},
@@ -276,21 +278,23 @@ class TestComponentCreate:
         component.create(identity=None, data=data)
         upsert_mock.assert_not_called()
 
-    def test_calls_upsert_for_each_orcid_creator(
-        self, app_ctx, component, upsert_mock
-    ):
+    def test_calls_upsert_for_each_orcid_creator(self, app_ctx, component, upsert_mock):
         """Each unique ORCID across creators+contributors yields one upsert call."""
         data = _data(
             creators=[
                 _personal(
-                    "Curie", "Marie", "0000-0002-1825-0097",
+                    "Curie",
+                    "Marie",
+                    "0000-0002-1825-0097",
                     [{"name": "Sorbonne"}],
                 ),
                 _personal("Doe", "Jane"),
             ],
             contributors=[
                 _personal(
-                    "Einstein", "Albert", "0000-0001-2345-6789",
+                    "Einstein",
+                    "Albert",
+                    "0000-0001-2345-6789",
                 ),
             ],
         )
@@ -306,13 +310,9 @@ class TestComponentCreate:
 class TestComponentUpdateDraft:
     """``update_draft`` runs the same scan-and-upsert pipeline as ``create``."""
 
-    def test_update_draft_dispatches_like_create(
-        self, app_ctx, component, upsert_mock
-    ):
+    def test_update_draft_dispatches_like_create(self, app_ctx, component, upsert_mock):
         """``update_draft`` triggers one upsert per ORCID-bearing person."""
-        data = _data(
-            creators=[_personal("Curie", "Marie", "0000-0002-1825-0097")]
-        )
+        data = _data(creators=[_personal("Curie", "Marie", "0000-0002-1825-0097")])
         component.update_draft(identity=None, data=data)
         upsert_mock.assert_called_once()
 
@@ -320,14 +320,10 @@ class TestComponentUpdateDraft:
 class TestComponentErrorHandling:
     """Failures from ``upsert_cited_orcid_name`` are logged but never re-raised."""
 
-    def test_exception_does_not_propagate(
-        self, app_ctx, component, upsert_mock
-    ):
+    def test_exception_does_not_propagate(self, app_ctx, component, upsert_mock):
         """A raise from upsert is caught — the draft save flow is never broken."""
         upsert_mock.side_effect = RuntimeError("Names service exploded")
-        data = _data(
-            creators=[_personal("Curie", "Marie", "0000-0002-1825-0097")]
-        )
+        data = _data(creators=[_personal("Curie", "Marie", "0000-0002-1825-0097")])
         component.update_draft(identity=None, data=data)
 
     def test_one_failure_does_not_block_other_orcids(
@@ -349,4 +345,3 @@ class TestComponentErrorHandling:
         )
         component.update_draft(identity=None, data=data)
         assert upsert_mock.call_count == 2
-

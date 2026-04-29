@@ -43,9 +43,14 @@ optional-dependencies.dev = ["bumpver", "check-manifest", "pip-tools", "pipenv"]
 optional-dependencies.tests = [
   "coverage",
   "pytest>=7.3.2",
+  "pytest-cov>=6.2.1",
   "pytest-invenio>=3.3,<4",
+  "pytest-mock",
   "pytest-runner",
+  "pytest-ruff>=0.1",
   "requests-mock",
+  "ruff>=0.3",
+  "ty",
 ]
 urls.Homepage = "https://github.com/MESH-Research/invenio-remote-user-data-kcworks"
 scripts.user-data = "invenio_remote_user_data_kcworks.cli.main:cli"
@@ -93,7 +98,7 @@ lint.ignore = [
 ]
 lint.per-file-ignores."__init__.py" = ["D104", "E402", "F401"]
 # Ensure consistent import sorting - explicitly declare tests as first-party
-lint.isort.known-first-party = ["invenio_stats_dashboard", "tests"]
+lint.isort.known-first-party = ["invenio_remote_user_data_kcworks", "tests"]
 lint.pydocstyle.convention = "google"
 lint.preview = true
 
@@ -138,22 +143,25 @@ ignore = [
   ".vscode/*",
 ]
 
-[tool.mypy]
-python_version = "3.12"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
-check_untyped_defs = true
-disallow_untyped_decorators = false
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = false
-warn_no_return = false
-ignore_missing_imports = true
-follow_imports = "skip"
-allow_untyped_globals = true
-exclude = ["^tests/"]
+[tool.ty]
+analysis = {}
+# Type checking with ty (replaces mypy). Mirrors the parent KCWorks
+# project's [tool.ty] settings; paths adapted to this submodule's layout.
+environment.python-version = "3.12"
+# Rule severities (ty uses rule names; mypy options translated below)
+# warn_redundant_casts = true
+rules.redundant-cast = "warn"
+# warn_unused_ignores = false → don't warn about unused type: ignore
+rules.unused-ignore-comment = "ignore"
+rules.unused-type-ignore-comment = "ignore"
+# ignore_missing_imports = true → suppress unresolved-import
+rules.unresolved-import = "ignore"
+# allow_untyped_globals = true → don't error on undeclared globals
+rules.unresolved-global = "ignore"
+# Don't type-check tests or vendored helpers.
+src.exclude = [
+  "tests",
+]
 
 [tool.pytest]
 ini_options.addopts = """

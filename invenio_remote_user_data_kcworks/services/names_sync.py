@@ -55,6 +55,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from itertools import combinations
 from typing import Any, Literal, cast
@@ -506,18 +507,19 @@ class NamesSyncService(Service):
 
         profile = dict(user.user_profile or {})
         kc_username = profile.get("identifier_kc_username") or ""
-        if not kc_username:
-            return None
 
         name_inverted, given, family, parts = self._format_name_parts(profile)
         # Final fallback: make sure we always satisfy
         # NameSchema.validate_names.
-        if not name_inverted and not (given and family):
-            name_inverted = (
-                (user.username or "")
-                or (user.email or "").split("@", 1)[0]
-                or kc_username
-            )
+        if not isinstance(name_inverted, str):
+            if not (given and family):
+                name_inverted = (
+                    (user.username or "")
+                    or (user.email or "").split("@", 1)[0]
+                    or kc_username
+                )
+            else:
+                name_inverted = f"{family}, {given}"
 
         props: NamePropsDict = {
             "kcworks_user_id": str(user.id),
@@ -887,8 +889,9 @@ class NamesSyncService(Service):
 
         user_record = self._find_user_record_by_orcid(orcid, identity=identity)
         if user_record is not None:
-            return self.merge_cited_orcid_into_kc(
-                user_record, payload, identity=identity
+            return cast(
+                "dict[str, Any] | None",
+                self.merge_cited_orcid_into_kc(user_record, payload, identity=identity),
             )
 
         payload.setdefault("props", {})["source"] = source
@@ -961,7 +964,9 @@ class NamesSyncService(Service):
             for payload in payloads:
                 try:
                     self.upsert_cited_orcid_name(
-                        payload, identity=identity, source="backfill"
+                        cast("NamesRecordDict", payload),
+                        identity=identity,
+                        source="backfill",
                     )
                     stats["upserted"] += 1
                 except Exception:  # noqa: BLE001 - logged, never propagated
@@ -1130,7 +1135,7 @@ class NamesSyncService(Service):
         return cast(NamesRecordDict, item.to_dict()) if item is not None else None
 
     @staticmethod
-    def _identifier_key(ident: dict[str, str]) -> tuple[str, str]:
+    def _identifier_key(ident: Mapping[str, Any]) -> tuple[str, str]:
         """Hashable dedup key for an `identifiers` entry.
 
         `IdentifierSchema` validates `scheme` and `identifier` as
@@ -1143,7 +1148,7 @@ class NamesSyncService(Service):
         return (ident["scheme"].lower(), ident["identifier"].lower())
 
     @staticmethod
-    def _affiliation_key(aff: dict[str, Any]) -> tuple[str, str] | None:
+    def _affiliation_key(aff: Mapping[str, Any]) -> tuple[str, str] | None:
         """Hashable dedup key for an `affiliations` entry, or `None` to skip.
 
         Returns:
@@ -1184,28 +1189,31 @@ class NamesSyncService(Service):
         Returns:
             A merged update payload addressed by `kc_record["id"]`.
         """
-        merged: NamesRecordDict = {
-            "id": kc_record.get("id", ""),
-            "tags": list(kc_record.get("tags") or [KCNamesTag.USER]),
-            "identifiers": union_dicts_by_key(
-                kc_record.get("identifiers", []),
-                orcid_data.get("identifiers", []),
-                key=self._identifier_key,
-            ),
-            "affiliations": union_dicts_by_key(
-                kc_record.get("affiliations", []),
-                orcid_data.get("affiliations", []),
-                key=self._affiliation_key,
-            ),
-            # `props["source"]` records what triggered insertion of a
-            # `kcworks-cited` stub; carrying it onto a KC-user record
-            # would leave false provenance behind.
-            "props": merge_dicts_first_wins(
-                kc_record.get("props", {}),
-                orcid_data.get("props", {}),
-                exclude_from_secondary=("source",),
-            ),
-        }
+        merged = cast(
+            NamesRecordDict,
+            {
+                "id": kc_record.get("id", ""),
+                "tags": list(kc_record.get("tags") or [KCNamesTag.USER]),
+                "identifiers": union_dicts_by_key(
+                    kc_record.get("identifiers", []),
+                    orcid_data.get("identifiers", []),
+                    key=self._identifier_key,
+                ),
+                "affiliations": union_dicts_by_key(
+                    kc_record.get("affiliations", []),
+                    orcid_data.get("affiliations", []),
+                    key=self._affiliation_key,
+                ),
+                # `props["source"]` records what triggered insertion of a
+                # `kcworks-cited` stub; carrying it onto a KC-user record
+                # would leave false provenance behind.
+                "props": merge_dicts_first_wins(
+                    kc_record.get("props", {}),
+                    orcid_data.get("props", {}),
+                    exclude_from_secondary=("source",),
+                ),
+            },
+        )
         for field in ("name", "given_name", "family_name"):
             kc_value = kc_record.get(field) or ""
             orcid_value = orcid_data.get(field) or ""
@@ -2525,7 +2533,7 @@ class NamesSyncService(Service):
                 side_entries[(uuid_self, str(partner_uuid))] = list(entry)
 
         edges: set[tuple[str, str]] = {
-            tuple(sorted([u_self, u_partner]))  # type: ignore[misc]
+            (u_self, u_partner) if u_self <= u_partner else (u_partner, u_self)
             for u_self, u_partner in side_entries
         }
 
@@ -2647,7 +2655,10 @@ class NamesSyncService(Service):
                 "name": rec.get("name"),
             }
             for partner_uuid in dismissed:
-                edges.add(tuple(sorted([uuid_self, str(partner_uuid)])))
+                pu = str(partner_uuid)
+                edges.add(
+                    (uuid_self, pu) if uuid_self <= pu else (pu, uuid_self)
+                )
 
         out: list[dict[str, Any]] = []
         for a_uuid, b_uuid in sorted(edges):

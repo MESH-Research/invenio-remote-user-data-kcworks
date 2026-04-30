@@ -10,13 +10,15 @@
 import datetime
 import json
 import os
+from collections.abc import Iterable, Mapping
 from pprint import pformat
+from typing import Any, cast
 from urllib.parse import urlencode, urlparse, urlunparse
 
 import invenio_oauthclient
 from flask import current_app as app
 from invenio_accounts import current_accounts
-from invenio_accounts.models import User, UserIdentity
+from invenio_accounts.models import Role, User, UserIdentity
 from invenio_db import db
 
 from ..services.group_roles import GroupRolesService
@@ -147,7 +149,7 @@ class CILogonHelpers:
         params = {"userinfo": id_token}
 
         # encode the query string
-        encoder = SecureParamEncoder(os.getenv("COMMONS_PROFILES_API_TOKEN"))
+        encoder = SecureParamEncoder(os.getenv("COMMONS_PROFILES_API_TOKEN") or "")
 
         encoded_params = {"userinfo": encoder.encode(params)}
         query_string = urlencode(encoded_params)
@@ -390,7 +392,7 @@ class CILogonHelpers:
 
     @staticmethod
     def _update_invenio_group_memberships(
-        user: User, changed_memberships: dict, **kwargs
+        user: User, changed_memberships: Mapping[str, Any], **kwargs
     ) -> list[str]:
         """Update the user's group role memberships.
 
@@ -403,7 +405,8 @@ class CILogonHelpers:
             list: The updated list of group role names.
         """
         grouper = GroupRolesService(None)
-        updated_local_groups = [r.name for r in user.roles]
+        roles_list = cast(list[Role], list(cast(Iterable[Any], user.roles)))
+        updated_local_groups = [r.name for r in roles_list]
 
         for group_name in changed_memberships["added_groups"]:
             group_role = grouper.find_or_create_group(group_name)
@@ -423,7 +426,7 @@ class CILogonHelpers:
                 updated_local_groups.remove(group_role.name)
                 # NOTE: We don't delete the group role because that would
                 # potentially disrupt roles being used for collections
-        assert updated_local_groups == [r.name for r in user.roles]
+        assert updated_local_groups == [r.name for r in roles_list]
 
         return updated_local_groups
 
@@ -432,7 +435,7 @@ class CILogonHelpers:
         user: User,
         new_data: CalculatedUserDataDict,
         user_changes: UserChangesDict,
-        group_changes: dict,
+        group_changes: Mapping[str, Any],
         remote_service: str,
         **kwargs,
     ) -> UpdateLocalUserDataResultDict:
@@ -546,7 +549,7 @@ class CILogonHelpers:
             )
             initial_user_data["user_profile"] = {}
 
-        new_data: dict = {"active": True}
+        new_data: dict[str, Any] = {"active": True}
         new_data["user_profile"] = {**initial_user_data["user_profile"]}
 
         # reassign profile
@@ -575,7 +578,9 @@ class CILogonHelpers:
         user_changes = CILogonHelpers._diff_between_nested_dicts(
             initial_user_data, new_data
         )
-        return user_changes, new_data
+        return cast("UserChangesDict", user_changes), cast(
+            "CalculatedUserDataDict", new_data
+        )
 
     @staticmethod
     def calculate_group_changes(

@@ -9,6 +9,7 @@
 
 import datetime
 import os
+from collections.abc import Mapping
 from pprint import pformat
 from typing import Any, Optional
 
@@ -301,9 +302,9 @@ class RemoteUserDataService(Service):
         **kwargs,
     ) -> tuple[
         Optional[User],
-        dict[str, Any] | APIResponse | Profile | None,
+        Mapping[str, Any] | APIResponse | Profile | None,
         list[str],
-        dict,
+        Mapping[str, Any],
     ]:
         """Main method to update user data from remote server.
 
@@ -356,7 +357,7 @@ class RemoteUserDataService(Service):
         # Note: exceptions are intentionally allowed to propagate so callers
         # (the Celery tasks ``do_user_created`` and ``do_user_data_update``)
         # can apply their HTTP-specific retry/reschedule policies and so
-        # other unexpected errors are not silenced. 
+        # other unexpected errors are not silenced.
         # The login flow that calls this method synchronously (in
         # ``utils.CILogonHelpers._existing_or_create_user_for_login``)
         # wraps it in its own defensive try/except so user logins are
@@ -370,8 +371,8 @@ class RemoteUserDataService(Service):
 
         if not remote_data.data or len(remote_data.data) == 0:
             kc_username = user.user_profile.get("identifier_kc_username")
-            remote_data: Profile = UserDataAPIClient.fetch_user_profile(
-                kc_username=kc_username
+            remote_data: Profile | APIResponse | None = (
+                UserDataAPIClient.fetch_user_profile(kc_username=kc_username)
             )
         else:
             if not remote_data.meta.authorized:

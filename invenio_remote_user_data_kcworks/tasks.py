@@ -10,6 +10,7 @@
 import contextlib
 import json
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import requests
 from celery import shared_task
@@ -30,6 +31,7 @@ from .proxies import (
     current_remote_group_service,
     current_remote_user_data_service,
 )
+from .types.auth import AccountInfoDict
 from .types.profiles_api import APIResponse
 from .utils.auth import CILogonHelpers, UserIdentifierHelpers
 
@@ -563,7 +565,9 @@ def do_user_created(
                 },
             },
         }
-        user = CILogonHelpers.get_user_from_account_info(account_info)
+        user = CILogonHelpers.get_user_from_account_info(
+            cast("AccountInfoDict", account_info)
+        )
         if user is None:
             try:
                 user = CILogonHelpers.create_new_user(profile_response)
@@ -584,7 +588,9 @@ def do_user_created(
                     "rollback",
                     oauth_id,
                 )
-                user = CILogonHelpers.get_user_from_account_info(account_info)
+                user = CILogonHelpers.get_user_from_account_info(
+                    cast("AccountInfoDict", account_info)
+                )
                 if user is None:
                     app.logger.error(
                         "do_user_created: IntegrityError on create "

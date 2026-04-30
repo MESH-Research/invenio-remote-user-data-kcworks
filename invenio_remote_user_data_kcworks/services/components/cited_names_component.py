@@ -28,6 +28,7 @@ from typing import Any
 from flask import current_app
 from flask_principal import Identity
 from invenio_drafts_resources.services.records.components import ServiceComponent
+from invenio_rdm_records.records.api import RDMRecord
 
 from ...proxies import current_names_sync_service
 from ...utils.orcid_payload import collect_orcid_payloads
@@ -43,7 +44,11 @@ class CitedNamesUpsertComponent(ServiceComponent):
         self._scan_and_upsert(data)
 
     def update_draft(
-        self, identity: Identity, data: dict | None = None, **kwargs: Any
+        self,
+        identity: Identity,
+        data: dict | None = None,
+        record: RDMRecord | None = None,
+        errors: dict[str, Any] | None = None,
     ) -> None:
         """Scan an updated draft and upsert Names for ORCID persons."""
         self._scan_and_upsert(data)

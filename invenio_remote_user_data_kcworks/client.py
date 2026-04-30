@@ -274,7 +274,7 @@ class UserDataAPIClient:
             "Accept": "application/json",
         }
 
-        user_agent = request.headers.get("User-Agent")
+        user_agent = request.headers.get("User-Agent") or ""
         body = LogoutRequest(
             user_name=user_name,
             user_agent=user_agent,

@@ -304,4 +304,4 @@ def ingest_profiles_dump_cmd(filepath: str, fmt: str, source: str, background: b
 
 
 if __name__ == "__main__":
-    cli()
+    users_cli()

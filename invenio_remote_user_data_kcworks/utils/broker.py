@@ -27,6 +27,7 @@ from ..client import UserDataAPIClient
 from ..errors import UserDataRequestFailed, UserDataRequestTimeout
 from ..proxies import current_remote_user_data_service
 from ..types.auth import AccountInfoDict
+from ..types.profiles_api import APIResponse
 from .auth import CILogonHelpers
 
 
@@ -297,7 +298,12 @@ class BrokerHelpers:
 
         # If we have an external subject but no local user yet, ask Profiles
         # for the full profile and create the KCWorks user.
-        if not user and sub and profile_response and profile_response.data:
+        if (
+            not user
+            and sub
+            and isinstance(profile_response, APIResponse)
+            and profile_response.data
+        ):
             user = CILogonHelpers.create_new_user(profile_response)
 
         # Ensure the external identity is linked (idempotent via suppression).

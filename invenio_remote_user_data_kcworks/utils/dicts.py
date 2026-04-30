@@ -7,7 +7,7 @@
 
 """Generic nested-dictionary helpers."""
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 
@@ -53,8 +53,8 @@ def diff_between_nested_dicts(original, update):
 
 
 def merge_dicts_first_wins(
-    primary: dict[str, Any] | None,
-    secondary: dict[str, Any] | None,
+    primary: Mapping[str, Any] | None,
+    secondary: Mapping[str, Any] | None,
     *,
     exclude_from_secondary: Iterable[str] = (),
 ) -> dict[str, Any]:
@@ -86,11 +86,11 @@ def merge_dicts_first_wins(
 
 
 def union_dicts_by_key(
-    primary: Iterable[dict[str, Any]] | None,
-    secondary: Iterable[dict[str, Any]] | None,
+    primary: Iterable[Mapping[str, Any]] | None,
+    secondary: Iterable[Mapping[str, Any]] | None,
     *,
-    key: Callable[[dict[str, Any]], Any | None],
-    canonicalize: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    key: Callable[[Mapping[str, Any]], Any | None],
+    canonicalize: Callable[[Mapping[str, Any]], dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Concatenate two iterables of dicts, dropping later items whose key collides.
 
@@ -125,5 +125,5 @@ def union_dicts_by_key(
             if k in seen:
                 continue
             seen.add(k)
-            out.append(canonicalize(item) if canonicalize is not None else item)
+            out.append(canonicalize(item) if canonicalize is not None else dict(item))
     return out

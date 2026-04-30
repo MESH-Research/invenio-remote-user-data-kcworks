@@ -99,7 +99,7 @@ def on_remote_data_updated(_, events: list) -> None:
         elif entity_type == "groups" and evt in ("created", "updated"):
             do_group_data_update.delay(event["idp"], event["id"])  # noqa
         else:
-            logger.warning(
+            current_app.logger.warning(
                 "on_remote_data_updated: unhandled event "
                 "(entity_type=%r, event=%r); skipping. Full event=%r",
                 entity_type,

@@ -9,8 +9,9 @@
 
 """Group roles service for Invenio accounts (roles as groups)."""
 
+from collections.abc import Iterable
 from pprint import pformat
-from typing import Optional, Union
+from typing import Any, cast
 
 from flask import current_app as app
 from invenio_accounts.models import Role, User
@@ -46,16 +47,17 @@ class GroupRolesService:
         my_group_role = current_accounts.datastore.find_role(group_name)
         return [user for user in my_group_role.users]
 
-    def get_current_user_roles(self, user: Union[str, User]) -> list:
+    def get_current_user_roles(self, user: str | User) -> list[Role]:
         """Get the current roles for a user."""
-        return_user = user
         if isinstance(user, str):
             return_user = current_accounts.datastore.find_user(email=user)
+        else:
+            return_user = user
         if return_user is None:
             raise RuntimeError(f'User "{user}" not found.')
-        return return_user.roles
+        return cast("list[Role]", list(cast(Iterable[Any], return_user.roles)))
 
-    def find_or_create_group(self, group_name: str, **kwargs) -> Optional[Role]:
+    def find_or_create_group(self, group_name: str, **kwargs) -> Role | None:
         """Search for a group with a given name and create it if it doesn't exist."""
         my_group_role = current_accounts.datastore.find_or_create_role(
             name=group_name, **kwargs
@@ -67,7 +69,7 @@ class GroupRolesService:
             raise RuntimeError(f'Role for group "{group_name}" not found or created.')
         return my_group_role
 
-    def create_new_group(self, group_name: str, **kwargs) -> Optional[Role]:
+    def create_new_group(self, group_name: str, **kwargs) -> Role | None:
         """Create a new group with the given name (and optional parameters)."""
         my_group_role = current_accounts.datastore.create_role(
             name=group_name, **kwargs
@@ -116,7 +118,7 @@ class GroupRolesService:
             )
         return user_added
 
-    def find_group(self, group_name: str) -> Optional[Role]:
+    def find_group(self, group_name: str) -> Role | None:
         """Find a group role with the given name."""
         my_group_role = current_accounts.datastore.find_role(group_name)
         if my_group_role is None:
@@ -126,7 +128,7 @@ class GroupRolesService:
         return my_group_role
 
     def remove_user_from_group(
-        self, group_name: Union[str, Role], user: Union[str, User], **kwargs
+        self, group_name: str | Role, user: str | User, **kwargs
     ) -> bool:
         """Remove a group role from a user.
 

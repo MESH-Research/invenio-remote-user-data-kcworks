@@ -29,7 +29,15 @@ from importlib.resources import files
 # --- Module-level defaults (overridable via constructor) -----------------
 
 DEFAULT_SUFFIX_TOKENS: frozenset[str] = frozenset({
-    "jr", "sr", "ii", "iii", "iv", "v", "phd", "md", "esq",
+    "jr",
+    "sr",
+    "ii",
+    "iii",
+    "iv",
+    "v",
+    "phd",
+    "md",
+    "esq",
 })
 """Tokens to drop during tokenization (post-normalization, lowercase)."""
 
@@ -99,9 +107,7 @@ threshold. Override via `PersonNameComparator(equivalence_pairs=...)`.
 _PUNCT_RE = re.compile(r"[^\w\s-]", re.UNICODE)
 """Strips punctuation while preserving Unicode word chars, whitespace, hyphens."""
 
-_VENDORED_VARIANTS_PACKAGE = (
-    "invenio_remote_user_data_kcworks.data.given_name_variants"
-)
+_VENDORED_VARIANTS_PACKAGE = "invenio_remote_user_data_kcworks.data.given_name_variants"
 _VENDORED_VARIANTS_FILENAME = "givenname_similar_names.csv"
 
 _DEFAULT_EQUIVALENCE_INDEX: dict[str, frozenset[str]] | None = None
@@ -125,10 +131,8 @@ def _load_vendored_equivalence_index() -> dict[str, frozenset[str]]:
     itself. Two tokens are equivalent iff their root sets intersect.
     """
     index: dict[str, set[str]] = defaultdict(set)
-    resource = files(_VENDORED_VARIANTS_PACKAGE).joinpath(
-        _VENDORED_VARIANTS_FILENAME
-    )
-    with resource.open(encoding="utf-8", newline="") as fh:
+    resource = files(_VENDORED_VARIANTS_PACKAGE).joinpath(_VENDORED_VARIANTS_FILENAME)
+    with resource.open(encoding="utf-8") as fh:
         for row in csv.reader(fh):
             if not row:
                 continue
@@ -370,7 +374,8 @@ class PersonNameComparator:
         if not given:
             return []
         folded = "".join(
-            c for c in unicodedata.normalize("NFKD", given)
+            c
+            for c in unicodedata.normalize("NFKD", given)
             if not unicodedata.combining(c)
         )
         folded = _PUNCT_RE.sub("", folded.lower())

@@ -28,7 +28,8 @@ def safe_redirect_target(target: str | None = None, arg_name: str | None = None)
     Returns:
         str: The safe target for the redirect.
     """
-    target = target if target else request.args.get(arg_name, "")
+    if not target:
+        target = request.args.get(arg_name, "") if arg_name else ""
     allowed_hosts = app.config.get("TRUSTED_HOSTS") or []
 
     if not allowed_hosts:

@@ -194,7 +194,7 @@ class UserDataAPIClient:
             if sub_id:
                 parsed_response = APIResponse(**json_data)
             else:
-                parsed_response = Profile(**json_data)
+                parsed_response = Profile(**json_data.get("results", json_data))
 
             return parsed_response
 

@@ -436,7 +436,7 @@ class RemoteUserDataService(Service):
                 try:
                     profile = remote_data.data[0].profile
                 except AttributeError:
-                    profile = remote_data.results[0].profile
+                    profile = remote_data
 
                 group_changes = CILogonHelpers.calculate_group_changes(profile, user)
                 user_changes, new_data = CILogonHelpers.calculate_user_changes(

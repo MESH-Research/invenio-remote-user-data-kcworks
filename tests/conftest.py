@@ -7,26 +7,25 @@
 
 """Top-level pytest configuration for invenio-remote-user-data-kcworks tests.
 
-This conftest mirrors the structure used by the sibling KCWorks packages
-(``invenio-stats-dashboard`` in particular), so that fixture composition
-stays consistent across the family. Two intentional differences from the
-root KCWorks ``conftest.py``:
+This conftest mirrors the structure used by the sibling KCWorks packages, so
+that fixture composition stays consistent across the family. Two intentional
+differences from the root KCWorks `conftest.py`:
 
-1. ``create_app`` returns ``invenio_app.factory.create_api`` (not
-   ``create_app``). The package's own tests focus on REST API resources
-   and CLI commands; using ``create_api`` lets us exercise blueprints
-   registered under ``invenio_base.api_apps`` without spinning up the
+1. `create_app` returns `invenio_app.factory.create_api` (not
+   `create_app`). The package's own tests focus on REST API resources
+   and CLI commands; using `create_api` lets us exercise blueprints
+   registered under `invenio_base.api_apps` without spinning up the
    UI app.
-2. ``test_config`` keys are set inline rather than loaded from an
-   ``invenio.cfg`` (the root project's config is much larger and full of
-   deployment-specific values). The bulk of root's ``invenio.cfg`` keys
+2. `test_config` keys are set inline rather than loaded from an
+   `invenio.cfg` (the root project's config is much larger and full of
+   deployment-specific values). The bulk of root's `invenio.cfg` keys
    that can be useful for these tests are listed below as commented
    placeholders so a contributor can flip them on without hunting.
 
-Per the agreed plan, all the bespoke ``COMMUNITIES_*`` overrides and
+Per the agreed plan, all the bespoke `COMMUNITIES_*` overrides and
 duplicate vocabulary/user/role fixtures previously defined here have
 been removed in favour of the shared fixture modules vendored from
-``kcworks-test-fixtures`` (the ``tests/fixtures`` submodule).
+`kcworks-test-fixtures` (the `tests/fixtures` submodule).
 """
 
 from collections import namedtuple
@@ -49,7 +48,7 @@ from .fixtures.identifiers import test_config_identifiers
 
 pytest_plugins = (
     "celery.contrib.pytest",
-    "tests.fixtures.caching",
+    # "tests.fixtures.caching",  # depends on invenio-stats-dashboard
     "tests.fixtures.cli",
     "tests.fixtures.communities",
     "tests.fixtures.community_events",
@@ -63,7 +62,7 @@ pytest_plugins = (
     "tests.fixtures.records",
     "tests.fixtures.roles",
     "tests.fixtures.search_provisioning",
-    "tests.fixtures.stats",
+    # "tests.fixtures.stats",
     "tests.fixtures.uow",
     "tests.fixtures.users",
     "tests.fixtures.vocabularies.affiliations",

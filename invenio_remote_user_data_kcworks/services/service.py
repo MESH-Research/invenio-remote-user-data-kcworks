@@ -11,7 +11,7 @@ import datetime
 import os
 from collections.abc import Mapping
 from pprint import pformat
-from typing import Any, Optional
+from typing import Any, cast
 
 import requests
 
@@ -25,32 +25,26 @@ from invenio_group_collections_kcworks.proxies import (
 )  # noqa
 from invenio_group_collections_kcworks.service import remote_to_invenio_visibility
 from invenio_records_resources.services import Service
+from invenio_records_resources.services.base.config import ServiceConfig
 from werkzeug.local import LocalProxy
 
 from ..client import UserDataAPIClient
 from ..types.profiles_api import APIResponse, Profile
 from ..utils.auth import CILogonHelpers
+from .config import RemoteGroupDataServiceConfig, RemoteUserDataServiceConfig
 from .group_roles import GroupRolesService
 
 
 class RemoteGroupDataService(Service):
     """Service for updating a group's metadata from a remote server."""
 
-    def __init__(self, app, config={}, **kwargs):
+    def __init__(self, app, config: RemoteGroupDataServiceConfig, **kwargs):
         """Constructor."""
-        super().__init__(config=config, **kwargs)
-        self.config = config
-        self.config.permission_policy_cls = config.get(
-            "REMOTE_USER_DATA_PERMISSION_POLICY"
-        )
-        self.endpoints_config = config.get("REMOTE_USER_DATA_API_ENDPOINTS")
+        super().__init__(config=config)
         self.logger = app.logger
         self.updated_data = {}
         self.communities_service = LocalProxy(
             lambda: app.extensions["invenio-communities"].service
-        )
-        self.update_interval = datetime.timedelta(
-            minutes=config["REMOTE_USER_DATA_UPDATE_INTERVAL"]
         )
         self.group_data_stale = True
         self.group_roles_service = GroupRolesService(self)
@@ -103,7 +97,7 @@ class RemoteGroupDataService(Service):
         remote_group_id: str,
         timeout: int | None = None,
         **kwargs,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Update group data from remote server.
 
         If Invenio group roles for the remote group do not exist,
@@ -139,9 +133,9 @@ class RemoteGroupDataService(Service):
         """
         self.require_permission(identity, "trigger_update")
         if not timeout:
-            timeout = current_app.config.get("REMOTE_USER_DATA_API_TIMEOUT", 5)
+            timeout = self.config.api_timeout
         results_dict = {}
-        idp_config = self.endpoints_config[idp]
+        idp_config = self.config.endpoints_config[idp]
         remote_api_token = os.environ[idp_config["groups"]["token_env_variable_label"]]
 
         headers = {"Authorization": f"Bearer {remote_api_token}"}
@@ -278,14 +272,9 @@ class RemoteGroupDataService(Service):
 class RemoteUserDataService(Service):
     """Service for updating a user's metadata from a remote server."""
 
-    def __init__(self, app, config={}, **kwargs):
+    def __init__(self, app, config: RemoteUserDataServiceConfig, **kwargs):
         """Constructor."""
-        super().__init__(config=config, **kwargs)
-        self.config = config
-        self.endpoints_config = config["REMOTE_USER_DATA_API_ENDPOINTS"]
-        self.config.permission_policy_cls = config.get(
-            "REMOTE_USER_DATA_PERMISSION_POLICY"
-        )
+        super().__init__(config=config)
         self.logger = app.logger
         self.updated_data = {}
         self.communities_service = LocalProxy(
@@ -301,7 +290,7 @@ class RemoteUserDataService(Service):
         remote_data: APIResponse | None = None,
         **kwargs,
     ) -> tuple[
-        Optional[User],
+        User | None,
         Mapping[str, Any] | APIResponse | Profile | None,
         list[str],
         Mapping[str, Any],
@@ -351,7 +340,7 @@ class RemoteUserDataService(Service):
         updated_data = {}
 
         remote_service = idp
-        if idp in current_app.config.get("KC_REMOTE_IDPS"):
+        if idp in self.config.kc_remote_idps:
             remote_service = "knowledgeCommons"
 
         # Note: exceptions are intentionally allowed to propagate so callers
@@ -364,15 +353,15 @@ class RemoteUserDataService(Service):
         # never blocked by a Profiles-side failure.
         user: User = current_accounts.datastore.get_user_by_id(user_id)
 
-        if not remote_data or len(remote_data.data) == 0:
-            remote_data: APIResponse = UserDataAPIClient.fetch_user_profile(
+        if remote_data is None or len(remote_data.data) == 0:
+            remote_data: APIResponse | None = UserDataAPIClient.fetch_user_profile(
                 sub_id=remote_id
             )
 
-        if not remote_data.data or len(remote_data.data) == 0:
+        if remote_data is None or len(remote_data.data) == 0:
             kc_username = user.user_profile.get("identifier_kc_username")
-            remote_data: Profile | APIResponse | None = (
-                UserDataAPIClient.fetch_user_profile(kc_username=kc_username)
+            remote_data: Profile | None = UserDataAPIClient.fetch_user_profile(
+                kc_username=kc_username, use_sub_endpoint=False
             )
         else:
             if not remote_data.meta.authorized:
@@ -381,45 +370,33 @@ class RemoteUserDataService(Service):
                 )
                 return user, remote_data, [], {}
 
-        if (
-            hasattr(remote_data, "data")
-            and remote_data.data
-            and len(remote_data.data) > 0
-        ) or (
-            hasattr(remote_data, "results")
-            and remote_data.results
-            and len(remote_data.results) > 0
-        ):
-            try:
-                profile = remote_data.data[0].profile
-            except AttributeError:
-                profile = remote_data.results[0].profile
-
-            group_changes = CILogonHelpers.calculate_group_changes(profile, user)
-            user_changes, new_data = CILogonHelpers.calculate_user_changes(
-                profile, user
-            )
-
-            updated_data = CILogonHelpers.update_local_user_data(
-                user,
-                new_data,
-                user_changes,
-                group_changes,
-                remote_service,
-                **kwargs,
-            )
-
-            return (
-                user,
-                updated_data["user"],
-                updated_data["groups"],
-                group_changes,
-            )
-
+        if isinstance(remote_data, APIResponse) and len(remote_data.data) > 0:
+            profile = remote_data.data[0].profile
+        elif isinstance(remote_data, Profile):
+            profile = remote_data
         else:
             # no record found on remote server
             self.logger.warning(f"User {remote_id} not found on remote server.")
             return user, remote_data, [], {}
+
+        group_changes = CILogonHelpers.calculate_group_changes(profile, user)
+        user_changes, new_data = CILogonHelpers.calculate_user_changes(profile, user)
+
+        updated_data = CILogonHelpers.update_local_user_data(
+            user,
+            new_data,
+            user_changes,
+            group_changes,
+            remote_service,
+            **kwargs,
+        )
+
+        return (
+            user,
+            updated_data["user"],
+            updated_data["groups"],
+            group_changes,
+        )
 
     def log_user_out_global(self, kc_username: str):
         """Send global logout signal to central IDMS service."""

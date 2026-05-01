@@ -18,6 +18,7 @@ from invenio_queues.proxies import current_queues
 from . import config
 from .proxies import current_remote_user_data_service
 from .services.names_sync import NamesSyncService
+from .services.config import RemoteGroupDataServiceConfig, RemoteUserDataServiceConfig
 from .services.service import RemoteGroupDataService, RemoteUserDataService
 from .signals import remote_data_updated
 from .tasks import (
@@ -148,8 +149,12 @@ class InvenioRemoteUserData:
         Args:
             app (_type_): _description_
         """
-        self.service = RemoteUserDataService(app, config=app.config)
-        self.group_service = RemoteGroupDataService(app, config=app.config)
+        self.service = RemoteUserDataService(
+            app, config=RemoteUserDataServiceConfig.build(app)
+        )
+        self.group_service = RemoteGroupDataService(
+            app, config=RemoteGroupDataServiceConfig.build(app)
+        )
         self.names_sync_service = NamesSyncService(app, config=app.config)
 
     def init_listeners(self, app):

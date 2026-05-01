@@ -9,6 +9,7 @@
 
 import os
 import time
+from typing import Literal, overload
 
 import requests
 from flask import current_app as app
@@ -123,6 +124,36 @@ class SessionBrokerAPIClient:
 class UserDataAPIClient:
     """Client for interacting with a remote user data source's API."""
 
+    @overload
+    @staticmethod
+    def fetch_user_profile(
+        *,  # make it clear that following must be passed as keyword args
+        sub_id: str,
+        kc_username: None = None,
+        timeout: int | None = None,
+        use_sub_endpoint: bool | None = None,
+    ) -> APIResponse | None: ...
+
+    @overload
+    @staticmethod
+    def fetch_user_profile(
+        *,
+        sub_id: None = None,
+        kc_username: str,
+        timeout: int | None = None,
+        use_sub_endpoint: Literal[True],
+    ) -> APIResponse | None: ...
+
+    @overload
+    @staticmethod
+    def fetch_user_profile(
+        *,
+        sub_id: None = None,
+        kc_username: str,
+        timeout: int | None = None,
+        use_sub_endpoint: Literal[False] | None = None,
+    ) -> Profile | None: ...
+
     @staticmethod
     def fetch_user_profile(
         sub_id: str | None = None,
@@ -203,7 +234,7 @@ class UserDataAPIClient:
             if sub_id or use_sub_endpoint:
                 parsed_response = APIResponse(**json_data)
             else:
-                parsed_response = Profile(**json_data)
+                parsed_response = Profile(**json_data.get("results", json_data))
 
             return parsed_response
 

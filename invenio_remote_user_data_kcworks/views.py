@@ -8,7 +8,7 @@
 """HTTP views for SSO broker flows and remote user-data webhooks."""
 
 import time
-from typing import Any, NoReturn
+from typing import Any, NoReturn, cast
 from urllib.parse import urlencode
 
 from flask import (
@@ -37,6 +37,7 @@ from werkzeug.exceptions import (
     MethodNotAllowed,
     NotFound,
 )
+from werkzeug.local import LocalProxy
 
 from .errors import (
     BrokerExpiryValueError,
@@ -103,7 +104,8 @@ def sso_broker_login(
     )
 
     query = urlencode({"return_to": return_to, "final_redirect": final_redirect})
-    return redirect(f"{broker_url}?{query}")
+    # Type checkers wrongly complain that the return isn't Flask.wrappers.Response
+    return cast(Response, redirect(f"{broker_url}?{query}"))
 
 
 def _sso_broker_callback() -> Response:
@@ -432,7 +434,9 @@ class RemoteUserDataUpdateWebhook(MethodView):
 
             if len(events) > 0:
                 current_queues.queues["user-data-updates"].publish(events)
-                remote_data_updated.send(app._get_current_object(), events=events)
+                remote_data_updated.send(
+                    cast(LocalProxy, app)._get_current_object(), events=events
+                )
             else:
                 if not users and bad_users or not groups and bad_groups:
                     entity_string = ""
@@ -486,8 +490,7 @@ class RemoteUserDataUpdateWebhook(MethodView):
             raw_body = request.data or b""
             excerpt = raw_body[:400]
             self.logger.error(
-                "Received malformed signal (Content-Type=%r, "
-                "Content-Length=%d): %r%s",
+                "Received malformed signal (Content-Type=%r, Content-Length=%d): %r%s",
                 request.content_type,
                 len(raw_body),
                 excerpt,

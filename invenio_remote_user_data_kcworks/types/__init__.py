@@ -6,12 +6,7 @@
 
 """Public type and model exports for invenio-remote-user-data-kcworks."""
 
-from .auth import (
-    AccountInfo,
-    AccountInfoDict,
-    AccountInfoProfileDict,
-    AccountInfoUserDict,
-)
+from .auth import AccountInfo
 from .broker_payload import BrokerDecodedToken, BrokerDecodedUserinfo
 from .names import (
     NameAffiliationDict,
@@ -54,9 +49,6 @@ __all__ = (
     "APIResponse",
     "AcademicInterest",
     "AccountInfo",
-    "AccountInfoDict",
-    "AccountInfoProfileDict",
-    "AccountInfoUserDict",
     "BrokerDecodedToken",
     "BrokerDecodedUserinfo",
     "CalculatedUserDataDict",

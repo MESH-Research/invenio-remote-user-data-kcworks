@@ -22,11 +22,21 @@ from flask import current_app as app
 from invenio_access.permissions import system_identity
 from invenio_accounts.errors import AlreadyLinkedError
 from invenio_accounts.models import User
+from pydantic import ValidationError
 
 from ..client import UserDataAPIClient
-from ..errors import UserDataRequestFailed, UserDataRequestTimeout
+from ..errors import (
+    BrokerExpiryValueError,
+    BrokerNonceValidationError,
+    BrokerPayloadExpiredError,
+    BrokerPayloadProcessingError,
+    BrokerTokenDecryptionError,
+    BrokerTokenMissingError,
+    UserDataRequestFailed,
+    UserDataRequestTimeout,
+)
 from ..proxies import current_remote_user_data_service
-from ..types.auth import AccountInfoDict
+from ..types.broker_payload import BrokerDecodedToken
 from ..types.profiles_api import APIResponse
 from .auth import CILogonHelpers
 
@@ -34,12 +44,12 @@ from .auth import CILogonHelpers
 def extract_bearer_token(header_string: str) -> str:
     """Extract the actual bearer token from an Authorization header.
 
+    Returns:
+        str: The bearer token.
+
     Raises:
         ValueError: If the header string is None, malformed, or
           the token itself is empty.
-
-    Returns:
-        str: The bearer token.
     """
     header_parts = header_string.split(None, 1)
     if not header_string:
@@ -187,8 +197,7 @@ class BrokerHelpers:
         response.delete_cookie(cookie_name)
         return response
 
-    @staticmethod
-    def decrypt_broker_token(token: str) -> dict:
+    def _decrypt_broker_token(self, token: str) -> dict:
         """Decrypt an AES-256-CBC broker token using the shared secret.
 
         Args:
@@ -198,16 +207,22 @@ class BrokerHelpers:
             The decrypted payload as a dict.
 
         Raises:
-            ValueError: If the token cannot be decrypted or parsed.
+            BrokerTokenDecryptionError: If the token cannot be decrypted or parsed.
         """
-        secret = os.getenv("COMMONS_PROFILES_API_TOKEN")
-        if not secret:
-            raise ValueError("COMMONS_PROFILES_API_TOKEN environment variable not set")
-        encoder = SecureParamEncoder(secret)
-        return encoder.decode(token)
+        try:
+            secret = os.getenv("COMMONS_PROFILES_API_TOKEN")
+            if not secret:
+                raise BrokerTokenDecryptionError(
+                    "COMMONS_PROFILES_API_TOKEN environment variable not set"
+                )
+            encoder = SecureParamEncoder(secret)
+            return encoder.decode(token)
 
-    @staticmethod
-    def validate_nonce(nonce: str) -> bool:
+        except Exception as e:
+            app.logger.exception("Failed to decrypt broker_token")
+            raise BrokerTokenDecryptionError from e
+
+    def _validate_nonce(self, nonce: str) -> bool:
         """Validate a broker nonce via the Profiles microservice.
 
         Args:
@@ -219,12 +234,16 @@ class BrokerHelpers:
         verify_url = app.config.get("SSO_BROKER_VERIFY_NONCE_URL")
         if not verify_url:
             app.logger.error("SSO_BROKER_VERIFY_NONCE_URL not configured")
-            return False
+            raise BrokerNonceValidationError
 
         bearer_token = os.getenv("COMMONS_PROFILES_API_TOKEN")
         if not bearer_token:
             app.logger.error("COMMONS_PROFILES_API_TOKEN not set")
-            return False
+            raise BrokerNonceValidationError
+
+        if not nonce:  # in case it's ""
+            app.logger.error("nonce was an empty string")
+            raise BrokerNonceValidationError
 
         timeout = app.config.get("SSO_BROKER_SILENT_LOGIN_TIMEOUT", 3)
         try:
@@ -238,59 +257,82 @@ class BrokerHelpers:
                 timeout=timeout,
             )
             resp.raise_for_status()
-            return resp.json().get("valid", False) is True
+
+            if resp.json().get("valid", False) is True:
+                return True
+            else:
+                app.logger.warning("Broker nonce validation failed")
+                raise BrokerNonceValidationError
+
         except Exception:
             app.logger.exception("Nonce validation request failed")
-            return False
+            raise BrokerNonceValidationError
 
-    @staticmethod
-    def process_broker_payload(payload: dict) -> tuple[User | None, str | None]:
-        """Extract user identity, find/create th KCWorks user, and update their data.
-
-        Args:
-            payload: The decrypted broker token dict. Expected keys include
-                - kc_username (str)
-                - primary_email (str)
-                - nonce (str)
-                - final_redirect (str)
-                - userinfo (dict): With 'sub', 'email', etc.
+    def _check_broker_token_age(self, expiration: int | float) -> None:
+        """Raise an error if the token has expired.
 
         Raises:
+            BrokerExpiredError if the token has expired
+            BrokerExpiryValueError if the token expiry is the wrong type
+        """
+        try:
+            if int(float(expiration)) < int(time.time()):
+                raise BrokerPayloadExpiredError
+        except (TypeError, ValueError) as e:
+            raise BrokerExpiryValueError from e
+
+    def process_broker_payload(self, raw_token: str) -> tuple[User | None, str | None]:
+        """Extract user identity, find/create th KCWorks user, and update their data.
+
+        Indirectly raises (through helper functions):
+            - BrokerTokenDecryptionError if broker jwt decryption fails
+            - BrokerExpiredError if the broker jwt has expired
+            - BrokerExpiryValueError if the expiry value is the wrong type
+            - BrokerNonceValidationError if nonce validation fails
+
+        Args:
+            raw_token: The undecrypted broker token string. Decoded will have the
+                required keys: userinfo (sub, email, name, idp_name, optional orcid); final_redirect;
+                kc_username; primary_email; nonce; iat; exp.. Optional: other_emails
+
+        Returns:
+            A tuple of (user, final_redirect). user None if the payload did not
+            contain enough information to identify or create a user.
+
+        Raises:
+            BrokerPayloadProcessingError: If the decrypted token fails Pydantic
+              validation.
             UserDataRequestFailed: If the user's data could not be retrieved from
               the remote endpoint's response.
             UserDataRequestTimeout: If the request to the remote endpoint times out.
-
-        Returns:
-            A tuple of (user, final_redirect). `user` is None if the payload
-            did not contain enough information to identify or create a user.
         """
-        userinfo = payload.get("userinfo") or {}
-        sub = payload.get("sub") or userinfo.get("sub")
-        final_redirect = payload.get("final_redirect", "/")
+        payload = self._decrypt_broker_token(raw_token)
 
-        if not sub:
-            return None, final_redirect
+        try:
+            token = BrokerDecodedToken.model_validate(payload)
+            app.logger.debug("token is")
+            app.logger.debug(payload)
+        except ValidationError as e:
+            raise BrokerPayloadProcessingError(
+                "BrokerHelpers.process_broker_payload: invalid decrypted token"
+            ) from e
 
-        kc_username = payload.get("kc_username") or payload.get("username")
-        email = payload.get("primary_email") or userinfo.get("email")
-        orcid = userinfo.get("orcid") or payload.get("orcid")
+        self._check_broker_token_age(token.exp)
 
-        account_info: AccountInfoDict = {
-            "external_id": sub,
-            "external_method": "cilogon",
-        }
-        if email or kc_username:
-            account_info["user"] = {
-                "email": email or "",
-                "profile": {
-                    "identifier_orcid": orcid or "",
-                    "identifier_kc_username": kc_username or "",
-                },
-            }
+        self._validate_nonce(token.nonce)
 
-        user = CILogonHelpers.get_user_from_account_info(account_info)
+        final_redirect = token.final_redirect
+        sub = token.userinfo.sub
+
+        user = CILogonHelpers.get_user_from_account_info(token.to_account_info())
+        app.logger.debug(f"user is {user}")
+        app.logger.debug(f"sub is {sub}")
+
+        profile_response: APIResponse | None = None
+        profile_fetch_error: str | None = None
         try:
             profile_response = UserDataAPIClient.fetch_user_profile(sub_id=sub)
+            app.logger.debug(f"profile_response is {profile_response}")
         except requests.Timeout:
             profile_fetch_error = "timeout"
         except requests.RequestException:
@@ -300,26 +342,26 @@ class BrokerHelpers:
         # for the full profile and create the KCWorks user.
         if (
             not user
-            and sub
             and isinstance(profile_response, APIResponse)
             and profile_response.data
         ):
+            app.logger.debug(f"creating new user")
             user = CILogonHelpers.create_new_user(profile_response)
+            app.logger.debug(f"created new user {user}")
 
         # Ensure the external identity is linked (idempotent via suppression).
         if user:
             with contextlib.suppress(AlreadyLinkedError):
                 CILogonHelpers.link_user_to_oauth_identifier(user, "cilogon", sub)
 
-            # At login time we never want a transient Profiles-side
-            # failure to block a user from logging in.
+            app.logger.debug(f"updating user from remote API")
             try:
                 current_remote_user_data_service.update_user_from_remote(
                     system_identity,
                     user.id,
                     "knowledgeCommons",
                     sub,
-                    remote_date=profile_response,
+                    remote_data=profile_response,
                 )
             except Exception as exc:
                 app.logger.warning(
@@ -331,7 +373,6 @@ class BrokerHelpers:
         else:
             if profile_fetch_error == "timeout":
                 raise UserDataRequestTimeout
-            else:
-                raise UserDataRequestFailed
+            raise UserDataRequestFailed
 
         return user, final_redirect

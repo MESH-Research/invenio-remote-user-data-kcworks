@@ -128,6 +128,7 @@ def _sso_broker_callback() -> Response:
         BrokerNonceValidationError: If the nonce is missing or invalid.
         BrokerPayloadProcessingError: If the user cannot be resolved from
             the payload.
+        UserCreationFailed: If new user creation fails.
         UserDataRequestTimeout: Propagated from profile fetch.
         UserDataRequestFailed: Propagated from profile fetch.
     """
@@ -139,28 +140,9 @@ def _sso_broker_callback() -> Response:
         app.logger.error("Broker callback called without broker_token")
         raise BrokerTokenMissingError
 
-    if broker_token and not no_session:
+    elif broker_token and not no_session:
         try:
-            payload = BrokerHelpers.decrypt_broker_token(broker_token)
-        except Exception as e:
-            app.logger.exception("Failed to decrypt broker_token")
-            raise BrokerTokenDecryptionError from e
-
-        expiration = payload.get("exp")
-        if expiration is not None:
-            try:
-                if int(float(expiration)) < int(time.time()):
-                    raise BrokerPayloadExpiredError
-            except (TypeError, ValueError) as e:
-                raise BrokerExpiryValueError from e
-
-        nonce = payload.get("nonce")
-        if not nonce or not BrokerHelpers.validate_nonce(nonce):
-            app.logger.warning("Broker nonce validation failed")
-            raise BrokerNonceValidationError
-
-        try:
-            user, final_redirect = BrokerHelpers.process_broker_payload(payload)
+            user, final_redirect = BrokerHelpers().process_broker_payload(broker_token)
 
             if not user:
                 app.logger.error("Could not find or create user from broker payload")
@@ -174,6 +156,7 @@ def _sso_broker_callback() -> Response:
 
         response = redirect(safe_redirect_target(final_redirect))
         return BrokerHelpers.clear_broker_refresh_cookie(response)
+
     else:
         response = redirect(safe_redirect_target(final_redirect))
         return BrokerHelpers.set_broker_refresh_cookie(response)

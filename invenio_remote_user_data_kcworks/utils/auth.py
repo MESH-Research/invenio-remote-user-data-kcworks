@@ -21,8 +21,9 @@ from invenio_accounts import current_accounts
 from invenio_accounts.models import Role, User, UserIdentity
 from invenio_db import db
 
+from ..errors import UserCreationFailed
 from ..services.group_roles import GroupRolesService
-from ..types.auth import AccountInfoDict
+from ..types.auth import AccountInfo
 from ..types.profiles_api import APIResponse, Profile
 from ..types.users import (
     CalculatedUserDataDict,
@@ -166,49 +167,13 @@ class CILogonHelpers:
         ))
 
     @staticmethod
-    def _get_external_id(account_info: AccountInfoDict) -> dict[str, str] | None:
-        """Get external id from account info.
-
-        Returns:
-            dict[str, str]: A dictionary with 'id' and 'method' if the account
-              info contains the external account association.
-            None: If the account_info lacks the complete information.
-        """
-        if all(k in account_info for k in ("external_id", "external_method")):
-            return dict(
-                id=account_info["external_id"],
-                method=account_info["external_method"],
-            )
-        return None
-
-    @staticmethod
-    def get_user_from_account_info(
-        account_info: AccountInfoDict | None = None,
-    ) -> User | None:
+    def get_user_from_account_info(account_info: AccountInfo) -> User | None:
         """Retrieve user object for the given request.
 
-        Extends the default account_get_user to allow for
-        retrieving a user by ORCID as well as email.
-
-        Uses either the access token or extracted account information to retrieve
-        the user object.
-
-        Expects the account info to be shaped like:
-            {
-                "user": {
-                    "email": XXX,
-                    "profile": {
-                        "identifier_orcid": XXX,
-                        "identifier_kc_username": XXX
-                        }
-                    },
-                "external_method": "cilogon"
-            }
-
         Parameters:
-            account_info (AccountInfoDict | None): External account payload
-                ('external_id', 'external_method', optional nested 'user').
-                (Default: None)
+            account_info (AccountInfo): External account payload
+                ('external_id', 'external_method', 'email', 'orcid',
+                'kc_username').
 
         Returns:
             An invenio_accounts.models.User instance or None.
@@ -218,40 +183,35 @@ class CILogonHelpers:
 
         # Try external ID first
         user = CILogonHelpers._try_get_user_by_external_id(account_info)
-        if user:
+        if isinstance(user, User):
             app.logger.debug("User found by external ID (CILogon)")
             return user
 
-        # Extract user profile safely
-        user_profile = account_info.get("user", {}).get("profile", {})
-
         # Try ORCID lookup before kc username (more universal)
-        user = CILogonHelpers._try_get_user_by_orcid(
-            user_profile.get("identifier_orcid")
-        )
-        if user:
+        user = CILogonHelpers._try_get_user_by_orcid(account_info.orcid)
+        if isinstance(user, User):
             app.logger.debug("User found by ORCID")
             return user
 
         # Try KC username lookup before email (more reliable)
-        kc_username = user_profile.get("identifier_kc_username")
         user = CILogonHelpers.try_get_user_by_kc_username(
-            kc_username,
-            account_info.get("external_method"),
+            account_info.kc_username,
+            account_info.external_method,
         )
         # kc_username check can return a list of Users,
         # in which case we log an error and continue.
-        if user and isinstance(user, User):
+        if isinstance(user, User):
             app.logger.debug("User found by KC username")
             return user
         elif isinstance(user, list):
-            app.logger.error(f"Multiple users found with KC username {kc_username}")
+            app.logger.error(
+                f"Multiple users found with KC username {account_info.kc_username}"
+            )
 
         # Try email lookup
-        email = account_info.get("user", {}).get("email")
-        app.logger.debug(pformat(account_info))
-        user = CILogonHelpers._try_get_user_by_email(email)
-        if user:
+        app.logger.debug(pformat(account_info.model_dump()))
+        user = CILogonHelpers._try_get_user_by_email(account_info.email)
+        if isinstance(user, User):
             app.logger.debug("User found by email")
             app.logger.debug(user.id)
             app.logger.debug(user.email)
@@ -262,7 +222,7 @@ class CILogonHelpers:
         return None
 
     @staticmethod
-    def _try_get_user_by_external_id(account_info: AccountInfoDict) -> User | None:
+    def _try_get_user_by_external_id(account_info: AccountInfo) -> User | None:
         """Try to get user by external ID.
 
         Returns:
@@ -270,12 +230,10 @@ class CILogonHelpers:
             None: None when no matching user exists.
         """
         try:
-            external_id = CILogonHelpers._get_external_id(account_info)
-            if external_id:
-                return_value = UserIdentity.get_user(
-                    external_id["method"], external_id["id"]
-                )
-                return return_value
+            return_value = UserIdentity.get_user(
+                account_info.external_method, account_info.external_id
+            )
+            return return_value
         except Exception:
             pass
         return None
@@ -642,42 +600,29 @@ class CILogonHelpers:
         return group_changes
 
     @staticmethod
-    def build_account_info(api_result: APIResponse | None, sub: str) -> AccountInfoDict:
-        """Build an account_info dict that looks as expected.
-
-        Returns:
-            AccountInfoDict: Structured dictionary of user info.
-        """
-        account_info: AccountInfoDict = {
-            "external_id": sub,
-            "external_method": "cilogon",
-        }
-        if api_result and api_result.data and len(api_result.data) > 0:
-            profile_result = api_result.data[0].profile
-            account_info["user"] = {
-                "email": profile_result.email,
-                "profile": {
-                    "identifier_orcid": profile_result.orcid,
-                    "identifier_kc_username": profile_result.username,
-                },
-            }
-        return account_info
-
-    @staticmethod
-    def create_new_user(result) -> User:
+    def create_new_user(result: APIResponse | Profile) -> User:
         """Create a new user.
 
         Returns:
             User: An invenio_accounts User object.
         """
-        app.logger.debug(f"Creating user: {result.data[0].profile.username}")
-        user_info = {
-            "username": result.data[0].profile.username,
-            "email": result.data[0].profile.email,
-            "active": True,
-            "confirmed_at": (datetime.datetime.now(datetime.UTC)),
-        }
-        user = invenio_oauthclient.oauth.register_user(
-            send_register_msg=True, **user_info
-        )
-        return user
+        try:
+            profile = (
+                result.data[0].profile if isinstance(result, APIResponse) else result
+            )
+
+            app.logger.debug(f"Creating user: {profile.username}")
+            user_info = {
+                "username": profile.username,
+                "email": profile.email,
+                "active": True,
+                "confirmed_at": (datetime.datetime.now(datetime.UTC)),
+            }
+            user = invenio_oauthclient.oauth.register_user(
+                send_register_msg=True, **user_info
+            )
+            return user
+        except (TypeError, IndexError, AttributeError):
+            raise UserCreationFailed(
+                "CILogonHelpers.create_new_user received unprocessable data."
+            )

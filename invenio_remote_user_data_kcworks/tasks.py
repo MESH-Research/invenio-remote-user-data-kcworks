@@ -10,7 +10,6 @@
 import contextlib
 import json
 from datetime import UTC, datetime, timedelta
-from typing import cast
 
 import requests
 from celery import shared_task
@@ -582,9 +581,7 @@ def do_user_created(
                     "rollback",
                     oauth_id,
                 )
-                user = CILogonHelpers.get_user_from_account_info(
-                    cast("AccountInfoDict", account_info)
-                )
+                user = CILogonHelpers.get_user_from_account_info(account_info)
                 if user is None:
                     app.logger.error(
                         "do_user_created: IntegrityError on create "
@@ -603,9 +600,8 @@ def do_user_created(
             except UserCreationFailed:
                 app.logger.warning(
                     "do_user_created task: UserCreationFailed during "
-                    "create_new_user for sub=%s: %s",
+                    "create_new_user for sub=%s",
                     oauth_id,
-                    exc,
                 )
                 _send_status(
                     oauth_id,

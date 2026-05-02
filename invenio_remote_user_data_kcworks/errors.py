@@ -97,6 +97,16 @@ class NoIDPFoundError(Exception):
         super().__init__(self.message)
 
 
+class LocalUserNotFoundError(Exception):
+    """Raised when no Invenio user row exists for the given local user id."""
+
+    def __init__(self, message: str | None = None):
+        """Create error; ``message`` defaults to a generic not-found text."""
+        self.message = message or "No local Invenio user for the given id"
+        self.header = None
+        super().__init__(self.message)
+
+
 class StateTokenInvalid(Exception):
     """Exception raised if oauth state token validation fails."""
 

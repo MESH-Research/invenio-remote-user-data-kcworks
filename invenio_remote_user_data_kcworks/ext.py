@@ -13,11 +13,14 @@ import arrow
 from flask import Response, current_app, request, session
 from flask_login import current_user, user_logged_in, user_logged_out
 from invenio_accounts.models import User
+from invenio_queues.proxies import current_queues
 
 from . import config
 from .proxies import current_remote_user_data_service
+from .services.config import RemoteGroupDataServiceConfig, RemoteUserDataServiceConfig
 from .services.service import RemoteGroupDataService, RemoteUserDataService
-from .tasks import do_user_data_update
+from .signals import remote_data_updated
+from .tasks import do_group_data_update, do_user_data_update
 from .utils import BrokerHelpers
 from .views import sso_broker_login
 
@@ -47,6 +50,26 @@ def on_user_logged_in(_, user: User) -> None:
                 session.setdefault("user-data-updated", {})[user.id] = new_timestamp
 
                 do_user_data_update.delay(user.id)  # noqa
+
+
+def on_remote_data_updated(_, events: list) -> None:
+    """Drain user-data-updates queue and dispatch Celery tasks (single consumer)."""
+    for event in current_queues.queues["user-data-updates"].consume():
+        entity_type = event.get("entity_type")
+        evt = event.get("event")
+
+        if entity_type == "users" and evt == "updated":
+            do_user_data_update.delay(event["user_id"], event["idp"], event["oauth_id"])  # noqa: TID252
+        elif entity_type == "groups" and evt in ("created", "updated"):
+            do_group_data_update.delay(event["idp"], event["id"])  # noqa: TID252
+        else:
+            current_app.logger.warning(
+                "on_remote_data_updated: unhandled event "
+                "(entity_type=%r, event=%r); skipping. Full event=%r",
+                entity_type,
+                evt,
+                event,
+            )
 
 
 class InvenioRemoteUserData:
@@ -89,8 +112,12 @@ class InvenioRemoteUserData:
         Args:
             app (_type_): _description_
         """
-        self.service = RemoteUserDataService(app, config=app.config)
-        self.group_service = RemoteGroupDataService(app, config=app.config)
+        self.service = RemoteUserDataService(
+            app, config=RemoteUserDataServiceConfig.build(app)
+        )
+        self.group_service = RemoteGroupDataService(
+            app, config=RemoteGroupDataServiceConfig.build(app)
+        )
 
     def init_listeners(self, app):
         """Initialize listeners for the extension.
@@ -100,6 +127,7 @@ class InvenioRemoteUserData:
         """
         user_logged_in.connect(on_user_logged_in, app)
         user_logged_out.connect(on_user_logged_out, app)
+        remote_data_updated.connect(on_remote_data_updated, app)
 
         @app.before_request
         def _sso_silent_login_check() -> Response | None:

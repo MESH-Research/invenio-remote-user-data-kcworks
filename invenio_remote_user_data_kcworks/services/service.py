@@ -7,81 +7,43 @@
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
-import datetime
-import json
 import os
-import traceback
 from pprint import pformat
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
-from flask import current_app
-
 from invenio_access.permissions import system_identity
-from invenio_accounts.models import User, UserIdentity
+from invenio_accounts.models import User
 from invenio_accounts.proxies import current_accounts
-from invenio_db import db
 from invenio_group_collections_kcworks.proxies import (
     current_group_collections_service,
 )  # noqa
 from invenio_group_collections_kcworks.service import remote_to_invenio_visibility
-from invenio_queues.proxies import current_queues
 from invenio_records_resources.services import Service
 from werkzeug.local import LocalProxy
 
 from ..client import UserDataAPIClient
+from ..errors import LocalUserNotFoundError
 from ..types import APIResponse, Profile
+from .config import RemoteGroupDataServiceConfig, RemoteUserDataServiceConfig
 from .group_roles import GroupRolesService
-from ..signals import remote_data_updated
-from ..tasks import do_group_data_update, do_user_data_update
-from ..utils import (
-    CILogonHelpers,
-    diff_between_nested_dicts,
-)
+from ..utils import CILogonHelpers
 
 
 class RemoteGroupDataService(Service):
     """Service for updating a group's metadata from a remote server."""
 
-    def __init__(self, app, config={}, **kwargs):
+    def __init__(self, app, config: RemoteGroupDataServiceConfig):
         """Constructor."""
-        super().__init__(config=config, **kwargs)
-        self.config = config
-        self.config.permission_policy_cls = config.get(
-            "REMOTE_USER_DATA_PERMISSION_POLICY"
-        )
-        self.endpoints_config = config.get("REMOTE_USER_DATA_API_ENDPOINTS")
+        super().__init__(config=config)
         self.logger = app.logger
         self.updated_data = {}
         self.communities_service = LocalProxy(
             lambda: app.extensions["invenio-communities"].service
         )
-        self.update_interval = datetime.timedelta(
-            minutes=config["REMOTE_USER_DATA_UPDATE_INTERVAL"]
-        )
         self.group_data_stale = True
         self.group_roles_service = GroupRolesService(self)
-
-        @remote_data_updated.connect_via(app)
-        def on_webhook_update_signal(_, events: list) -> None:
-            """Update group roles and metadata data from remote server
-            when webhook is triggered.
-            """
-            self.logger.debug("RemoteGroupDataService: webhook update signal received")
-
-            for event in current_queues.queues["user-data-updates"].consume():
-                if event["entity_type"] == "groups" and event["event"] in [
-                    "created",
-                    "updated",
-                ]:
-                    celery_result = do_group_data_update.delay(  # noqa:F841
-                        event["idp"], event["id"]
-                    )  # type: ignore
-                elif event["entity_type"] == "groups" and event["event"] == "deleted":
-                    raise NotImplementedError(
-                        "Group role deletion from remote signal is not yet implemented."
-                    )
 
     def _update_community_metadata_dict(
         self, starting_dict: dict, new_data: dict
@@ -131,7 +93,7 @@ class RemoteGroupDataService(Service):
         remote_group_id: str,
         timeout: int | None = None,
         **kwargs,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Update group data from remote server.
 
         If Invenio group roles for the remote group do not exist,
@@ -167,9 +129,9 @@ class RemoteGroupDataService(Service):
         """
         self.require_permission(identity, "trigger_update")
         if not timeout:
-            timeout = current_app.config.get("REMOTE_USER_DATA_API_TIMEOUT", 5)
+            timeout = self.config.api_timeout
         results_dict = {}
-        idp_config = self.endpoints_config[idp]
+        idp_config = self.config.endpoints_config[idp]
         remote_api_token = os.environ[idp_config["groups"]["token_env_variable_label"]]
 
         headers = {"Authorization": f"Bearer {remote_api_token}"}
@@ -306,14 +268,9 @@ class RemoteGroupDataService(Service):
 class RemoteUserDataService(Service):
     """Service for updating a user's metadata from a remote server."""
 
-    def __init__(self, app, config={}, **kwargs):
+    def __init__(self, app, config: RemoteUserDataServiceConfig):
         """Constructor."""
-        super().__init__(config=config, **kwargs)
-        self.config = config
-        self.endpoints_config = config["REMOTE_USER_DATA_API_ENDPOINTS"]
-        self.config.permission_policy_cls = config.get(
-            "REMOTE_USER_DATA_PERMISSION_POLICY"
-        )
+        super().__init__(config=config)
         self.logger = app.logger
         self.updated_data = {}
         self.communities_service = LocalProxy(
@@ -321,26 +278,6 @@ class RemoteUserDataService(Service):
         )
         # TODO: Is there a risk of colliding operations?
         self.update_in_progress = False
-
-        @remote_data_updated.connect_via(app)
-        def on_webhook_update_signal(_, events: list) -> None:
-            """Update user data from remote when webhook is triggered."""
-            self.logger.debug("User data update webhook signal received")
-
-            for event in current_queues.queues["user-data-updates"].consume():
-                if event["entity_type"] == "users" and event["event"] == "updated":
-                    try:
-                        do_user_data_update.delay(  # noqa
-                            event["user_id"], event["idp"], event["oauth_id"]
-                        )  # noqa
-                    except AssertionError:
-                        self.logger.info(
-                            f"Cannot update: user {event['id']} does not exist"
-                            " in Invenio."
-                        )
-                elif event["entity_type"] == "groups" and event["event"] == "updated":
-                    # TODO: implement group updates and group/user creation
-                    pass
 
     def update_user_from_remote(
         self,
@@ -351,22 +288,42 @@ class RemoteUserDataService(Service):
         remote_data: APIResponse | None = None,
         **kwargs,
     ) -> tuple[
-        Optional[User],
+        User | None,
         dict[str, Any] | APIResponse | Profile | None,
         list[str],
         dict,
     ]:
         """Main method to update user data from remote server.
 
-        Parameters:
-            user_id (int): The user's id in the Invenio database.
-            idp (str): The identity provider name. This is not the oauth
-                method name but rather the name of the user data source.
-            remote_id (str): The identifier for the user on the remote idp
-                service.
-            remote_data (APIResponse | None): A pre-fetched user data API response
-                to use instead of making a new remote request (optional)
-            **kwargs: Additional keyword arguments to pass to the method.
+        On success, returns a four-tuple:
+            (user, user_field_changes, final_group_role_names, group_delta).
+
+        `user_field_changes` is the sparse diff from `update_local_user_data`
+        (empty dict when no profile-backed user fields changed). `group_delta`
+        has keys `added_groups`, `dropped_groups`, and `unchanged_groups`.
+
+        If the user exists but no usable remote profile is found (empty/unknown
+        record), the method logs a warning and returns
+        `(user, remote_payload, [], {})` where `remote_payload` may be the last
+        `APIResponse` or `Profile` seen.
+
+        If pre-fetched `remote_data` is an `APIResponse` whose bearer/metadata
+        is not authorized, returns `(user, remote_data, [], {})`.
+
+        **Exceptions** are not caught here: they propagate to the caller so
+        background tasks can retry and errors are visible. The login path that
+        calls this in `CILogonHelpers` wraps the call and does not fail the login.
+
+        Raises:
+            LocalUserNotFoundError: If ``user_id`` does not resolve to a local user.
+
+        Args:
+            identity: Identity with `trigger_update` permission.
+            user_id: Local Invenio user id.
+            idp: Remote user-data source name (not necessarily the OAuth method name).
+            remote_id: Remote subject / identifier for that idp.
+            remote_data: Optional pre-fetched `APIResponse` (by sub); if omitted,
+                profiles are fetched inside this method.
 
         Returns:
             tuple: A four-tuple:
@@ -397,79 +354,72 @@ class RemoteUserDataService(Service):
             f" remote_id: {remote_id}."
         )
         if remote_data:
+            incoming_data = remote_data
             self.logger.debug(f"Using pre-fetched remote data: {pformat(remote_data)}")
-        updated_data = {}
 
         remote_service = idp
-        if idp in current_app.config.get("KC_REMOTE_IDPS"):
+        if idp in self.config.kc_remote_idps:
             remote_service = "knowledgeCommons"
 
-        try:
-            user: User = current_accounts.datastore.get_user_by_id(user_id)
-
-            if not remote_data or len(remote_data.data) == 0:
-                remote_data: APIResponse = UserDataAPIClient.fetch_user_profile(
-                    sub_id=remote_id
-                )
-
-            if not remote_data.data or len(remote_data.data) == 0:
-                kc_username = user.user_profile.get("identifier_kc_username")
-                remote_data: Profile = UserDataAPIClient.fetch_user_profile(
-                    kc_username=kc_username
-                )
-            else:
-                if not remote_data.meta.authorized:
-                    self.logger.error(
-                        "Problem with static bearer key for user data update."
-                    )
-                    return user, remote_data, [], {}
-
-            if (
-                hasattr(remote_data, "data")
-                and remote_data.data
-                and len(remote_data.data) > 0
-            ) or (
-                hasattr(remote_data, "results")
-                and remote_data.results
-                and len(remote_data.results) > 0
-            ):
-                try:
-                    profile = remote_data.data[0].profile
-                except AttributeError:
-                    profile = remote_data
-
-                group_changes = CILogonHelpers.calculate_group_changes(profile, user)
-                user_changes, new_data = CILogonHelpers.calculate_user_changes(
-                    profile, user
-                )
-
-                updated_data = CILogonHelpers.update_local_user_data(
-                    user,
-                    new_data,
-                    user_changes,
-                    group_changes,
-                    remote_service,
-                    **kwargs,
-                )
-                self.logger.debug(f"updated_data: {pformat(updated_data)}")
-
-                return (
-                    user,
-                    updated_data["user"],
-                    updated_data["groups"],
-                    group_changes,
-                )
-
-            else:
-                # no record found on remote server
-                self.logger.warning(f"User {remote_id} not found on remote server.")
-                return user, remote_data, [], {}
-
-        except Exception as e:
-            self.logger.error(
-                f"Error updating user data from remote server: {repr(e)}", exc_info=True
+        # Note: exceptions are intentionally allowed to propagate so callers
+        # (the Celery tasks ``do_user_created`` and ``do_user_data_update``)
+        # can apply their HTTP-specific retry/reschedule policies and so
+        # other unexpected errors are not silenced.
+        # The login flow that calls this method synchronously (in
+        # ``utils.CILogonHelpers._existing_or_create_user_for_login``)
+        # wraps it in its own defensive try/except so user logins are
+        # never blocked by a Profiles-side failure.
+        user = current_accounts.datastore.get_user_by_id(user_id)
+        if user is None:
+            raise LocalUserNotFoundError(
+                f"No local Invenio user for id={user_id}"
             )
-            return None, None, [], {}
+
+        if remote_data is None or len(remote_data.data) == 0:
+            incoming_data: APIResponse | None = UserDataAPIClient.fetch_user_profile(
+                sub_id=remote_id
+            )
+
+        if incoming_data is None or len(incoming_data.data) == 0:
+            kc_username = user.user_profile.get("identifier_kc_username")
+            incoming_data: Profile | None = UserDataAPIClient.fetch_user_profile(
+                kc_username=kc_username, use_sub_endpoint=False
+            )
+        else:
+            if not incoming_data.meta.authorized:
+                self.logger.error(
+                    "Problem with static bearer key for user data update."
+                )
+                return user, incoming_data, [], {}
+
+        if isinstance(incoming_data, APIResponse) and len(incoming_data.data) > 0:
+            profile = incoming_data.data[0].profile
+        elif isinstance(incoming_data, Profile):
+            profile = incoming_data
+        else:
+            # no record found on remote server
+            self.logger.warning(f"User {remote_id} not found on remote server.")
+            return user, incoming_data, [], {}
+
+        group_changes = CILogonHelpers.calculate_group_changes(profile, user)
+        user_changes, new_data = CILogonHelpers.calculate_user_changes(profile, user)
+
+        updated_data = CILogonHelpers.update_local_user_data(
+            user,
+            new_data,
+            user_changes,
+            group_changes,
+            remote_service,
+            **kwargs,
+        )
+        self.logger.debug(f"updated_data: {pformat(updated_data)}")
+
+        return (
+            user,
+            updated_data["user"],
+            updated_data["groups"],
+            group_changes,
+        )
 
     def log_user_out_global(self, kc_username: str):
         """Send global logout signal to central IDMS service."""

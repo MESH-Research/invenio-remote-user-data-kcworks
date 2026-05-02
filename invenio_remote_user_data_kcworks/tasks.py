@@ -14,11 +14,12 @@ from celery import shared_task
 from flask import current_app as app
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import UserIdentity
+
+from .errors import LocalUserNotFoundError, NoIDPFoundError
 from .proxies import (
-    current_remote_user_data_service,
     current_remote_group_service,
+    current_remote_user_data_service,
 )
-from .errors import NoIDPFoundError
 
 
 @shared_task(ignore_result=True)
@@ -36,6 +37,11 @@ def do_user_data_update(
         Plain dict summarizing the run (IDs, group names, group deltas, and
         optional user-field changes when the service returns a dict). Safe for
         Celery's JSON result backend; not the raw service tuple.
+
+    Raises:
+        LocalUserNotFoundError: If the local user id does not exist (re-raised
+            after logging).
+        NoIDPFoundError: If no identity provider can be resolved for the user.
     """
     with app.app_context():
         if not idp:
@@ -50,11 +56,22 @@ def do_user_data_update(
         if idp:
             service = current_remote_user_data_service
 
-            user, updated_data, groups, groups_changes = (
-                service.update_user_from_remote(
-                    system_identity, user_id, idp, remote_id
+            try:
+                user, updated_data, groups, groups_changes = (
+                    service.update_user_from_remote(
+                        system_identity, user_id, idp, remote_id
+                    )
                 )
-            )
+            except LocalUserNotFoundError as exc:
+                app.logger.error(
+                    "do_user_data_update: local user missing (%s); "
+                    "user_id=%s idp=%s remote_id=%s",
+                    exc,
+                    user_id,
+                    idp,
+                    remote_id,
+                )
+                raise
             summary: dict[str, Any] = {
                 "user_id": user_id,
                 "idp": idp,

@@ -6,12 +6,78 @@
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
+from enum import StrEnum
+
 from kombu import Exchange
 
 from .permissions import (
     CustomCommunitiesPermissionPolicy,
     RemoteUserDataPermissionPolicy,
 )
+
+
+class UserDataStatus(StrEnum):
+    """Outcome values for the Profiles works/status callback.
+
+    Sent in the `status` field of POSTs to
+    `/api/v1/members/{member_name}/works/status`.
+
+    IMPORTANT: changing a member's value is a wire-protocol change and
+    must be coordinated with the Profiles side.
+    """
+
+    PROCESSED = "PROCESSED"
+    FAILED = "FAILED"
+
+
+class KCNamesTag(StrEnum):
+    """Discriminator tags applied to KCWorks-managed Names records.
+
+    The Names vocabulary is shared with bulk-loaded data and other
+    sources, so we tag every record we write to be able to tell ours
+    apart at lookup, merge, and dedupe time. The two values below are
+    the only tags `NamesSyncService` writes; tag-based filtering
+    elsewhere in the codebase should reference these members rather
+    than the bare strings.
+
+    Members:
+        USER: A Names record that mirrors a local KCWorks user.
+        CITED: A Names record inserted from ORCID on first reference
+            (e.g. an ORCID-identified contributor cited in a draft, or
+            picked from the deposit form's ORCID proxy) for a person
+            who is not (yet) a KCWorks user.
+
+    The string values are persisted on Names records in OpenSearch and
+    in the database, so changing them is a data-migration concern.
+    """
+
+    USER = "kcworks-user"
+    CITED = "kcworks-cited"
+
+
+class UserDataEvent(StrEnum):
+    """Event values for the Profiles works/status callback.
+
+    Sent in the `event` field of POSTs to
+    `/api/v1/members/{member_name}/works/status`. Mirrors the
+    `event` property carried by each entry in the inbound
+    `updates.users` webhook payload, so the Profiles side can
+    correlate the status callback with the original signal it sent.
+
+    Only the two values KCWorks itself can report on are modelled
+    here; `deleted` is intentionally absent because KCWorks does
+    not act on `users.deleted` webhook events (see the API
+    documentation for the rationale) and therefore never sends a
+    status callback for one. The webhook view continues to accept
+    `deleted` as a valid wire-format string.
+
+    IMPORTANT: changing these values is a wire-protocol change and
+    must be coordinated with the Profiles side.
+    """
+
+    CREATED = "created"
+    UPDATED = "updated"
+
 
 REMOTE_USER_DATA_API_TIMEOUT = 5
 

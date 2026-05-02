@@ -16,7 +16,8 @@ class BrokerTokenMissingError(Exception):
     def __init__(self, message=None, header=None):
         message_fragment = message or "Missing broker_token parameter"
         self.message = (
-            app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE") or "{message}"
+            app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE")
+            or "{message}"
         ).format(message=message_fragment)
         self.header = header or "We couldn't log you in"
         super().__init__(self.message)
@@ -28,7 +29,8 @@ class BrokerTokenDecryptionError(Exception):
     def __init__(self, message=None, header=None):
         message_fragment = message or "Invalid broker_token"
         self.message = (
-            app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE") or "{message}"
+            app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE")
+            or "{message}"
         ).format(message=message_fragment)
         self.header = header or "We couldn't log you in"
         super().__init__(self.message)
@@ -40,7 +42,8 @@ class BrokerPayloadExpiredError(Exception):
     def __init__(self, message=None, header=None):
         message_fragment = message or "Expired broker payload"
         self.message = (
-            app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE") or "{message}"
+            app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE")
+            or "{message}"
         ).format(message=message_fragment)
         self.header = header or "We couldn't log you in"
         super().__init__(self.message)
@@ -52,7 +55,8 @@ class BrokerExpiryValueError(Exception):
     def __init__(self, message=None, header=None):
         message_fragment = message or "Invalid broker payload expiry value"
         self.message = (
-            app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE") or "{message}"
+            app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE")
+            or "{message}"
         ).format(message=message_fragment)
         self.header = header or "We couldn't log you in"
         super().__init__(self.message)
@@ -64,7 +68,8 @@ class BrokerNonceValidationError(Exception):
     def __init__(self, message=None, header=None):
         message_fragment = message or "Nonce validation failed"
         self.message = (
-            app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE") or "{message}"
+            app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE")
+            or "{message}"
         ).format(message=message_fragment)
         self.header = header or "We couldn't log you in"
         super().__init__(self.message)
@@ -76,7 +81,8 @@ class BrokerPayloadProcessingError(Exception):
     def __init__(self, message=None, header=None):
         message_fragment = message or "Problem processing broker payload"
         self.message = (
-            app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE") or "{message}"
+            app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE")
+            or "{message}"
         ).format(message=message_fragment)
         self.header = header or "We couldn't log you in"
         super().__init__(self.message)
@@ -107,6 +113,17 @@ class StateTokenInvalid(Exception):
 class IDTokenInvalid(Exception):
     def __init__(self, message=None, header=None):
         message_fragment = message or "Returned OAuth id token validation failed."
+        self.message = (
+            app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_TOKEN")
+            or "{message}"
+        ).format(message=message_fragment)
+        self.header = header or "We couldn't log you in"
+        super().__init__(self.message)
+
+
+class UserCreationFailed(Exception):
+    def __init__(self, message=None, header=None):
+        message_fragment = message or "Could not create a new KCWorks user to log in."
         self.message = (
             app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_TOKEN")
             or "{message}"

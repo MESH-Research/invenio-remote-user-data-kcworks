@@ -25,13 +25,13 @@ from sqlalchemy.exc import IntegrityError
 
 from .client import UserDataAPIClient
 from .config import UserDataEvent, UserDataStatus
-from .errors import NoIDPFoundError
+from .errors import NoIDPFoundError, UserCreationFailed
 from .proxies import (
     current_names_sync_service,
     current_remote_group_service,
     current_remote_user_data_service,
 )
-from .types.auth import AccountInfoDict
+from .types.auth import AccountInfo
 from .types.profiles_api import APIResponse
 from .utils.auth import CILogonHelpers, UserIdentifierHelpers
 
@@ -554,20 +554,14 @@ def do_user_created(
         # Match an existing user if possible; a user may have previously
         # logged in with a different method.
         profile = profile_response.data[0].profile
-        account_info = {
-            "external_id": oauth_id,
-            "external_method": auth_method,
-            "user": {
-                "email": profile.email or "",
-                "profile": {
-                    "identifier_orcid": profile.orcid or "",
-                    "identifier_kc_username": profile.username or "",
-                },
-            },
-        }
-        user = CILogonHelpers.get_user_from_account_info(
-            cast("AccountInfoDict", account_info)
+        account_info = AccountInfo(
+            external_id=oauth_id,
+            external_method=auth_method,
+            email=(profile.email or ""),
+            orcid=profile.orcid,
+            kc_username=(profile.username or ""),
         )
+        user = CILogonHelpers.get_user_from_account_info(account_info)
         if user is None:
             try:
                 user = CILogonHelpers.create_new_user(profile_response)
@@ -606,6 +600,21 @@ def do_user_created(
                         note="integrity_error_unresolved",
                     )
                     return None
+            except UserCreationFailed:
+                app.logger.warning(
+                    "do_user_created task: UserCreationFailed during "
+                    "create_new_user for sub=%s: %s",
+                    oauth_id,
+                    exc,
+                )
+                _send_status(
+                    oauth_id,
+                    UserDataStatus.FAILED,
+                    UserDataEvent.CREATED,
+                    method=auth_method,
+                    note="user_creation_failed",
+                )
+                return None
 
         if user is None:
             app.logger.warning(

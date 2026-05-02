@@ -124,6 +124,7 @@ def _sso_broker_callback() -> Response:
         BrokerNonceValidationError: If the nonce is missing or invalid.
         BrokerPayloadProcessingError: If the user cannot be resolved from
             the payload.
+        UserCreationFailed: If new user creation fails.
         UserDataRequestTimeout: Propagated from profile fetch.
         UserDataRequestFailed: Propagated from profile fetch.
     """

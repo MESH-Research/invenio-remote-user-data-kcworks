@@ -935,7 +935,7 @@ class BrokerHelpers:
                     user.id,
                     "knowledgeCommons",
                     sub,
-                    remote_date=profile_response,
+                    remote_data=profile_response,
                 )
             except Exception as exc:
                 app.logger.warning(

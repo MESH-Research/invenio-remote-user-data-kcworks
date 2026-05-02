@@ -12,7 +12,7 @@ from pydantic import BaseModel, HttpUrl
 class AcademicInterest(BaseModel):
     """AcademicInterest is a Pydantic model of data associated with a user."""
 
-    id: int
+    id: int | None = None
     text: str
 
 
@@ -31,12 +31,13 @@ class Profile(BaseModel):
     username: str
     name: str
     email: str
-    first_name: str
-    last_name: str
-    institutional_affiliation: str
-    orcid: str
+    first_name: str | None
+    last_name: str | None
+    institutional_affiliation: str | None
+    orcid: str | None
     academic_interests: list[AcademicInterest] | None = None
-    groups: list[Group]
+    groups: list[Group] | None = None
+    avatar: str | None = None
     url: HttpUrl | None = None
     is_superadmin: bool = False
 

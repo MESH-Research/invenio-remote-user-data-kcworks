@@ -116,8 +116,9 @@ class IDTokenInvalid(Exception):
 class UserCreationFailed(Exception):
     def __init__(self, message=None, header=None):
         message_fragment = message or "Could not create a new KCWorks user to log in."
-        self.message = app.config.get(
-            "REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_TOKEN"
+        self.message = (
+            app.config.get("REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_INVALID_TOKEN")
+            or "{message}"
         ).format(message=message_fragment)
         self.header = header or "We couldn't log you in"
         super().__init__(self.message)

@@ -242,16 +242,10 @@ class CILogonHelpers:
     def get_user_from_account_info(account_info: AccountInfo) -> User | None:
         """Retrieve user object for the given request.
 
-        Extends the default account_get_user to allow for
-        retrieving a user by ORCID as well as email.
-
-        Uses either the access token or extracted account information to retrieve
-        the user object.
-
         Parameters:
-            account_info (BrokerDecodedToken): External account payload
-                ('external_id', 'external_method', optional nested 'user').
-                (Default: None)
+            account_info (AccountInfo): External account payload
+                ('external_id', 'external_method', 'email', 'orcid',
+                'kc_username').
 
         Returns:
             An invenio_accounts.models.User instance or None.
@@ -267,19 +261,18 @@ class CILogonHelpers:
 
         # Try ORCID lookup before kc username (more universal)
         user = CILogonHelpers._try_get_user_by_orcid(account_info.orcid)
-        if user:
+        if isinstance(user, User):
             app.logger.debug("User found by ORCID")
             return user
 
         # Try KC username lookup before email (more reliable)
-
         user = CILogonHelpers.try_get_user_by_kc_username(
             account_info.kc_username,
             account_info.external_method,
         )
         # kc_username check can return a list of Users,
         # in which case we log an error and continue.
-        if user and isinstance(user, User):
+        if isinstance(user, User):
             app.logger.debug("User found by KC username")
             return user
         elif isinstance(user, list):
@@ -290,7 +283,7 @@ class CILogonHelpers:
         # Try email lookup
         app.logger.debug(pformat(account_info.model_dump()))
         user = CILogonHelpers._try_get_user_by_email(account_info.email)
-        if user:
+        if isinstance(user, User):
             app.logger.debug("User found by email")
             app.logger.debug(user.id)
             app.logger.debug(user.email)

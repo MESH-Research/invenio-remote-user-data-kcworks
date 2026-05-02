@@ -1,8 +1,8 @@
 """Pydantic data models for remote-user-data payloads."""
 
-from typing import Any, NotRequired, Required, TypedDict
+from typing import Any, TypedDict
 
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, ConfigDict, HttpUrl
 
 
 class AcademicInterest(BaseModel):
@@ -66,31 +66,68 @@ class LogoutRequest(BaseModel):
     user_agent: str
 
 
-class AccountInfoProfileDict(TypedDict):
-    """Profile fragment under account_info.user.profile."""
-
-    identifier_orcid: str
-    identifier_kc_username: str
-
-
-class AccountInfoUserDict(TypedDict):
-    """User fragment under account_info.user."""
-
-    email: str
-    profile: AccountInfoProfileDict
-
-
-class AccountInfoDict(TypedDict, total=False):
+class AccountInfo(BaseModel):
     """OAuth/CILogon account payload for user resolution and linking.
 
-    Built by :meth:`CILogonHelpers.build_account_info` and broker
-    :meth:`BrokerHelpers.process_broker_payload`, then passed to
-    :meth:`CILogonHelpers.get_user_from_account_info`.
+    Built by BrokerDecodedToken.to_account_info, then passed to
+    CILogonHelpers.get_user_from_account_info.
     """
 
-    external_id: Required[str]
-    external_method: Required[str]
-    user: NotRequired[AccountInfoUserDict]
+    model_config = ConfigDict(extra="forbid")
+
+    external_id: str
+    external_method: str
+    email: str
+    orcid: str | None = None
+    kc_username: str
+
+
+class BrokerDecodedUserinfo(BaseModel):
+    """Nested userinfo object from the Profiles broker token (observed wire shape)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    sub: str
+    email: str
+    name: str
+    idp_name: str
+    orcid: str | None = None
+
+
+class BrokerDecodedToken(BaseModel):
+    """Decrypted Profiles broker token (observed wire shape only).
+
+    Required incoming: userinfo, final_redirect, kc_username, primary_email,
+    nonce, iat, exp. Optional: other_emails. Unknown keys are ignored
+    (extra="ignore").
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    userinfo: BrokerDecodedUserinfo
+    final_redirect: str
+    kc_username: str
+    primary_email: str
+    other_emails: list[str] | None = None
+    nonce: str
+    iat: float | int
+    exp: float | int
+
+    @property
+    def resolved_email(self) -> str:
+        """Preferred email: primary_email, falling back to userinfo.email."""
+        return self.primary_email or self.userinfo.email
+
+    def to_account_info(self):
+        """Build an AccountInfo model based on this data"""
+        info = AccountInfo(
+            external_id=self.userinfo.sub,
+            email=self.resolved_email,
+            orcid=self.userinfo.orcid,
+            kc_username=self.kc_username,
+            external_method="cilogon",
+        )
+        return info
 
 
 class UserProfileUpdateDict(TypedDict, total=False):

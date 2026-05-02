@@ -104,6 +104,11 @@ REMOTE_USER_DATA_API_ENDPOINTS = {
 
 REMOTE_USER_DATA_UPDATE_INTERVAL = 1  # 1 hour
 
+# Long-delay reschedule for the `do_user_created` and
+# `do_user_data_update` tasks after Celery's retries
+# fail.
+REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY = 3600
+
 REMOTE_USER_DATA_MQ_EXCHANGE = Exchange(
     "user-data-updates",
     type="direct",

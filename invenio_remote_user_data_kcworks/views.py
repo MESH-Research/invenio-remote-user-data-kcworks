@@ -8,7 +8,7 @@
 """HTTP views for SSO broker flows and remote user-data webhooks."""
 
 import time
-from typing import Any, NoReturn
+from typing import Any, NoReturn, cast
 from urllib.parse import urlencode
 
 from flask import (
@@ -37,6 +37,7 @@ from werkzeug.exceptions import (
     MethodNotAllowed,
     NotFound,
 )
+from werkzeug.local import LocalProxy
 
 from .errors import (
     BrokerExpiryValueError,
@@ -101,7 +102,8 @@ def sso_broker_login(
     )
 
     query = urlencode({"return_to": return_to, "final_redirect": final_redirect})
-    return redirect(f"{broker_url}?{query}")
+    # Type checkers wrongly complain that the return isn't Flask.wrappers.Response
+    return cast(Response, redirect(f"{broker_url}?{query}"))
 
 
 def _sso_broker_callback() -> Response:
@@ -346,11 +348,21 @@ class RemoteUserDataUpdateWebhook(MethodView):
                                     id=u["id"], method=auth_method
                                 ).one_or_none()
                                 if user_identity is None:
-                                    bad_users.append(u["id"])
-                                    self.logger.debug(
-                                        f"Received update signal from {idp} "
-                                        f"for unknown user: external id {u['id']}"
-                                    )
+                                    if u["event"] != "created":
+                                        self.logger.warning(
+                                            f"{idp} sent an {u['event']!r} "
+                                            f"event for unknown user (sub="
+                                            f"{u['id']!r}); converting to "
+                                            "'created' for lazy provisioning"
+                                        )
+                                    users.append(u["id"])
+                                    events.append({
+                                        "idp": idp,
+                                        "entity_type": e,
+                                        "event": "created",
+                                        "oauth_id": u["id"],
+                                        "user_id": None,
+                                    })
                                 else:
                                     users.append(u["id"])
                                     events.append({
@@ -376,13 +388,18 @@ class RemoteUserDataUpdateWebhook(MethodView):
                 else:
                     bad_entity_types.append(e)
                     self.logger.warning(
-                        f"{idp} Received update signal for unknown entity type: {e}"
+                        "%s received update signal for unknown entity "
+                        "type %r (configured types: %s)",
+                        idp,
+                        e,
+                        sorted(entity_types.keys()),
                     )
-                    self.logger.warning(data)
 
             if len(events) > 0:
                 current_queues.queues["user-data-updates"].publish(events)
-                remote_data_updated.send(app._get_current_object(), events=events)
+                remote_data_updated.send(
+                    cast(LocalProxy, app)._get_current_object(), events=events
+                )
             else:
                 if not users and bad_users or not groups and bad_groups:
                     entity_string = ""
@@ -404,8 +421,26 @@ class RemoteUserDataUpdateWebhook(MethodView):
                     self.logger.info(data["updates"])
                     raise NotFound("Updates attempted for unknown groups")
                 else:
-                    self.logger.warning(f"{idp} No valid events received")
-                    self.logger.warning(data["updates"])
+                    summary = {
+                        bucket: {
+                            "count": len(items),
+                            "triples": [
+                                (
+                                    bucket,
+                                    str(it.get("event")),
+                                    str(it.get("id")),
+                                )
+                                for it in items
+                            ],
+                        }
+                        for bucket, items in (data.get("updates") or {}).items()
+                        if isinstance(items, list)
+                    }
+                    self.logger.warning(
+                        "%s no valid events received; summary=%s",
+                        idp,
+                        summary,
+                    )
                     raise BadRequest("No valid events received")
 
             # return error message after handling signals that are
@@ -415,7 +450,15 @@ class RemoteUserDataUpdateWebhook(MethodView):
                 # completely rejected
                 raise BadRequest
         except KeyError:  # request is missing 'idp' or 'updates' keys
-            self.logger.error(f"Received malformed signal: {request.data}")
+            raw_body = request.data or b""
+            excerpt = raw_body[:400]
+            self.logger.error(
+                "Received malformed signal (Content-Type=%r, Content-Length=%d): %r%s",
+                request.content_type,
+                len(raw_body),
+                excerpt,
+                "..." if len(raw_body) > len(excerpt) else "",
+            )
             raise BadRequest(
                 "Received malformed signal. Missing 'idp' or 'updates' keys."
             ) from None

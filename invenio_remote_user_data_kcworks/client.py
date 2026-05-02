@@ -225,12 +225,8 @@ class UserDataAPIClient:
             response = requests.get(url, headers=headers, timeout=timeout)
             response.raise_for_status()  # Raises an HTTPError for bad responses
 
-            # Parse JSON response
             json_data = response.json()
 
-            # Parse with Pydantic
-            # if we have a sub_id we expect an APIResponse object that has a
-            # sub and profile. If we have a kc_username we expect a Profile object.
             if sub_id or use_sub_endpoint:
                 parsed_response = APIResponse(**json_data)
             else:
@@ -341,7 +337,8 @@ class UserDataAPIClient:
 
             else:
                 app.logger.error(
-                    f"Profiles logout API returned HTTP {response.status_code}: {response.text[:400]}"
+                    f"Profiles logout API returned HTTP {response.status_code}: "
+                    f"{response.text[:400]}"
                 )
                 return False
 

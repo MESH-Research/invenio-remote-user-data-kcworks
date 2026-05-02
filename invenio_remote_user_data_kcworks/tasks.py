@@ -24,7 +24,7 @@ from sqlalchemy.exc import IntegrityError
 
 from .client import UserDataAPIClient
 from .config import UserDataEvent, UserDataStatus
-from .errors import NoIDPFoundError, UserCreationFailed
+from .errors import LocalUserNotFoundError, NoIDPFoundError, UserCreationFailed
 from .proxies import (
     current_names_sync_service,
     current_remote_group_service,
@@ -297,6 +297,7 @@ def do_user_data_update(
         retry after exhausting its bounded retry budget.
 
     Raises:
+        LocalUserNotFoundError: When the local Invenio user id does not exist.
         NoIDPFoundError: When `idp` cannot be inferred from a
             `UserIdentity` for `user_id`.
     """
@@ -348,6 +349,25 @@ def do_user_data_update(
             # Only reached on the long-delay reschedule branch; the
             # normal retry branch raises `Retry` out of the helper.
             return None
+        except LocalUserNotFoundError as exc:
+            app.logger.error(
+                "do_user_data_update: local user missing (%s); "
+                "user_id=%s idp=%s remote_id=%s",
+                exc,
+                user_id,
+                idp,
+                remote_id,
+            )
+            user = datastore.get_user_by_id(user_id)
+            _send_status(
+                remote_id,
+                UserDataStatus.FAILED,
+                UserDataEvent.UPDATED,
+                user=user,
+                method=idp,
+                note="LocalUserNotFoundError",
+            )
+            raise
         except Exception as exc:
             user = datastore.get_user_by_id(user_id)
             _send_status(
@@ -473,6 +493,10 @@ def do_user_created(
             delegating-to-`do_user_data_update` short-circuit (when a
             local `UserIdentity` already exists) ignores this argument.
         **kwargs: Reserved for future Celery options; currently ignored.
+
+    Raises:
+        LocalUserNotFoundError: If the local user row is missing during
+            ``update_user_from_remote`` (after FAILED status callback).
 
     Returns:
         The id of the matched/created local user, `None` when no
@@ -660,6 +684,24 @@ def do_user_created(
             )
             # Only reached on the long-delay reschedule branch.
             return user.id
+        except LocalUserNotFoundError as exc:
+            app.logger.error(
+                "do_user_created: local user missing during update_user_from_remote "
+                "(%s); user_id=%s sub=%s idp=%s",
+                exc,
+                user.id,
+                oauth_id,
+                idp,
+            )
+            _send_status(
+                oauth_id,
+                UserDataStatus.FAILED,
+                UserDataEvent.CREATED,
+                user=user,
+                method=auth_method,
+                note="LocalUserNotFoundError",
+            )
+            raise
         except Exception as exc:
             _send_status(
                 oauth_id,

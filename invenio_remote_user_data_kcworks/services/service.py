@@ -29,6 +29,7 @@ from invenio_records_resources.services.base.config import ServiceConfig
 from werkzeug.local import LocalProxy
 
 from ..client import UserDataAPIClient
+from ..errors import LocalUserNotFoundError
 from ..types.profiles_api import APIResponse, Profile
 from ..utils.auth import CILogonHelpers
 from .config import RemoteGroupDataServiceConfig, RemoteUserDataServiceConfig
@@ -325,6 +326,9 @@ class RemoteUserDataService(Service):
                'dropped_groups', and 'unchanged_groups', or an empty dict on
                error/early-exit paths that do not compute group changes.
 
+        Raises:
+            LocalUserNotFoundError: If ``user_id`` does not resolve to a local user.
+
         """
         self.require_permission(identity, "trigger_update")
 
@@ -337,7 +341,6 @@ class RemoteUserDataService(Service):
         )
         if remote_data:
             self.logger.debug(f"Using pre-fetched remote data: {pformat(remote_data)}")
-        updated_data = {}
 
         remote_service = idp
         if idp in self.config.kc_remote_idps:
@@ -351,7 +354,9 @@ class RemoteUserDataService(Service):
         # ``utils.CILogonHelpers._existing_or_create_user_for_login``)
         # wraps it in its own defensive try/except so user logins are
         # never blocked by a Profiles-side failure.
-        user: User = current_accounts.datastore.get_user_by_id(user_id)
+        user = current_accounts.datastore.get_user_by_id(user_id)
+        if user is None:
+            raise LocalUserNotFoundError(f"No local Invenio user for id={user_id}")
 
         if remote_data is None or len(remote_data.data) == 0:
             remote_data: APIResponse | None = UserDataAPIClient.fetch_user_profile(

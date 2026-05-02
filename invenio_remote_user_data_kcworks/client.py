@@ -206,7 +206,7 @@ class UserDataAPIClient:
             message = "API request for user data failed"
             app.logger.error(message)
             raise e
-        except Exception from e:
+        except Exception as e:
             message = "Error parsing api response from user data endpoint"
             app.logger.error(message)
             app.logger.error(e)

@@ -36,6 +36,7 @@ from ..errors import (
     UserDataRequestTimeout,
 )
 from ..proxies import current_remote_user_data_service
+from ..tasks import sync_user_to_names
 from ..types.broker_payload import BrokerDecodedToken
 from ..types.profiles_api import APIResponse
 from .auth import CILogonHelpers
@@ -195,6 +196,7 @@ class BrokerHelpers:
         """
         cookie_name = BrokerHelpers._get_broker_cookie_name()
         response.delete_cookie(cookie_name)
+        app.logger.debug(f"cleared cookie on {response}")
         return response
 
     def _decrypt_broker_token(self, token: str) -> dict:
@@ -362,6 +364,8 @@ class BrokerHelpers:
                     sub,
                     exc,
                 )
+            else:
+                sync_user_to_names.delay(user.id)
         else:
             if profile_fetch_error == "timeout":
                 raise UserDataRequestTimeout

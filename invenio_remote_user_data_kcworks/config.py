@@ -102,12 +102,12 @@ REMOTE_USER_DATA_API_ENDPOINTS = {
     }
 }
 
-REMOTE_USER_DATA_UPDATE_INTERVAL = 1  # 1 hour
+REMOTE_USER_DATA_UPDATE_INTERVAL = 30  # 30 seconds
 
-# Long-delay reschedule for the `do_user_created` and
-# `do_user_data_update` tasks after Celery's retries 
-# fail. 
 REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY = 3600
+"""Long-delay reschedule for the `do_user_created` and
+  `do_user_data_update` tasks after Celery's retries
+   fail."""
 
 # Names vocabulary sync
 # ----------------------

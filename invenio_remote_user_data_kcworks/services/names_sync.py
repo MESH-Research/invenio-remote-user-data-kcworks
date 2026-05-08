@@ -545,6 +545,7 @@ class NamesSyncService(Service):
 
         payload: NamesRecordDict = {
             "id": kc_username,
+            "internal_id": str(user.id),
             "tags": [KCNamesTag.USER],
             "identifiers": self._build_identifiers(profile),
             "affiliations": self._build_affiliations(profile),
@@ -631,6 +632,7 @@ class NamesSyncService(Service):
 
         payload: NamesRecordDict = {
             "id": orcid_id,
+            "internal_id": None,
             "tags": [KCNamesTag.CITED],
             "identifiers": (
                 [{"scheme": "orcid", "identifier": orcid_id}] if orcid_id else []
@@ -828,6 +830,8 @@ class NamesSyncService(Service):
                     # Re-read so the returned dict reflects the merged
                     # state.
                     item = service.read(identity, pid)
+            except NoResultFound:
+                pass  # Just means that there was no existing record to merge
             except Exception:
                 # Merging is a convenience; never let it break the
                 # upsert.
@@ -1204,10 +1208,14 @@ class NamesSyncService(Service):
         Returns:
             A merged update payload addressed by `kc_record["id"]`.
         """
+        internal_id = kc_record.get("internal_id") or kc_record.get(
+            "props", {}
+        ).get("kcworks_user_id")
         merged = cast(
             NamesRecordDict,
             {
                 "id": kc_record.get("id", ""),
+                "internal_id": internal_id,
                 "tags": list(kc_record.get("tags") or [KCNamesTag.USER]),
                 "identifiers": union_dicts_by_key(
                     kc_record.get("identifiers", []),

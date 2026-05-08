@@ -147,7 +147,7 @@ class NamesRecordDict(TypedDict, total=False):
     name: str  # Single string with full name in Last, First inverted form
     given_name: str
     family_name: str
-    internal_id: str
+    internal_id: str | None  # KC USER records: `str(User.id)`; CITED ORCID-only: None
     identifiers: list[NameIdentifierDict]
     affiliations: list[NameAffiliationDict]
     props: NamePropsDict

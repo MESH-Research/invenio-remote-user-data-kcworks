@@ -7,6 +7,7 @@
 
 """Main extension class for invenio-remote-user-data-kcworks."""
 
+import os
 import re
 
 import arrow
@@ -17,8 +18,8 @@ from invenio_queues.proxies import current_queues
 
 from . import config
 from .proxies import current_remote_user_data_service
-from .services.names_sync import NamesSyncService
 from .services.config import RemoteGroupDataServiceConfig, RemoteUserDataServiceConfig
+from .services.names_sync import NamesSyncService
 from .services.service import RemoteGroupDataService, RemoteUserDataService
 from .signals import remote_data_updated
 from .tasks import (
@@ -56,7 +57,7 @@ def on_user_logged_in(_, user: User) -> None:
                 new_timestamp = arrow.now("UTC").isoformat()
                 session.setdefault("user-data-updated", {})[user.id] = new_timestamp
 
-                do_user_data_update.delay(user.id)  # noqa
+                do_user_data_update.delay(user.id, send_status_callback=False)  # noqa
 
 
 def on_remote_data_updated(_, events: list) -> None:
@@ -215,3 +216,33 @@ class InvenioRemoteUserData:
                     current_app.logger.exception(
                         "Silent SSO login check failed unexpectedly"
                     )
+
+
+def _register_kcworks_names_schema_override(app) -> None:
+    """Point ``names/name-v1.0.0.json`` at this package's relaxed schema file.
+
+    Called from ``finalize_app`` / ``api_finalize_app`` below, which Invenio runs
+    because they are registered via the ``invenio_base.finalize_app`` and
+    ``invenio_base.api_finalize_app`` *entry point groups* in ``pyproject.toml``
+    (not via ``invenio_jsonschemas.schemas`` — we do not register schema dirs
+    that way here; that would duplicate the vocabulary path).
+
+    At runtime we use ``InvenioJSONSchemasState.register_schema`` so this path
+    wins over the copy bundled with ``invenio-vocabularies``.
+    """
+    try:
+        state = app.extensions["invenio-jsonschemas"]
+    except KeyError:
+        return
+    root = os.path.join(os.path.dirname(__file__), "jsonschemas")
+    state.register_schema(root, "names/name-v1.0.0.json")
+
+
+def finalize_app(app) -> None:
+    """UI finalize hook; registered on ``invenio_base.finalize_app``."""
+    _register_kcworks_names_schema_override(app)
+
+
+def api_finalize_app(app) -> None:
+    """API finalize hook; registered on ``invenio_base.api_finalize_app``."""
+    _register_kcworks_names_schema_override(app)

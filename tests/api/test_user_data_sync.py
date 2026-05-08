@@ -40,6 +40,7 @@ from invenio_remote_user_data_kcworks.proxies import (
 )
 
 from ..fixtures.users import user_data_set
+from ..fixtures.idms import IDMS_MEMBERS_RESPONSE
 
 
 def test_user_data_kc_endpoint_members(running_app):
@@ -56,13 +57,18 @@ def test_user_data_kc_endpoint_members(running_app):
 
     assert response.status_code == 200
     actual_resp = response.json()
-    actual_data = actual_resp["results"]
-    assert actual_data["username"] == "gihctester"
-    assert actual_data["email"] == "gihctester@gmail.com"
-    assert actual_data["name"] == "Ghost Hc"
-    assert actual_data["first_name"] == "Ghost"
-    assert actual_data["last_name"] == "Hc"
-    assert not actual_data["institutional_affiliation"]
+
+    assert actual_data["username"] == IDMS_MEMBERS_RESPONSE["username"]
+    assert actual_data["email"] == IDMS_MEMBERS_RESPONSE["email"]
+    assert actual_data["emails"] == IDMS_MEMBERS_RESPONSE["emails"]
+    assert actual_data["name"] == IDMS_MEMBERS_RESPONSE["name"]
+    assert actual_data["first_name"] == IDMS_MEMBERS_RESPONSE["first_name"]
+    assert actual_data["last_name"] == IDMS_MEMBERS_RESPONSE["last_name"]
+    assert (
+        actual_data["institutional_affiliation"]
+        == IDMS_MEMBERS_RESPONSE["institutional_affiliation"]
+    )
+    assert actual_data["orcid"] == IDMS_MEMBERS_RESPONSE["orcid"]
     assert "gravatar" in actual_data["avatar"]
     for g in actual_data["groups"]:
         assert list(g.keys()) == [
@@ -78,8 +84,13 @@ def test_user_data_kc_endpoint_members(running_app):
         assert isinstance(g["id"], int)
         if g["group_name"]:
             assert isinstance(g["group_name"], str)
-    assert not actual_data["orcid"]
     assert "MLA" in actual_data["memberships"].keys()
+    assert actual_data["memberships"] == IDMS_MEMBERS_RESPONSE["memberships"]
+    assert actual_data["is_superadmin"] == IDMS_MEMBERS_RESPONSE["is_superadmin"]
+
+    assert not any(
+        k for k in actual_data.keys() if k not in IDMS_MEMBERS_RESPONSE.keys()
+    )
 
 
 def test_user_data_kc_endpoint_subs(running_app):
@@ -114,6 +125,7 @@ def test_user_data_kc_endpoint_subs(running_app):
         actual_data["institutional_affiliation"]
         == "MESH Research, Michigan State University"
     )
+    assert "0000-0002-0722" in actual_data["orcid"]
     for g in actual_data["groups"]:
         assert list(g.keys()) == [
             "id",
@@ -128,8 +140,8 @@ def test_user_data_kc_endpoint_subs(running_app):
         assert isinstance(g["id"], int)
         if g["group_name"]:
             assert isinstance(g["group_name"], str)
-    assert "0000-0002-0722" in actual_data["orcid"]
     assert "MLA" in actual_data["memberships"].keys()
+    assert actual_data["is_superadmin"]
 
 
 @pytest.mark.skip(reason="Not implemented")

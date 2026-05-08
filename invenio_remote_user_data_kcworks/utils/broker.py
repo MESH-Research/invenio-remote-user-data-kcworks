@@ -310,8 +310,6 @@ class BrokerHelpers:
 
         try:
             token = BrokerDecodedToken.model_validate(payload)
-            app.logger.debug("token is")
-            app.logger.debug(payload)
         except ValidationError as e:
             raise BrokerPayloadProcessingError(
                 "BrokerHelpers.process_broker_payload: invalid decrypted token"
@@ -325,14 +323,11 @@ class BrokerHelpers:
         sub = token.userinfo.sub
 
         user = CILogonHelpers.get_user_from_account_info(token.to_account_info())
-        app.logger.debug(f"user is {user}")
-        app.logger.debug(f"sub is {sub}")
 
         profile_response: APIResponse | None = None
         profile_fetch_error: str | None = None
         try:
             profile_response = UserDataAPIClient.fetch_user_profile(sub_id=sub)
-            app.logger.debug(f"profile_response is {profile_response}")
         except requests.Timeout:
             profile_fetch_error = "timeout"
         except requests.RequestException:
@@ -345,16 +340,13 @@ class BrokerHelpers:
             and isinstance(profile_response, APIResponse)
             and profile_response.data
         ):
-            app.logger.debug(f"creating new user")
             user = CILogonHelpers.create_new_user(profile_response)
-            app.logger.debug(f"created new user {user}")
 
         # Ensure the external identity is linked (idempotent via suppression).
         if user:
             with contextlib.suppress(AlreadyLinkedError):
                 CILogonHelpers.link_user_to_oauth_identifier(user, "cilogon", sub)
 
-            app.logger.debug(f"updating user from remote API")
             try:
                 current_remote_user_data_service.update_user_from_remote(
                     system_identity,

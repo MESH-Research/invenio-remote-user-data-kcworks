@@ -115,8 +115,8 @@ class NamePropsDict(TypedDict, total=False):
         str, list[float | str]
     ]  # other_uuid -> [score: float, score_method: str]
     family_token: str  # Canonical normalized family_name; reporting only
-    family_part_tokens: list[str]  # Multi-valued bucket index, token pass
-    family_phonetic_tokens: list[str]  # Multi-valued bucket index, phonetic pass
+    family_part_tokens: list[str]
+    family_phonetic_tokens: list[str]
 
 
 class NamesRecordDict(TypedDict, total=False):

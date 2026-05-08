@@ -61,6 +61,8 @@ entry-points."invenio_base.apps".invenio_remote_user_data_kcworks = "invenio_rem
 entry-points."invenio_base.blueprints".invenio_remote_user_data_kcworks_sso = "invenio_remote_user_data_kcworks.blueprints:create_sso_blueprint"
 entry-points."invenio_celery.tasks".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.tasks"
 entry-points."invenio_queues.queues".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.queues:declare_queues"
+entry-points."invenio_base.finalize_app".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:finalize_app"
+entry-points."invenio_base.api_finalize_app".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:api_finalize_app"
 
 [dependency-groups]
 dev = ["bumpver>=2025.1131"]
@@ -70,6 +72,7 @@ package-data.invenio_remote_user_data_kcworks = [
   "data/given_name_variants/*.csv",
   "data/given_name_variants/LICENSE",
   "data/given_name_variants/README.md",
+  "jsonschemas/**/*.json",
 ]
 
 [tool.uv]

@@ -69,6 +69,7 @@ from invenio_rdm_records.proxies import current_rdm_records_service
 from invenio_records_resources.proxies import current_service_registry
 from invenio_records_resources.services import Service
 from invenio_search.engine import dsl
+from sqlalchemy.exc import NoResultFound
 
 from ..config import KCNamesTag
 from ..types.names import (
@@ -625,6 +626,8 @@ class NamesSyncService(Service):
             props["family_part_tokens"] = part_tokens
         if phonetic_tokens:
             props["family_phonetic_tokens"] = phonetic_tokens
+        if given and family:
+            props["name_parts"] = {"first": given, "last": family}
 
         payload: NamesRecordDict = {
             "id": orcid_id,
@@ -721,7 +724,7 @@ class NamesSyncService(Service):
         """
         try:
             return self.names_service.read(identity, pid)
-        except PIDDoesNotExistError:
+        except (PIDDoesNotExistError, NoResultFound):
             return None
 
     # ------------------------------------------------------------------
@@ -757,9 +760,11 @@ class NamesSyncService(Service):
             canonical record, or `None` when `user` does not have
             enough profile data to be mirrored yet.
         """
+        self.logger.debug("Starting upsert")
         if user is None:
             return None
         payload = self.build_name_payload_from_user(user)
+        self.logger.debug(f"payload: {payload}")
         if payload is None:
             self.logger.debug(
                 "upsert_name_for_user: user %s has no kc_username; skipping",
@@ -768,10 +773,14 @@ class NamesSyncService(Service):
             return None
 
         service = self.names_service
+        self.logger.debug(f"service is {service}")
         identity = identity or system_identity
         pid = payload["id"]
+        self.logger.debug(f"pid is {pid}")
 
         existing = self._read_existing(identity, pid)
+        self.logger.debug(f"existing user is {existing}")
+        item = None
         if existing is not None:
             item = service.update(identity, pid, payload)
             self.logger.debug(
@@ -781,6 +790,7 @@ class NamesSyncService(Service):
             )
         else:
             try:
+                self.logger.debug("trying create")
                 item = service.create(identity, payload)
             except PIDAlreadyExists:
                 # Race: another worker created the record between our
@@ -794,6 +804,9 @@ class NamesSyncService(Service):
                     pid,
                     user.id,
                 )
+            except Exception as e:
+                self.logger.debug("Error upserting entry")
+                self.logger.debug(e)
             else:
                 self.logger.debug(
                     "upsert_name_for_user: created Names record %s for user %s",
@@ -805,10 +818,12 @@ class NamesSyncService(Service):
         profile = dict(user.user_profile or {})
         orcid = profile.get("identifier_orcid") or ""
         if orcid and item is not None:
+            self.logger.debug("Handling orcid for name sync")
             try:
                 merged = self.merge_cited_orcid_into_kc(
                     cast(NamesRecordDict, item.to_dict()), identity=identity
                 )
+                self.logger.debug(f"merged is {merged}")
                 if merged is not None:
                     # Re-read so the returned dict reflects the merged
                     # state.
@@ -1987,6 +2002,8 @@ class NamesSyncService(Service):
         """
         props = record.get("props", {})
         parts = props.get("family_part_tokens") or []
+        if isinstance(parts, str):
+            parts = json.loads(parts)
         if parts:
             return parts[0]
         return props.get("family_token", "")
@@ -2656,9 +2673,7 @@ class NamesSyncService(Service):
             }
             for partner_uuid in dismissed:
                 pu = str(partner_uuid)
-                edges.add(
-                    (uuid_self, pu) if uuid_self <= pu else (pu, uuid_self)
-                )
+                edges.add((uuid_self, pu) if uuid_self <= pu else (pu, uuid_self))
 
         out: list[dict[str, Any]] = []
         for a_uuid, b_uuid in sorted(edges):

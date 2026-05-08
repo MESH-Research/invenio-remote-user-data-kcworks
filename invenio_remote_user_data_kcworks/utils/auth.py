@@ -384,7 +384,10 @@ class CILogonHelpers:
                 updated_local_groups.remove(group_role.name)
                 # NOTE: We don't delete the group role because that would
                 # potentially disrupt roles being used for collections
-        assert updated_local_groups == [r.name for r in roles_list]
+
+        # previous list was a frozen copy of pre-update state
+        new_roles_list = cast(list[Role], list(cast(Iterable[Any], user.roles)))
+        assert set(updated_local_groups) == {r.name for r in new_roles_list}
 
         return updated_local_groups
 
@@ -498,7 +501,6 @@ class CILogonHelpers:
 
         try:
             initial_user_data["user_profile"] = user.user_profile
-            app.logger.debug(f"Initial user profile: {user.user_profile}")
         except ValueError:
             app.logger.error(
                 f"Error fetching initial user profile data for user {user.id}. "
@@ -611,7 +613,6 @@ class CILogonHelpers:
                 result.data[0].profile if isinstance(result, APIResponse) else result
             )
 
-            app.logger.debug(f"Creating user: {profile.username}")
             user_info = {
                 "username": profile.username,
                 "email": profile.email,

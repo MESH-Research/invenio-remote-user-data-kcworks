@@ -40,11 +40,13 @@ from invenio_app.factory import create_api as _create_app
 from invenio_files_rest.models import Location
 from invenio_queues import current_queues
 from invenio_search.proxies import current_search_client
+from marshmallow import Schema, fields
 from opensearchpy import OpenSearch
 
 from .fixtures.custom_fields import test_config_fields
 from .fixtures.frontend import MockManifestLoader
 from .fixtures.identifiers import test_config_identifiers
+from .fixtures.names import VOCABULARIES_NAMES_SCHEMES
 
 pytest_plugins = (
     "celery.contrib.pytest",
@@ -59,6 +61,7 @@ pytest_plugins = (
     "tests.fixtures.identifiers",
     "tests.fixtures.idms",
     "tests.fixtures.mail",
+    "tests.fixtures.names",
     "tests.fixtures.records",
     "tests.fixtures.roles",
     "tests.fixtures.search_provisioning",
@@ -92,6 +95,20 @@ def _(x: Any) -> Any:
 test_config: dict[str, Any] = {
     **test_config_identifiers,
     **test_config_fields,
+    "VOCABULARIES_NAMES_SCHEMES": VOCABULARIES_NAMES_SCHEMES,
+    # --- IDMS ---------------------------------------------------------------
+    "IDMS_BASE_API_URL": "https://profile.hcommons-dev.org/",
+    "KC_REMOTE_IDPS": ["knowledgeCommons", "cilogon"],
+    "SSO_BROKER_LOGIN_URL": f"https://profile.hcommons-dev.org/login/",
+    "SSO_BROKER_SILENT_LOGIN_URL": (
+        f"https://profile.hcommons-dev.org/broker/silent-login/"
+    ),
+    "SSO_BROKER_VERIFY_NONCE_URL": (
+        f"https://profile.hcommons-dev.org/broker/verify-nonce/"
+    ),
+    "SSO_BROKER_RETRY_COOKIE_NAME": "_sso_checked",
+    "SSO_BROKER_COOKIE_TTL": 300,
+    "SSO_BROKER_SILENT_LOGIN_TIMEOUT": 3,
     # --- Database -----------------------------------------------------------
     "SQLALCHEMY_DATABASE_URI": (
         "postgresql+psycopg2://invenio:invenio@localhost:5432/invenio"
@@ -125,7 +142,7 @@ test_config: dict[str, Any] = {
     # --- Mail ---------------------------------------------------------------
     # The package's tests don't actually send mail, but invenio-mail still
     # wants the keys to exist; uncomment if a test needs real configuration.
-    # "MAIL_SUPPRESS_SEND": True,
+    "MAIL_SUPPRESS_SEND": True,
     # "MAIL_SERVER": "localhost",
     # "MAIL_PORT": 25,
     # "MAIL_USE_TLS": False,
@@ -133,24 +150,13 @@ test_config: dict[str, Any] = {
     # "MAIL_USERNAME": None,
     # "MAIL_PASSWORD": None,
     # "MAIL_DEFAULT_SENDER": "no-reply@example.com",
+    "TESTING": True,
+    "DEBUG": True,
     # --- Test secrets -------------------------------------------------------
     "SECRET_KEY": "test-secret-key",
     "SECURITY_PASSWORD_SALT": "test-secret-key",
     # --- Webpack / Frontend stub -------------------------------------------
     "WEBPACKEXT_MANIFEST_LOADER": MockManifestLoader,
-    # --- Test mode ----------------------------------------------------------
-    "TESTING": True,
-    "DEBUG": True,
-    # --- DataCite (faked; see explicit block below) ------------------------
-    # "DATACITE_ENABLED": True,
-    # "DATACITE_USERNAME": "INVALID",
-    # "DATACITE_PASSWORD": "INVALID",
-    # "DATACITE_DATACENTER_SYMBOL": "TEST",
-    # "DATACITE_PREFIX": "10.17613",
-    # "DATACITE_TEST_MODE": True,
-    # --- Site URLs (overridden below from environment) ---------------------
-    # "SITE_API_URL": "https://127.0.0.1:5000/api",
-    # "SITE_UI_URL": "https://127.0.0.1:5000",
     # ----------------------------------------------------------------------
     # invenio-remote-user-data-kcworks specific overrides
     # ----------------------------------------------------------------------
@@ -168,12 +174,54 @@ test_config: dict[str, Any] = {
     # "REMOTE_USER_DATA_UPDATE_INTERVAL": 1,
     # "REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY": 3600,
     #
-    # "SSO_BROKER_LOGIN_URL": None,
-    # "SSO_BROKER_SILENT_LOGIN_URL": None,
-    # "SSO_BROKER_VERIFY_NONCE_URL": None,
-    # "SSO_BROKER_RETRY_COOKIE_NAME": "_sso_checked",
-    # "SSO_BROKER_COOKIE_TTL": 300,
-    # "SSO_BROKER_SILENT_LOGIN_TIMEOUT": 3,
+}
+
+
+# -- Users ---------------------------------------------------------------------
+class CustomUserProfileSchema(Schema):
+    """The default user profile schema."""
+
+    full_name = fields.String()
+    affiliations = fields.String()
+    name_parts = fields.String()
+    name_parts_local = fields.String()
+    identifier_email = fields.String()
+    identifier_orcid = fields.String()
+    identifier_kc_username = fields.String()
+    identifier_other = fields.String()
+    unread_notifications = fields.String()
+
+
+test_config["ACCOUNTS_USER_PROFILE_SCHEMA"] = CustomUserProfileSchema()
+
+
+# --- API endpoint configuration -------------------------------------------
+test_config["REMOTE_USER_DATA_API_ENDPOINTS"] = {
+    "knowledgeCommons": {
+        "title": "Knowledge Commons",
+        "users": {
+            "remote_endpoint": f"{test_config['IDMS_BASE_API_URL']}members/",
+            "remote_identifier": "id",
+            "remote_method": "GET",
+            "token_env_variable_label": "COMMONS_PROFILES_API_TOKEN",
+        },
+        "groups": {
+            "remote_endpoint": f"{test_config['IDMS_BASE_API_URL']}groups/",
+            "remote_identifier": "id",
+            "remote_method": "GET",
+            "token_env_variable_label": "COMMONS_PROFILES_API_TOKEN",
+            "group_roles": {
+                "owner": ["administrator", "admin"],
+                "curator": ["editor", "moderator"],
+                "reader": ["member"],
+            },
+        },
+        "entity_types": {
+            "associations": {"events": ["associated"]},
+            "users": {"events": ["created", "updated", "deleted"]},
+            "groups": {"events": ["created", "updated", "deleted"]},
+        },
+    },
 }
 
 # --- Logging ---------------------------------------------------------------
@@ -201,11 +249,9 @@ test_config["DATACITE_TEST_MODE"] = True
 import os  # noqa: E402
 
 test_config["SITE_API_URL"] = os.environ.get(
-    "INVENIO_SITE_API_URL", "https://127.0.0.1:5000/api"
+    "INVENIO_SITE_API_URL", "http://localhost/api"
 )
-test_config["SITE_UI_URL"] = os.environ.get(
-    "INVENIO_SITE_UI_URL", "https://127.0.0.1:5000"
-)
+test_config["SITE_UI_URL"] = os.environ.get("INVENIO_SITE_UI_URL", "http://localhost")
 
 
 @pytest.fixture(scope="session")
@@ -388,42 +434,21 @@ def template_loader() -> Callable:
             Path(__file__).parent / "helpers" / "templates" / "semantic-ui"
         )
 
-        # Find installed package template paths
-        theme_template_paths: list[str] = []
-        package_template_paths = {
-            "invenio_theme": ["templates", "semantic-ui"],
-            "invenio_app_rdm": ["theme", "templates", "semantic-ui"],
-            "invenio_banners": ["templates", "semantic-ui"],
-        }
-        for package_name, path_parts in package_template_paths.items():
-            try:
-                package = __import__(package_name)
-                if hasattr(package, "__file__") and package.__file__:
-                    base_path = Path(package.__file__).parent
-                    template_path = base_path
-                    for part in path_parts:
-                        template_path = template_path / part
-                    if template_path.exists():
-                        theme_template_paths.append(str(template_path))
-            except (ImportError, AttributeError):
-                pass
-
         template_paths: list[str] = []
         candidates: list[str | Path] = [
             test_template_path,
             package_template_path,
-            *[Path(p) for p in theme_template_paths],
         ]
         for path in candidates:
             path_obj = Path(path) if isinstance(path, str) else path
             if path_obj.exists():
                 template_paths.append(str(path_obj))
 
+        prev_loader = app.jinja_env.loader  # Invenio_app's themed dispatch loader
         custom_loader = jinja2.ChoiceLoader([
-            app.jinja_loader,
+            prev_loader,
             jinja2.FileSystemLoader(template_paths),
         ])
-        app.jinja_loader = custom_loader
         app.jinja_env.loader = custom_loader
 
     return load_templates

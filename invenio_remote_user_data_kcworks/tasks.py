@@ -131,6 +131,7 @@ def _handle_profiles_api_failure(
     kwargs: dict,
     reschedule_task,
     reschedule_args: tuple,
+    send_status_callback: bool = True,
 ) -> None:
     """Apply the shared HTTP retry + long-delay reschedule policy.
 
@@ -188,14 +189,15 @@ def _handle_profiles_api_failure(
     retries = self.request.retries or 0
     countdown = min(30 * (2**retries), 600)
     try:
-        _send_status(
-            sub,
-            UserDataStatus.FAILED,
-            event,
-            method=method,
-            retry_at=_retry_at_iso(countdown),
-            note=f"profiles_api:{type(exc).__name__}",
-        )
+        if send_status_callback:
+            _send_status(
+                sub,
+                UserDataStatus.FAILED,
+                event,
+                method=method,
+                retry_at=_retry_at_iso(countdown),
+                note=f"profiles_api:{type(exc).__name__}",
+            )
         raise self.retry(exc=exc, countdown=countdown)
     except MaxRetriesExceededError:
         long_delay = int(
@@ -212,14 +214,17 @@ def _handle_profiles_api_failure(
             exc,
             long_delay,
         )
-        _send_status(
-            sub,
-            UserDataStatus.FAILED,
-            event,
-            method=method,
-            retry_at=_retry_at_iso(long_delay),
-            note=(f"profiles_api:{type(exc).__name__}:retries_exhausted_rescheduled"),
-        )
+        if send_status_callback:
+            _send_status(
+                sub,
+                UserDataStatus.FAILED,
+                event,
+                method=method,
+                retry_at=_retry_at_iso(long_delay),
+                note=(
+                    f"profiles_api:{type(exc).__name__}:retries_exhausted_rescheduled"
+                ),
+            )
         reschedule_task.apply_async(
             args=reschedule_args,
             kwargs=kwargs,
@@ -237,6 +242,7 @@ def do_user_data_update(
     user_id: int,
     idp: str | None = None,
     remote_id: str | None = None,
+    send_status_callback: bool = True,
     **kwargs,
 ) -> tuple[User, dict, list[str], dict] | None:
     """Perform a user metadata update.
@@ -279,6 +285,9 @@ def do_user_data_update(
         idp: The remote service configuration to use for the update.
         remote_id: The ID of the user on the remote system (the
             OAuth `sub`, also stored as `UserIdentity.id`).
+        send_status_callback: A boolean flag to control whether a status
+            callback is sent to the remote API endpoint on task failure/completion.
+            Defaults to True.
         **kwargs: Reserved for future Celery options; forwarded
             unchanged to the long-delay reschedule path.
 
@@ -313,13 +322,14 @@ def do_user_data_update(
 
         if not idp:
             user = datastore.get_user_by_id(user_id)
-            _send_status(
-                remote_id,
-                UserDataStatus.FAILED,
-                UserDataEvent.UPDATED,
-                user=user,
-                note="NoIDPFoundError",
-            )
+            if send_status_callback:
+                _send_status(
+                    remote_id,
+                    UserDataStatus.FAILED,
+                    UserDataEvent.UPDATED,
+                    user=user,
+                    note="NoIDPFoundError",
+                )
             raise NoIDPFoundError(f"No IDP found for user {user_id}")
 
         service = current_remote_user_data_service
@@ -329,6 +339,7 @@ def do_user_data_update(
                     system_identity, user_id, idp, remote_id
                 )
             )
+            app.logger.debug("returned from task user update")
         except (requests.RequestException, requests.Timeout) as exc:
             app.logger.warning(
                 "do_user_data_update: Profiles API failure for user_id=%s sub=%s: %r",
@@ -345,6 +356,7 @@ def do_user_data_update(
                 kwargs=kwargs,
                 reschedule_task=do_user_data_update,
                 reschedule_args=(user_id, idp, remote_id),
+                send_status_callback=send_status_callback,
             )
             # Only reached on the long-delay reschedule branch; the
             # normal retry branch raises `Retry` out of the helper.
@@ -359,37 +371,41 @@ def do_user_data_update(
                 remote_id,
             )
             user = datastore.get_user_by_id(user_id)
-            _send_status(
-                remote_id,
-                UserDataStatus.FAILED,
-                UserDataEvent.UPDATED,
-                user=user,
-                method=idp,
-                note="LocalUserNotFoundError",
-            )
+            if send_status_callback:
+                _send_status(
+                    remote_id,
+                    UserDataStatus.FAILED,
+                    UserDataEvent.UPDATED,
+                    user=user,
+                    method=idp,
+                    note="LocalUserNotFoundError",
+                )
             raise
         except Exception as exc:
             user = datastore.get_user_by_id(user_id)
-            _send_status(
-                remote_id,
-                UserDataStatus.FAILED,
-                UserDataEvent.UPDATED,
-                user=user,
-                method=idp,
-                note=type(exc).__name__,
-            )
+            if send_status_callback:
+                _send_status(
+                    remote_id,
+                    UserDataStatus.FAILED,
+                    UserDataEvent.UPDATED,
+                    user=user,
+                    method=idp,
+                    note=type(exc).__name__,
+                )
             raise
 
         if user is not None:
+            app.logger.debug("syncing names")
             sync_user_to_names.delay(user.id)
 
-        _send_status(
-            remote_id,
-            UserDataStatus.PROCESSED,
-            UserDataEvent.UPDATED,
-            user=user,
-            method=idp,
-        )
+        if send_status_callback:
+            _send_status(
+                remote_id,
+                UserDataStatus.PROCESSED,
+                UserDataEvent.UPDATED,
+                user=user,
+                method=idp,
+            )
         return user, updated_data, groups, groups_changes
 
 
@@ -743,6 +759,7 @@ def sync_user_to_names(user_id: int) -> bool:
         enough profile data to be mirrored.
     """
     with app.app_context():
+        app.logger.debug(f"syncing user to names: {user_id}")
         user = datastore.get_user_by_id(user_id)
         if user is None:
             app.logger.warning(
@@ -750,6 +767,7 @@ def sync_user_to_names(user_id: int) -> bool:
             )
             return False
         result = current_names_sync_service.upsert_name_for_user(user)
+        app.logger.debug(f"result of name sync is {result}")
         return result is not None
 
 

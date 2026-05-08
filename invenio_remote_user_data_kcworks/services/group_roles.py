@@ -114,7 +114,7 @@ class GroupRolesService:
         else:
             user_str = user.email if isinstance(user, User) else user
             app.logger.info(
-                f'Role "{group_name}" added to user"{user_str}" successfully.'
+                f'Role "{group_name}" added to user "{user_str}" successfully.'
             )
         return user_added
 

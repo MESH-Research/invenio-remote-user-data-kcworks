@@ -43,6 +43,8 @@ from invenio_search.proxies import current_search_client
 from marshmallow import Schema, fields
 from opensearchpy import OpenSearch
 
+from tests.fixtures.idms import register_idms_static_api_token_before_request
+
 from .fixtures.custom_fields import test_config_fields
 from .fixtures.frontend import MockManifestLoader
 from .fixtures.identifiers import test_config_identifiers
@@ -99,12 +101,12 @@ test_config: dict[str, Any] = {
     # --- IDMS ---------------------------------------------------------------
     "IDMS_BASE_API_URL": "https://profile.hcommons-dev.org/",
     "KC_REMOTE_IDPS": ["knowledgeCommons", "cilogon"],
-    "SSO_BROKER_LOGIN_URL": f"https://profile.hcommons-dev.org/login/",
+    "SSO_BROKER_LOGIN_URL": "https://profile.hcommons-dev.org/login/",
     "SSO_BROKER_SILENT_LOGIN_URL": (
-        f"https://profile.hcommons-dev.org/broker/silent-login/"
+        "https://profile.hcommons-dev.org/broker/silent-login/"
     ),
     "SSO_BROKER_VERIFY_NONCE_URL": (
-        f"https://profile.hcommons-dev.org/broker/verify-nonce/"
+        "https://profile.hcommons-dev.org/broker/verify-nonce/"
     ),
     "SSO_BROKER_RETRY_COOKIE_NAME": "_sso_checked",
     "SSO_BROKER_COOKIE_TTL": 300,
@@ -126,6 +128,13 @@ test_config: dict[str, Any] = {
     "WTF_CSRF_ENABLED": False,
     "WTF_CSRF_METHODS": [],
     "RATELIMIT_ENABLED": False,
+    # Static bearer for IDMS→KCWorks API paths (see ``tests.fixtures.idms`` hook).
+    # Tests set ``TEST_IDMS_STATIC_API_TOKEN``;
+    # ``idms_static_api_auth`` overrides user id.
+    "STATIC_API_TOKEN_ROUTES": {
+        "/webhooks/users/logout": "TEST_IDMS_STATIC_API_TOKEN",
+    },
+    "STATIC_API_TOKEN_USER_ID": 1,
     "APP_DEFAULT_SECURE_HEADERS": {
         "content_security_policy": {"default-src": []},
         "force_https": False,
@@ -475,6 +484,7 @@ def app(
     """
     current_queues.declare()
     template_loader(app)
+    register_idms_static_api_token_before_request(app)
     yield app
 
 

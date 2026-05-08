@@ -15,12 +15,10 @@ from invenio_app.factory import create_app as _create_app
 
 @pytest.fixture(scope="module")
 def create_app(instance_path, entry_points):
-    """Provide the application factory used to build the Flask app.
+    """Provide the application factory used to build the Flask UI app.
 
-    Returns ``invenio_app.factory.create_api`` so that REST API blueprints
-    registered under ``invenio_base.api_apps`` (e.g. the package's webhook
-    receiver) are wired into the test app. See the module docstring for
-    why this differs from the root KCWorks ``conftest.py``.
+    Returns ``invenio_app.factory.create_app`` (not ``create_api``), so UI
+    blueprints and templates are available for tests in this package.
 
     Returns:
         Callable: The application factory function.
@@ -32,7 +30,7 @@ def create_app(instance_path, entry_points):
 def base_app_with_templates(
     base_app: Flask, app_config, template_loader
 ) -> Generator[Flask, None, None]:
-    """Profide a minimal app instance with template loader."""
+    """Provide a minimal app instance with template loader."""
 
     template_loader(base_app)
 

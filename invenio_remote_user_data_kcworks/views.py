@@ -590,7 +590,6 @@ class RemoteUserLogoutView(MethodView):
         current_remote_user_data_service.require_permission(
             g.identity, "trigger_logout_user"
         )
-        app.logger.debug("DEBUG: POST view starting")
 
         kc_username = request.args.get("username")
         if not kc_username:

@@ -15,6 +15,22 @@ this submodule.
 """
 
 import pytest
+from invenio_app.factory import create_api as _create_app
+
+
+@pytest.fixture(scope="module")
+def create_app(instance_path, entry_points):
+    """Provide the application factory used to build the Flask app.
+
+    Returns ``invenio_app.factory.create_api`` so that REST API blueprints
+    registered under ``invenio_base.api_apps`` (e.g. the package's webhook
+    receiver) are wired into the test app. See the module docstring for
+    why this differs from the root KCWorks ``conftest.py``.
+
+    Returns:
+        Callable: The application factory function.
+    """
+    return _create_app
 
 
 @pytest.fixture(scope="function")

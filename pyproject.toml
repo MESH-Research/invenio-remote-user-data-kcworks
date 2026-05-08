@@ -65,7 +65,10 @@ entry-points."invenio_base.finalize_app".invenio_remote_user_data_kcworks = "inv
 entry-points."invenio_base.api_finalize_app".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:api_finalize_app"
 
 [dependency-groups]
-dev = ["bumpver>=2025.1131"]
+dev = [
+    "bumpver>=2025.1131",
+    "pytest-timeout>=2.4.0",
+]
 
 [tool.setuptools]
 package-data.invenio_remote_user_data_kcworks = [

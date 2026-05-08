@@ -7,11 +7,12 @@
 
 """Main extension class for invenio-remote-user-data-kcworks."""
 
+import datetime
 import os
 import re
 
 import arrow
-from flask import Response, current_app, request, session
+from flask import Response, current_app, request
 from flask_login import current_user, user_logged_in, user_logged_out
 from invenio_accounts.models import User
 from invenio_queues.proxies import current_queues
@@ -44,20 +45,14 @@ def on_user_logged_out(_, user: User) -> None:
 def on_user_logged_in(_, user: User) -> None:
     """Update user data from remote server when current user is changed."""
     with current_app.app_context():
-        if user.id:
-            last_timestamp = session.get("user-data-updated", {}).get(user.id)
-            last_updated = arrow.get(last_timestamp) if last_timestamp else None
-            update_interval = current_app.config.get(
-                "INVENIO_REMOTE_USER_DATA_UPDATE_INTERVAL", 2
-            )
-
-            if not last_updated or last_updated < arrow.now("UTC").shift(
-                minutes=-1 * update_interval
-            ):
-                new_timestamp = arrow.now("UTC").isoformat()
-                session.setdefault("user-data-updated", {})[user.id] = new_timestamp
-
-                do_user_data_update.delay(user.id, send_status_callback=False)  # noqa
+        update_interval = current_app.config.get(
+            "INVENIO_REMOTE_USER_DATA_UPDATE_INTERVAL", 30
+        )
+        if user.id and (
+            arrow.utcnow() - arrow.get(user.updated)
+            > datetime.timedelta(seconds=update_interval)
+        ):
+            do_user_data_update.delay(user.id, send_status_callback=False)  # noqa
 
 
 def on_remote_data_updated(_, events: list) -> None:
@@ -200,16 +195,14 @@ class InvenioRemoteUserData:
                 return
 
             cu = current_user._get_current_object()
-            app.logger.debug(f"is_anonymous? {cu.is_anonymous}")
             if not getattr(cu, "is_anonymous", False):
                 return
 
             if BrokerHelpers.ready_for_login_broker_check():
-                app.logger.debug("ready_for_login_broker_check")
                 try:
                     # NOTE: This must return the redirect response to the browser.
                     # If we don't return it, the redirect is constructed but never sent
-                    # to the client, so the broker callback won't be hit.
+                    # to the browser, so the broker callback won't be hit.
                     return sso_broker_login(next=request.url, silent=True)
 
                 except Exception:

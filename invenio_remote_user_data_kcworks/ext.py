@@ -191,15 +191,19 @@ class InvenioRemoteUserData:
             path = request.path or "/"
             script = (request.script_root or "").rstrip("/")
             if (
-                path.startswith(
-                    ("/api/", "/static/", "/sso/broker-callback/", "/webhooks/")
-                )
+                path.startswith((
+                    "/api/",
+                    "/static/",
+                    "/sso/broker-callback/",
+                    "/webhooks/",
+                ))
                 or path.rstrip("/") == "/api"
                 or script == "/api"
                 or path.rstrip("/").endswith("/sso/broker-callback")
             ):
                 return
 
+            app.logger.debug("CHECKING FOR SSO LOGIN")
             cu = current_user._get_current_object()
             if not getattr(cu, "is_anonymous", False):
                 return

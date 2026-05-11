@@ -33,6 +33,7 @@ from .proxies import (
 from .types.auth import AccountInfo
 from .types.profiles_api import APIResponse
 from .utils.auth import CILogonHelpers, UserIdentifierHelpers
+from .errors import NoIDPFoundError
 
 
 def _retry_at_iso(seconds_from_now: int) -> str:
@@ -234,7 +235,7 @@ def _handle_profiles_api_failure(
 
 @shared_task(
     bind=True,
-    ignore_result=False,
+    ignore_result=True,
     max_retries=5,
 )
 def do_user_data_update(
@@ -292,23 +293,9 @@ def do_user_data_update(
             unchanged to the long-delay reschedule path.
 
     Returns:
-        A four-tuple (indices 0–3):
-
-        0. The updated `User` object.
-        1. A dictionary of the updated user data (including only the changed
-           keys and values).
-        2. A list of the updated user's group memberships.
-        3. A dictionary of the changes to the user's group memberships (with
-           the keys `added_groups`, `dropped_groups`, and
-           `unchanged_groups`).
-
-        `None` when the task has been re-enqueued for a long-delay
-        retry after exhausting its bounded retry budget.
-
-    Raises:
-        LocalUserNotFoundError: When the local Invenio user id does not exist.
-        NoIDPFoundError: When `idp` cannot be inferred from a
-            `UserIdentity` for `user_id`.
+        Plain dict summarizing the run (IDs, group names, group deltas, and
+        optional user-field changes when the service returns a dict). Safe for
+        Celery's JSON result backend; not the raw service tuple.
     """
     with app.app_context():
         if not idp:
@@ -406,7 +393,26 @@ def do_user_data_update(
                 user=user,
                 method=idp,
             )
-        return user, updated_data, groups, groups_changes
+
+        summary: dict[str, Any] = {
+            "user_id": user_id,
+            "idp": idp,
+            "remote_id": remote_id,
+            "completed_user_id": user.id if user is not None else None,
+            "groups": list(groups),
+            "group_changes": dict(groups_changes)
+            if isinstance(groups_changes, dict)
+            else {},
+        }
+        if isinstance(updated_data, dict):
+            summary["user_field_changes"] = updated_data
+        else:
+            summary["user_field_changes"] = None
+            summary["user_field_payload_type"] = (
+                type(updated_data).__name__ if updated_data is not None else None
+            )
+        encoded = json.dumps(summary, default=str)
+        return json.loads(encoded)
 
 
 @shared_task(ignore_result=False)

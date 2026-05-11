@@ -4,7 +4,7 @@
 # invenio-remote-user-data-kcworks is free software; you can redistribute and/or
 # modify it under the terms of the MIT License; see LICENSE file for more details.
 
-"""Tests of the webhook signal receiving for single-sign-out with KC."""
+"""Inbound single-sign-out webhook (KC central → KCWorks API receiver)."""
 
 from flask import url_for
 from flask_security import login_user
@@ -25,7 +25,7 @@ def test_logout_webhook_get_ping(app, client):
 def test_logout_webhook_post_requires_username(
     app, client, db, idms_static_api_auth
 ):
-    """POST without ``username`` query param returns 400."""
+    """POST without `username` query param returns 400."""
     webhook_url = url_for(
         "invenio_remote_user_data_kcworks.remote_user_data_kcworks_logout_webhook",
     )
@@ -74,9 +74,9 @@ def test_logout_webhook_post_invalidates_sessions(
     login_user(user)
     login_user_via_session(client, email=user.email)
 
-    # ``login_user_via_session`` only sets ``user_id`` on the KV session; it does not
-    # insert ``SessionActivity``. ``delete_user_sessions`` removes KV keys listed in
-    # ``user.active_sessions`` (that table), so without a row nothing is deleted.
+    # `login_user_via_session` only sets `user_id` on the KV session; it does not
+    # insert `SessionActivity`. `delete_user_sessions` removes KV keys listed in
+    # `user.active_sessions` (that table), so without a row nothing is deleted.
     with client.session_transaction() as sess:
         sid_s = sess.sid_s
     assert sid_s is not None

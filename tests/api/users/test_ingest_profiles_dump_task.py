@@ -4,11 +4,11 @@
 # and/or modify it under the terms of the MIT License; see LICENSE file for
 # more details.
 
-"""End-to-end tests for the ``do_ingest_profiles_dump`` Celery task.
+"""End-to-end tests for the `do_ingest_profiles_dump` Celery task.
 
 The task is exercised through its public synchronous form
-(``do_ingest_profiles_dump(filepath, fmt=...)``) with the underlying
-``do_user_created`` patched out so we can observe per-row arguments
+(`do_ingest_profiles_dump(filepath, fmt=...)`) with the underlying
+`do_user_created` patched out so we can observe per-row arguments
 without provisioning real users. Format sniffing, JSONL replay, the
 plain-username CSV path, error tolerance, and stats accuracy are all
 covered.
@@ -31,7 +31,7 @@ def _profiles_row(sub: str, *, email: str = "x@example.org") -> dict[str, Any]:
 
     Returns:
         A JSON-serializable dict suitable to feed to
-        ``APIResponse.model_validate``.
+        `APIResponse.model_validate`.
     """
     return {
         "data": [
@@ -57,10 +57,10 @@ def _profiles_row(sub: str, *, email: str = "x@example.org") -> dict[str, Any]:
 
 @pytest.fixture()
 def app_ctx(base_app):
-    """Push the pytest-invenio app context for ``with app.app_context()`` calls.
+    """Push the pytest-invenio app context for `with app.app_context()` calls.
 
     Yields:
-        The pytest-invenio ``base_app`` whose context is active for the test.
+        The pytest-invenio `base_app` whose context is active for the test.
     """
     with base_app.app_context():
         yield base_app
@@ -74,9 +74,9 @@ def app_ctx(base_app):
 def test_jsonl_with_auto_sniff_replays_each_row_with_remote_data(tmp_path, app_ctx):
     """Each JSONL line becomes a `do_user_created(..., remote_data=...)` call.
 
-    The task should sniff format = jsonl from the leading ``{``, validate
-    each row through ``APIResponse``, extract ``data[0].sub`` as the
-    oauth_id, and pass the parsed payload as ``remote_data`` so no live
+    The task should sniff format = jsonl from the leading `{`, validate
+    each row through `APIResponse`, extract `data[0].sub` as the
+    oauth_id, and pass the parsed payload as `remote_data` so no live
     Profiles API I/O is performed.
     """
     p = tmp_path / "dump.jsonl"

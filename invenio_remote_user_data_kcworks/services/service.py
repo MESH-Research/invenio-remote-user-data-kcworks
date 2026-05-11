@@ -327,7 +327,7 @@ class RemoteUserDataService(Service):
                error/early-exit paths that do not compute group changes.
 
         Raises:
-            LocalUserNotFoundError: If ``user_id`` does not resolve to a local user.
+            LocalUserNotFoundError: If `user_id` does not resolve to a local user.
 
         """
         self.require_permission(identity, "trigger_update")
@@ -347,11 +347,11 @@ class RemoteUserDataService(Service):
             remote_service = "knowledgeCommons"
 
         # Note: exceptions are intentionally allowed to propagate so callers
-        # (the Celery tasks ``do_user_created`` and ``do_user_data_update``)
+        # (the Celery tasks `do_user_created` and `do_user_data_update`)
         # can apply their HTTP-specific retry/reschedule policies and so
         # other unexpected errors are not silenced.
         # The login flow that calls this method synchronously (in
-        # ``utils.CILogonHelpers._existing_or_create_user_for_login``)
+        # `utils.CILogonHelpers._existing_or_create_user_for_login`)
         # wraps it in its own defensive try/except so user logins are
         # never blocked by a Profiles-side failure.
         user = current_accounts.datastore.get_user_by_id(user_id)

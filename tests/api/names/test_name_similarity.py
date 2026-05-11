@@ -175,7 +175,7 @@ class TestNonMatching:
         With the default vendored equivalence index, both `mary <-> anne`
         (via `annemarie`, `marianne`, `maryann`) and `mary <-> marie`
         (via direct variant rows) share canonical roots, so LCS finds
-        the alignment ``((mary, anne), (anne, marie))`` and scores 1.0.
+        the alignment `((mary, anne), (anne, marie))` and scores 1.0.
         """
         result = comparator.compare("Mary Anne", "Anne Marie")
         assert result.score == 1.0

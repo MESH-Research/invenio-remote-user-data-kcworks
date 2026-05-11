@@ -31,14 +31,14 @@ from invenio_remote_user_data_kcworks.cli.main import cli
 
 @pytest.fixture()
 def runner(base_app):
-    """A Flask CLI runner bound to the pytest-invenio ``base_app``.
+    """A Flask CLI runner bound to the pytest-invenio `base_app`.
 
-    Flask's ``test_cli_runner()`` (a thin subclass of Click's
-    ``CliRunner``) sets up the ambient app context that the
-    ``@with_appcontext``-decorated commands need.
+    Flask's `test_cli_runner()` (a thin subclass of Click's
+    `CliRunner`) sets up the ambient app context that the
+    `@with_appcontext`-decorated commands need.
 
     Returns:
-        A ``flask.testing.FlaskCliRunner`` instance.
+        A `flask.testing.FlaskCliRunner` instance.
     """
     return base_app.test_cli_runner()
 
@@ -49,7 +49,7 @@ def runner(base_app):
 
 
 def test_sync_now_requires_at_least_one_id(runner):
-    """Calling ``sync-now`` with no arguments fails fast with a usage error."""
+    """Calling `sync-now` with no arguments fails fast with a usage error."""
     result = runner.invoke(cli, ["names", "sync-now"])
     assert result.exit_code != 0
     assert "Provide at least one user id" in result.output
@@ -85,7 +85,7 @@ def test_sync_now_unresolved_arg_is_skipped_not_raised(runner):
 
 
 def test_sync_now_background_dispatches_celery_task(runner):
-    """``--background`` calls ``sync_user_to_names.delay`` and prints the task id."""
+    """`--background` calls `sync_user_to_names.delay` and prints the task id."""
     fake_sync = MagicMock()
     fake_sync.delay.return_value = MagicMock(id="task-aaa")
 
@@ -106,7 +106,7 @@ def test_sync_now_background_dispatches_celery_task(runner):
 
 
 def test_backfill_inline_calls_task_synchronously(runner):
-    """Without ``--background`` the task runs inline; stats are echoed."""
+    """Without `--background` the task runs inline; stats are echoed."""
     fake_task = MagicMock(
         return_value={
             "records_scanned": 10,
@@ -129,7 +129,7 @@ def test_backfill_inline_calls_task_synchronously(runner):
 
 
 def test_backfill_dry_run_flag_is_forwarded(runner):
-    """``--dry-run`` propagates to the task call."""
+    """`--dry-run` propagates to the task call."""
     fake_task = MagicMock(
         return_value={
             "records_scanned": 5,
@@ -149,7 +149,7 @@ def test_backfill_dry_run_flag_is_forwarded(runner):
 
 
 def test_backfill_background_dispatches_celery_task(runner):
-    """``--background`` queues the Celery task; the call is by-keyword."""
+    """`--background` queues the Celery task; the call is by-keyword."""
     fake_task = MagicMock()
     fake_task.delay.return_value = MagicMock(id="task-bbb")
 
@@ -177,7 +177,7 @@ def test_backfill_background_dispatches_celery_task(runner):
 
 
 def test_ingest_inline_runs_task_synchronously(runner, tmp_path):
-    """Without ``--background`` the task runs inline; stats are echoed."""
+    """Without `--background` the task runs inline; stats are echoed."""
     p = tmp_path / "users.csv"
     p.write_text("alice\n")
 
@@ -195,7 +195,7 @@ def test_ingest_inline_runs_task_synchronously(runner, tmp_path):
 
 
 def test_ingest_background_dispatches_celery_task(runner, tmp_path):
-    """``--background`` queues the Celery task with explicit format/source."""
+    """`--background` queues the Celery task with explicit format/source."""
     p = tmp_path / "dump.jsonl"
     p.write_text('{"data":[],"meta":{"authorized":true},"next":null,"previous":null}\n')
 
@@ -226,7 +226,7 @@ def test_ingest_background_dispatches_celery_task(runner, tmp_path):
 
 
 def test_ingest_rejects_missing_file(runner):
-    """Click's ``Path(exists=True)`` validator surfaces a clean error."""
+    """Click's `Path(exists=True)` validator surfaces a clean error."""
     result = runner.invoke(cli, ["users", "ingest-profiles-dump", "/no/such/file"])
     assert result.exit_code != 0
     assert "does not exist" in result.output.lower()

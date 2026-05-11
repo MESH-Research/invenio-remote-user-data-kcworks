@@ -1,4 +1,3 @@
-import arrow
 import pytest
 from flask import g
 from flask_security import login_user, logout_user
@@ -21,7 +20,6 @@ from invenio_remote_user_data_kcworks.proxies import (
     current_remote_group_service as group_data_service,
 )
 import json
-from pprint import pprint
 import time
 from werkzeug.exceptions import NotFound
 
@@ -62,8 +60,23 @@ from werkzeug.exceptions import NotFound
             },
             {
                 "active": True,
-                "username": "knowledgeCommons-myuser",
+                "username": "myuser",
                 "email": "myaddress@hcommons.org",
+                "user_profile": {
+                    "affiliations": "Michigan State University",
+                    "full_name": "My User",
+                    "identifier_orcid": "0000-0002-1825-0097",
+                    "identifier_kc_username": "myuser",
+                    "name_parts": '{"first": "My", "last": "User"}',
+                },
+                "preferences": {
+                    "email_visibility": "public",
+                    "visibility": "public",
+                    "locale": "en",
+                    "timezone": "Europe/Zurich",
+                },
+            },
+            {
                 "user_profile": {
                     "affiliations": "Michigan State University",
                     "full_name": "My User",
@@ -71,19 +84,8 @@ from werkzeug.exceptions import NotFound
                     "name_parts": '{"first": "My", "last": "User"}',
                 },
                 "preferences": {
-                    "email_visibility": "restricted",
-                    "visibility": "restricted",
-                    "locale": "en",
-                    "timezone": "Europe/Zurich",
-                },
-            },
-            {
-                "username": "knowledgeCommons-myuser",
-                "user_profile": {
-                    "affiliations": "Michigan State University",
-                    "full_name": "My User",
-                    "identifier_orcid": "0000-0002-1825-0097",
-                    "name_parts": '{"first": "My", "last": "User"}',
+                    "visibility": "public",
+                    "email_visibility": "public",
                 },
             },
             {
@@ -162,139 +164,6 @@ def test_update_invenio_group_memberships(app, user_factory, db):
         for n in my_identity.provides
         if n in ["admin", "awesome-mock", "any_user", 5]
     )
-
-
-@pytest.mark.parametrize(
-    "user_email,remote_id,return_payload,new_data,user_changes,"
-    "new_groups,group_changes",
-    [
-        (
-            "myaddress@hcommons.org",
-            "myuser",
-            {
-                "username": "myuser",
-                "email": "myaddress@hcommons.org",
-                "name": "My User",
-                "first_name": "My",
-                "last_name": "User",
-                "institutional_affiliation": "Michigan State University",
-                "orcid": "0000-0002-1825-0097",
-                "groups": [
-                    {
-                        "id": 1000551,
-                        "name": "Digital Humanists",
-                        "role": "member",
-                    },
-                    {"id": 1000576, "name": "test bpges", "role": "admin"},
-                ],
-            },
-            {
-                "username": "knowledgeCommons-myuser",
-                "email": "myaddress@hcommons.org",
-                "user_profile": {
-                    "full_name": "My User",
-                    "name_parts": '{"first": "My", "last": "User",}',
-                    "affiliations": "Michigan State University",
-                    "identifier_orcid": "0000-0002-1825-0097",
-                },
-                "preferences": {
-                    "email_visibility": "restricted",
-                    "visibility": "restricted",
-                    "locale": "en",
-                    "timezone": "Europe/Zurich",
-                },
-            },
-            {
-                "user_profile": {
-                    "full_name": "My User",
-                    "name_parts": '{"first": "My", "last": "User"}',
-                    "identifier_orcid": "0000-0002-1825-0097",
-                    "affiliations": "Michigan State University",
-                },
-                "username": "knowledgeCommons-myuser",
-            },
-            [
-                "knowledgeCommons---1000551|member",
-                "knowledgeCommons---1000576|admin",
-            ],
-            {
-                "added_groups": [
-                    "knowledgeCommons---1000551|member",
-                    "knowledgeCommons---1000576|admin",
-                ],
-                "dropped_groups": [],
-                "unchanged_groups": [],
-            },
-        ),
-    ],
-)
-def test_update_user_from_remote_mock(
-    app,
-    user_email,
-    remote_id,
-    return_payload,
-    new_data,
-    user_changes,
-    new_groups,
-    group_changes,
-    user_factory,
-    db,
-    requests_mock,
-    search_clear,
-):
-    """Test updating user data from mocked remote API."""
-    # base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][
-    #     "knowledgeCommons"
-    # ]["users"]["remote_endpoint"]
-
-    # mock the remote api endpoint
-    # requests_mock.get(f"{base_url}/{remote_id}", json=return_payload)
-    requests_mock.get(
-        "https://hcommons-dev.org/wp-json/commons/v1/users/myuser",
-        json=return_payload,
-    )
-
-    if "groups" in return_payload.keys():
-        for group in return_payload["groups"]:
-            requests_mock.get(
-                f"https://hcommons-dev.org/wp-json/commons/v1/groups/{group['id']}",
-                json={
-                    "id": group["id"],
-                    "name": group["name"],
-                    "upload_roles": ["member", "moderator", "administrator"],
-                    "moderate_roles": ["moderator", "administrator"],
-                },
-            )
-
-    myuser = user_factory(email=user_email, confirmed_at=arrow.utcnow().datetime)
-    if not myuser.active:
-        assert current_accounts.datastore.activate_user(myuser)
-    UserIdentity.create(myuser, "knowledgeCommons", remote_id)
-
-    actual = user_data_service.update_user_from_remote(
-        system_identity, myuser.id, "knowledgeCommons", remote_id
-    )
-    assert {
-        "username": actual[0].username,
-        "email": actual[0].email,
-        "preferences": actual[0].preferences,
-        "user_profile": actual[0].user_profile,
-    } == new_data
-    assert actual[1] == user_changes
-    assert sorted(actual[2]) == sorted(new_groups)
-    assert actual[3] == group_changes
-    myuser_confirm = current_users_service.read(system_identity, myuser.id).data
-    pprint(myuser_confirm)
-    assert {
-        "username": myuser_confirm["username"],
-        "email": myuser_confirm["email"],
-        "preferences": {
-            k: v
-            for k, v in myuser_confirm["preferences"].items()
-            if k != "notifications"
-        },
-        "user_profile": myuser_confirm["profile"],
-    } == new_data
 
 
 @pytest.mark.parametrize(
@@ -719,13 +588,14 @@ def test_delete_group_from_remote(
     grouper.create_new_group(group_name="knowledgeCommons---1004290|admin")
     grouper.create_new_group(group_name="knowledgeCommons---1004290|member")
 
-    myuser = user_factory(email=user_email, confirmed_at=arrow.utcnow().datetime)
-    if not myuser.active:
-        assert current_accounts.datastore.activate_user(myuser)
-    UserIdentity.create(myuser, "knowledgeCommons", "testuser")
+    fixture_user = user_factory(email=user_email)
+    u = fixture_user.user
+    if not u.active:
+        assert current_accounts.datastore.activate_user(u)
+    UserIdentity.create(u, "knowledgeCommons", "testuser")
 
-    grouper.add_user_to_group("knowledgeCommons---1004290|admin", user=myuser)
-    assert grouper.get_current_user_roles(myuser) == [
+    grouper.add_user_to_group("knowledgeCommons---1004290|admin", user=u)
+    assert grouper.get_current_user_roles(u) == [
         "knowledgeCommons---1004290|admin"
     ]
 
@@ -742,7 +612,7 @@ def test_delete_group_from_remote(
     )
 
     assert "knowledgeCommons---1004290|admin" not in grouper.get_current_user_roles(
-        myuser
+        u
     )
 
     assert actual == {
@@ -934,23 +804,25 @@ def test_delete_group_from_remote_with_community(
     ]
 
     # create user and add to community via group
-    myuser = user_factory(email=user_email, confirmed_at=arrow.utcnow().datetime)
-    if not myuser.active:
-        assert current_accounts.datastore.activate_user(myuser)
-    UserIdentity.create(myuser, "knowledgeCommons", "testuser")
+    fixture_user = user_factory(email=user_email)
+    u = fixture_user.user
+    if not u.active:
+        assert current_accounts.datastore.activate_user(u)
+    UserIdentity.create(u, "knowledgeCommons", "testuser")
 
-    grouper.add_user_to_group("knowledgeCommons---1004290|admin", user=myuser)
-    assert grouper.get_current_user_roles(myuser) == [
+    grouper.add_user_to_group("knowledgeCommons---1004290|admin", user=u)
+    assert grouper.get_current_user_roles(u) == [
         "knowledgeCommons---1004290|admin"
     ]
-    assert len(myuser.roles)
+    assert len(u.roles)
 
     # create a second user to be an individual member
-    myuser2 = user_factory()
-    if not myuser2.active:
-        assert current_accounts.datastore.activate_user(myuser2)
-    add_user_to_community(str(myuser2.id), "reader", existing_collection["id"])
-    assert len(myuser2.roles)
+    fixture_user2 = user_factory()
+    u2 = fixture_user2.user
+    if not u2.active:
+        assert current_accounts.datastore.activate_user(u2)
+    add_user_to_community(str(u2.id), "reader", existing_collection["id"])
+    assert len(u2.roles)
 
     # ****** perform the delete operation ******
     actual = group_data_service.delete_group_from_remote(
@@ -968,17 +840,17 @@ def test_delete_group_from_remote_with_community(
 
     # confirm that the user was removed from the group
     assert "knowledgeCommons---1004290|admin" not in grouper.get_current_user_roles(
-        myuser
+        u
     )
 
     # confirm that the user is an individual member of the community
-    user_memberships = current_communities.service.members.read_memberships(myuser)
+    user_memberships = current_communities.service.members.read_memberships(u)
     app.logger.debug(f"User memberships: {user_memberships}")
     assert existing_collection["id"] in [m[0] for m in user_memberships["memberships"]]
 
     # confirm that the other individual member is still a member of
     # the community
-    user2_memberships = current_communities.service.members.read_memberships(myuser2)
+    user2_memberships = current_communities.service.members.read_memberships(u2)
     assert existing_collection["id"] in [m[0] for m in user2_memberships["memberships"]]
 
     # confirm that the community no longer has the group info
@@ -1012,16 +884,17 @@ def test_delete_group_from_remote_with_community(
             "scottianw@signgmail.com",
             "ianscott",
             {
-                "username": "knowledgeCommons-ianscott",
+                "username": "ianscott",
                 "email": "scottianw@signgmail.com",
                 "user_profile": {
                     "full_name": "Ian Scott",
                     "name_parts": '{"first": "Ian", "last": "Scott",}',
                     "affiliations": "MESH Research, Michigan State University",
+                    "identifier_kc_username": "ianscott",
                 },
                 "preferences": {
-                    "email_visibility": "restricted",
-                    "visibility": "restricted",
+                    "email_visibility": "public",
+                    "visibility": "public",
                     "locale": "en",
                     "timezone": "Europe/Zurich",
                 },
@@ -1030,9 +903,14 @@ def test_delete_group_from_remote_with_community(
                 "user_profile": {
                     "affiliations": "MESH Research, Michigan State University",
                     "full_name": "Ian Scott",
+                    "identifier_kc_username": "ianscott",
                     "name_parts": '{"first": "Ian", "last": "Scott", }',
                 },
-                "username": "knowledgeCommons-ianscott",
+                "preferences": {
+                    "visibility": "public",
+                    "email_visibility": "public",
+                },
+                "username": "ianscott",
             },
             [],
             {
@@ -1057,9 +935,7 @@ def test_update_user_from_remote_live(
 ):
     '''Test updating user data from live remote API.'''
 
-    myuser = user_factory(
-        email=user_email, confirmed_at=arrow.utcnow().datetime
-    )
+    myuser = user_factory(email=user_email)
     if not myuser.active:
         assert current_accounts.datastore.activate_user(myuser)
     UserIdentity.create(myuser, "knowledgeCommons", "testuser")
@@ -1123,7 +999,7 @@ def test_on_user_logged_in(client, app, db, user_factory, requests_mock, myuser)
     )
 
     # mock SAML login info for the test user and add them to new groups
-    myuser1 = user_factory(confirmed_at=arrow.utcnow().datetime)
+    myuser1 = user_factory()
     UserIdentity.create(myuser1, "knowledgeCommons", "testuser")
     db.session.commit()
     grouper = GroupRolesService(user_data_service)
@@ -1179,7 +1055,7 @@ def test_on_user_logged_in(client, app, db, user_factory, requests_mock, myuser)
     )
 
     myuser1 = current_users_service.read(system_identity, myuser1.id).data
-    assert myuser1["username"] == "knowledgeCommons-myuser"
+    assert myuser1["username"] == "myuser"
     assert myuser1["email"] == "info@inveniosoftware.org"
     assert myuser1["profile"]["full_name"] == "Jane User"
     assert myuser1["profile"]["affiliations"] == "Michigan State University"
@@ -1188,8 +1064,8 @@ def test_on_user_logged_in(client, app, db, user_factory, requests_mock, myuser)
         "first": "Jane",
         "last": "User",
     }
-    assert myuser1["preferences"]["email_visibility"] == "restricted"
-    assert myuser1["preferences"]["visibility"] == "restricted"
+    assert myuser1["preferences"]["email_visibility"] == "public"
+    assert myuser1["preferences"]["visibility"] == "public"
     assert myuser1["preferences"]["locale"] == "en"
     # FIXME: Change the default timezone to UTC
     assert myuser1["preferences"]["timezone"] == "Europe/Zurich"

@@ -28,6 +28,7 @@ been removed in favour of the shared fixture modules vendored from
 `kcworks-test-fixtures` (the `tests/fixtures` submodule).
 """
 
+import os
 from collections import namedtuple
 from collections.abc import Callable, Generator
 from pathlib import Path
@@ -43,6 +44,7 @@ from invenio_search.proxies import current_search_client
 from marshmallow import Schema, fields
 from opensearchpy import OpenSearch
 
+from tests.env_defaults import PYTEST_DEFAULT_COMMONS_PROFILES_API_TOKEN
 from tests.fixtures.idms import register_idms_static_api_token_before_request
 
 from .fixtures.custom_fields import test_config_fields
@@ -83,6 +85,29 @@ pytest_plugins = (
     "tests.fixtures.vocabularies.title_types",
     "tests.pytest_plugins.pytest_live_status",
 )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _commons_profiles_api_token_default() -> None:
+    """Set a dummy Profiles bearer token when the env omits one.
+
+    ``UserDataAPIClient.fetch_user_profile`` (and related paths) read
+    ``COMMONS_PROFILES_API_TOKEN`` from the environment. Tests that mock
+    IDMS with ``requests_mock`` still execute that code, so the variable
+    must be present.
+
+    Uses ``os.environ.setdefault`` so an explicit real token set in the
+    environment is never overwritten. Live IDMS tests use
+    `commons_profiles_api_token_is_live_configured` in `tests/env_defaults.py`
+    so they still skip when only this placeholder is present.
+
+    Tests that need a specific secret (broker crypto, Authorization header
+    assertions, etc.) continue to use ``monkeypatch.setenv`` per test.
+    """
+    os.environ.setdefault(
+        "COMMONS_PROFILES_API_TOKEN",
+        PYTEST_DEFAULT_COMMONS_PROFILES_API_TOKEN,
+    )
 
 
 def _(x: Any) -> Any:
@@ -128,11 +153,16 @@ test_config: dict[str, Any] = {
     "WTF_CSRF_ENABLED": False,
     "WTF_CSRF_METHODS": [],
     "RATELIMIT_ENABLED": False,
-    # Static bearer for IDMS→KCWorks API paths (see ``tests.fixtures.idms`` hook).
-    # Tests set ``TEST_IDMS_STATIC_API_TOKEN``;
-    # ``idms_static_api_auth`` overrides user id.
+    # Static bearer for IDMS→KCWorks API paths (see `tests.fixtures.idms` hook).
+    # Tests set `TEST_IDMS_STATIC_API_TOKEN`;
+    # `idms_static_api_auth` overrides user id.
     "STATIC_API_TOKEN_ROUTES": {
+        "/api/webhooks/user_data_update": "TEST_IDMS_STATIC_API_TOKEN",
+        "/api/webhooks/users/logout": "TEST_IDMS_STATIC_API_TOKEN",
+        "/api/webhooks/users/update": "TEST_IDMS_STATIC_API_TOKEN",
+        "/webhooks/user_data_update": "TEST_IDMS_STATIC_API_TOKEN",
         "/webhooks/users/logout": "TEST_IDMS_STATIC_API_TOKEN",
+        "/webhooks/users/update": "TEST_IDMS_STATIC_API_TOKEN",
     },
     "STATIC_API_TOKEN_USER_ID": 1,
     "APP_DEFAULT_SECURE_HEADERS": {
@@ -255,8 +285,6 @@ test_config["DATACITE_PREFIX"] = "10.17613"
 test_config["DATACITE_TEST_MODE"] = True
 
 # --- Site URLs (env-overridable for cross-environment runs) ----------------
-import os  # noqa: E402
-
 test_config["SITE_API_URL"] = os.environ.get(
     "INVENIO_SITE_API_URL", "http://localhost/api"
 )
@@ -292,12 +320,12 @@ def celery_enable_logging() -> bool:
 
 @pytest.yield_fixture(scope="module")
 def location(database: Callable) -> Generator[Location, None, None]:
-    """Create a default ``Location`` for the module's tests.
+    """Create a default `Location` for the module's tests.
 
     Use this fixture if your test requires a `files location <https://invenio-
     files-rest.readthedocs.io/en/latest/api.html#invenio_files_rest.models.
     Location>`_. The location will be a default location with the name
-    ``pytest-location``.
+    `pytest-location`.
 
     Yields:
         Location: The created test location.
@@ -317,7 +345,7 @@ def location(database: Callable) -> Generator[Location, None, None]:
 
 
 # Namedtuple aggregating the fixtures most tests need together. Mirrors the
-# stats-dashboard ``RunningApp`` so a developer moving between packages sees
+# stats-dashboard `RunningApp` so a developer moving between packages sees
 # the same surface.
 RunningApp = namedtuple(
     "RunningApp",
@@ -402,12 +430,12 @@ def running_app(
 def search_clear(search_clear) -> Generator[OpenSearch, None, None]:
     """Clear search indices and templates between tests (function scope).
 
-    Extends the ``pytest_invenio.search_clear`` fixture to also drop stats
+    Extends the `pytest_invenio.search_clear` fixture to also drop stats
     indices/templates and to flush the community identity cache before each
     test (preventing stale role data leaking across tests).
 
     Yields:
-        The OpenSearch client (same as the base ``search_clear`` fixture).
+        The OpenSearch client (same as the base `search_clear` fixture).
     """
     from invenio_communities.proxies import current_identities_cache
 
@@ -474,9 +502,9 @@ def app(
 ) -> Generator[Flask, None, None]:
     """Provide an app with the typically needed basic fixtures.
 
-    Use in conjunction with the ``running_app`` fixture for a complete
+    Use in conjunction with the `running_app` fixture for a complete
     app + db data set. This fixture sets up the basic services (db,
-    search, template loader, queues) once per module; ``running_app`` is
+    search, template loader, queues) once per module; `running_app` is
     function-scoped and resets per-test data.
 
     Yields:
@@ -490,7 +518,7 @@ def app(
 
 @pytest.fixture(scope="module")
 def app_config(app_config) -> dict:
-    """Override the ``pytest_invenio`` app_config with our ``test_config``.
+    """Override the `pytest_invenio` app_config with our `test_config`.
 
     Returns:
         dict: The application configuration dictionary.
@@ -505,10 +533,10 @@ def app_config(app_config) -> dict:
 def create_app(instance_path, entry_points):
     """Provide the application factory used to build the Flask app.
 
-    Returns ``invenio_app.factory.create_api`` so that REST API blueprints
-    registered under ``invenio_base.api_apps`` (e.g. the package's webhook
+    Returns `invenio_app.factory.create_api` so that REST API blueprints
+    registered under `invenio_base.api_apps` (e.g. the package's webhook
     receiver) are wired into the test app. See the module docstring for
-    why this differs from the root KCWorks ``conftest.py``.
+    why this differs from the root KCWorks `conftest.py`.
 
     Returns:
         Callable: The application factory function.
@@ -524,8 +552,8 @@ def event_queues(app):
     """Declare and tear down the user-data update message queues.
 
     The package writes Profiles webhook events onto a Kombu exchange
-    declared via ``REMOTE_USER_DATA_MQ_EXCHANGE`` (see
-    ``invenio_remote_user_data_kcworks/config.py``). Tests that exercise
+    declared via `REMOTE_USER_DATA_MQ_EXCHANGE` (see
+    `invenio_remote_user_data_kcworks/config.py`). Tests that exercise
     that path need the queues to exist and be empty.
     """
     current_queues.delete()

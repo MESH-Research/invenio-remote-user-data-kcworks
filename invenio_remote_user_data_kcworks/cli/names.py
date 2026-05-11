@@ -55,20 +55,20 @@ def names_cli():
 def _resolve_user_id_from_arg(
     arg: str, *, sources: list[str], by_email: bool, by_username: bool
 ) -> int | None:
-    """Resolve a CLI ``arg`` into a local Invenio user id.
+    """Resolve a CLI `arg` into a local Invenio user id.
 
-    Mirrors the resolution order of ``users update`` so ``sync-now`` and
-    ``update`` accept identical flag semantics.
+    Mirrors the resolution order of `users update` so `sync-now` and
+    `update` accept identical flag semantics.
 
     Args:
         arg: The user identifier as supplied on the command line.
-        sources: IDPs to search in ``UserIdentity`` (in order).
-        by_email: Treat ``arg`` as an email address.
-        by_username: Treat ``arg`` as a remote-side username
-            (``UserIdentity.id``).
+        sources: IDPs to search in `UserIdentity` (in order).
+        by_email: Treat `arg` as an email address.
+        by_username: Treat `arg` as a remote-side username
+            (`UserIdentity.id`).
 
     Returns:
-        The local user id, or ``None`` when no matching identity exists.
+        The local user id, or `None` when no matching identity exists.
     """
     if by_email:
         user = current_datastore.get_user_by_email(arg)
@@ -125,8 +125,8 @@ def sync_now_cmd(
     """Re-derive each user's Names record from current local profile data.
 
     Without flags, IDS are treated as local Invenio user ids. Use
-    ``--by-email`` / ``--by-username`` to resolve in the same way as
-    ``user-data users update``. No remote Profiles API I/O is performed.
+    `--by-email` / `--by-username` to resolve in the same way as
+    `user-data users update`. No remote Profiles API I/O is performed.
 
     Raises:
         click.UsageError: When no IDS are supplied.
@@ -196,7 +196,7 @@ def backfill_cited_from_records_cmd(limit: int | None, dry_run: bool, background
 def show_cmd(pid_or_orcid: str):
     """Print a single Names record by PID, or by ORCID iD.
 
-    First tries a direct ``read`` at the given PID; if that fails, falls
+    First tries a direct `read` at the given PID; if that fails, falls
     back to resolving by ORCID scheme (which may yield multiple hits when
     a USER and a CITED stub still co-exist for the same ORCID).
 
@@ -250,7 +250,7 @@ def merge_orcid_duplicates_cmd(limit: int):
     share an ORCID with a single USER record into that USER record and
     deletes the stubs. Buckets with more than one USER record (or with
     no USER record) are logged and left for human review via
-    ``find-duplicates``. Run before ``find-duplicates`` so the review
+    `find-duplicates`. Run before `find-duplicates` so the review
     list is not cluttered by pairs that should be auto-merged.
     """
     stats = names_sync_service.merge_orcid_duplicates(limit=limit)
@@ -393,7 +393,7 @@ def dismiss_duplicate_cmd(pid_a: str, pid_b: str):
     """Mark two Names records as confirmed *not* duplicates of each other.
 
     Records each record's UUID on the other's
-    ``props.dismissed_duplicates`` list; the candidate finder will then
+    `props.dismissed_duplicates` list; the candidate finder will then
     skip the pair on subsequent runs. Idempotent.
 
     Raises:
@@ -418,7 +418,7 @@ def dismiss_duplicate_cmd(pid_a: str, pid_b: str):
 @click.argument("pid_b")
 @with_appcontext
 def undismiss_duplicate_cmd(pid_a: str, pid_b: str):
-    """Reverse a previous ``dismiss-duplicate`` so the pair re-appears.
+    """Reverse a previous `dismiss-duplicate` so the pair re-appears.
 
     Idempotent: calling on a pair that was not dismissed succeeds with
     no changes.

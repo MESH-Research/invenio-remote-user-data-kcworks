@@ -255,9 +255,9 @@ def update_user_data(
     default="auto",
     show_default=True,
     help=(
-        "Input format. ``jsonl`` = one Profiles API response per line "
-        "(no API I/O); ``usernames`` = one KC username per line (live "
-        "API fetch per row). ``auto`` sniffs the first non-blank line."
+        "Input format. `jsonl` = one Profiles API response per line "
+        "(no API I/O); `usernames` = one KC username per line (live "
+        "API fetch per row). `auto` sniffs the first non-blank line."
     ),
 )
 @click.option(

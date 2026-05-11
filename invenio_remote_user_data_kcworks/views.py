@@ -83,7 +83,7 @@ def sso_broker_login(
             with return_to and final_redirect query parameters.
 
     Note:
-        Calls ``abort(500)`` if the broker URL is not configured.
+        Calls `abort(500)` if the broker URL is not configured.
     """
     broker_url = ""
     if silent:
@@ -180,10 +180,10 @@ def sso_broker_callback() -> Response:
         BrokerNonceValidationError: Re-raised from the inner handler.
 
     Note:
-        ``UserDataRequestTimeout`` and ``UserDataRequestFailed`` may propagate
-        from profile resolution inside ``_sso_broker_callback``.
+        `UserDataRequestTimeout` and `UserDataRequestFailed` may propagate
+        from profile resolution inside `_sso_broker_callback`.
         BrokerPayloadProcessingError is not propagated; it becomes
-        ``abort(401)`` with ``REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE``.
+        `abort(401)` with `REMOTE_USER_DATA_ERROR_MESSAGE_LOGIN_FAILURE`.
         Other exceptions may propagate for framework error handling.
     """
     try:
@@ -214,8 +214,8 @@ def sso_broker_callback() -> Response:
 class RemoteUserDataUpdateWebhook(MethodView):
     """View class for the user/group data update webhook receiver.
 
-    This view is registered for both ``/api/webhooks/users/update`` (preferred)
-    and ``/api/webhooks/user_data_update`` (deprecated, still operational). It
+    This view is registered for both `/api/webhooks/users/update` (preferred)
+    and `/api/webhooks/user_data_update` (deprecated, still operational). It
     receives webhook notifications from a remote IDP when user or group data has
     been updated on the remote server.
 
@@ -260,11 +260,11 @@ class RemoteUserDataUpdateWebhook(MethodView):
     Lazy provisioning
     -----------------
 
-    We accept ``created`` events for users that do not yet have
-    a ``UserIdentity``, and treat ``updated`` events for unknown users
-    as ``created`` so that we still provision them. (The downstream task will fetch
-    the profile and create the local user.) An ``updated`` signal for an unknown
-    user usually means we missed the original ``created`` webhook for that user, 
+    We accept `created` events for users that do not yet have
+    a `UserIdentity`, and treat `updated` events for unknown users
+    as `created` so that we still provision them. (The downstream task will fetch
+    the profile and create the local user.) An `updated` signal for an unknown
+    user usually means we missed the original `created` webhook for that user, 
     or they were registered prior to the current IDMS system setup. We just
     log a warning to flag the gap for operators in case a genuine problem emerges.
 
@@ -286,12 +286,12 @@ class RemoteUserDataUpdateWebhook(MethodView):
               'event' property, whose value is the type of event that is being
               signalled (e.g., 'updated', 'created', 'deleted', etc.).
 
-              For ``users`` events the ``id`` is the OAuth ``sub``
+              For `users` events the `id` is the OAuth `sub`
               for the user on the remote IDP (i.e. the value stored
-              as ``UserIdentity.id``). The KC member name needed for
-              the ``/api/v1/members/{member_name}/works/status``
+              as `UserIdentity.id`). The KC member name needed for
+              the `/api/v1/members/{member_name}/works/status`
               callback is resolved locally from the sub via
-              ``UserIdentity`` -> ``User.user_profile['identifier_kc_username']``
+              `UserIdentity` -> `User.user_profile['identifier_kc_username']`
               when the callback fires.
 
     For example:

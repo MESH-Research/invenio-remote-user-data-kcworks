@@ -40,15 +40,10 @@ def test_api_send_profiles_logout_500():
     """
     pass
 
-test_api_send_profiles_logout_400():
+
+def test_api_send_profiles_logout_400():
     """Test the profiles logout signal sending when response unsuccessful.
 
     A request error should be logged but not interrupt the logout.
     """
     pass
-
-"""
-```http
-GET https://localhost/api/webhooks/users/logout
-````
-"""

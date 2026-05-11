@@ -4,11 +4,11 @@
 # and/or modify it under the terms of the MIT License; see LICENSE file for
 # more details.
 
-"""End-to-end tests for ``NamesSyncService.backfill_cited_orcid_from_records``.
+"""End-to-end tests for `NamesSyncService.backfill_cited_orcid_from_records`.
 
 Each scenario builds a small synthetic published-RDM-records corpus (a list
-of metadata-bearing dicts), mocks the live RDM record service's ``scan()``
-to return that corpus, mocks ``upsert_cited_orcid_name`` so we can observe
+of metadata-bearing dicts), mocks the live RDM record service's `scan()`
+to return that corpus, mocks `upsert_cited_orcid_name` so we can observe
 the calls without touching the real Names service, and compares the
 returned stats dict against an explicit expected dict.
 """
@@ -68,7 +68,7 @@ def _record(creators=None, contributors=None) -> dict[str, Any]:
     """A minimal hit-shaped dict matching the metadata layout `scan().hits` returns.
 
     Returns:
-        A dict with a single ``metadata`` key holding the supplied
+        A dict with a single `metadata` key holding the supplied
         creator / contributor lists.
     """
     return {
@@ -80,16 +80,16 @@ def _record(creators=None, contributors=None) -> dict[str, Any]:
 
 
 def _patched_scan(monkeypatch, hits: list[dict[str, Any]]) -> MagicMock:
-    """Patch ``current_rdm_records_service.scan`` to return ``hits``.
+    """Patch `current_rdm_records_service.scan` to return `hits`.
 
-    Replaces the symbol on the ``names_sync`` module (where it's bound by
-    the top-level ``from invenio_rdm_records.proxies import ...``);
+    Replaces the symbol on the `names_sync` module (where it's bound by
+    the top-level `from invenio_rdm_records.proxies import ...`);
     patching the upstream proxies module would have no effect on the
     already-bound local name.
 
     Returns:
         The MagicMock standing in for the records service so each test
-        can inspect ``scan(...)`` calls it received.
+        can inspect `scan(...)` calls it received.
     """
     fake_scan_result = MagicMock()
     fake_scan_result.hits = iter(hits)

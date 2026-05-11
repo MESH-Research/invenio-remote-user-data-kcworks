@@ -4,7 +4,7 @@
 # invenio-remote-user-data-kcworks is free software; you can redistribute and/or
 # modify it under the terms of the MIT License; see LICENSE file for more details.
 
-"""Tests of the signal emission for single-sign-out with KC."""
+"""Local sign-out: POST to Profiles `actions/logout/` when the user logs out here."""
 
 import json
 
@@ -59,11 +59,13 @@ def test_local_logout_falls_back_to_username_prefix_when_no_kc_profile_key(
     mock_logout_signal_receiver,
     monkeypatch,
 ):
-    """Assert logout strips `knowledgeCommons-` when profile has no KC username.
+    """Assert logout strips legacy KC username prefix when profile has no KC id.
 
-    If `user_profile` has no `identifier_kc_username`, the handler must strip the
-    `knowledgeCommons-` prefix from `user.username` and pass that value in the
-    Profiles `actions/logout/` request body as `user_name`.
+    When `user_profile` lacks `identifier_kc_username`, `on_user_logged_out` falls
+    back to stripping a leading `knowledgeCommons-` prefix (`ext.py` uses
+    `re.IGNORECASE`). Assigning an uppercase-heavy synthetic username would fail
+    Invenio username validation on flush; use a lowercase-prefix username that still
+    exercises the same strip (e.g. `knowledgecommons-fallback_user`).
 
     `user_factory` is invoked with `kc_username=None` because its default would
     set `identifier_kc_username` to `myuser` and skip this fallback path.
@@ -76,7 +78,7 @@ def test_local_logout_falls_back_to_username_prefix_when_no_kc_profile_key(
     # `identifier_kc_username` and defeat this fallback path.
     u = user_factory(email="fallback-logout@example.com", kc_username=None)
     user = u.user
-    user.username = f"knowledgeCommons-{remote_name}"
+    user.username = f"knowledgecommons-{remote_name}"
     db.session.add(user)
     db.session.commit()
     login_user(user)

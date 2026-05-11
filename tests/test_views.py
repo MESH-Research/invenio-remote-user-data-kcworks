@@ -1,4 +1,3 @@
-import arrow
 from flask import url_for
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import UserIdentity
@@ -150,9 +149,7 @@ def test_webhook_post(
 
                 headers["Authorization"] = f"Bearer {admin.allowed_token}"
 
-                new_user = user_factory(
-                    email=v["email"], confirmed_at=arrow.utcnow().datetime
-                )
+                new_user = user_factory(email=v["email"])
                 new_user.roles
                 UserIdentity.create(new_user, "knowledgeCommons", v["username"])
 

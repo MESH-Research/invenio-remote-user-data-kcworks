@@ -7,9 +7,9 @@
 
 """Pytest configuration for API tests.
 
-Mirrors the small ``tests/api/conftest.py`` from the parent KCWorks
-repository so that tests reaching for the ``headers`` (or
-``headers_same_origin``) fixture continue to work whether the file is
+Mirrors the small `tests/api/conftest.py` from the parent KCWorks
+repository so that tests reaching for the `headers` (or
+`headers_same_origin`) fixture continue to work whether the file is
 discovered through the parent project's symlink or run directly from
 this submodule.
 """
@@ -22,10 +22,10 @@ from invenio_app.factory import create_api as _create_app
 def create_app(instance_path, entry_points):
     """Provide the application factory used to build the Flask app.
 
-    Returns ``invenio_app.factory.create_api`` so that REST API blueprints
-    registered under ``invenio_base.api_apps`` (e.g. the package's webhook
+    Returns `invenio_app.factory.create_api` so that REST API blueprints
+    registered under `invenio_base.api_apps` (e.g. the package's webhook
     receiver) are wired into the test app. See the module docstring for
-    why this differs from the root KCWorks ``conftest.py``.
+    why this differs from the root KCWorks `conftest.py`.
 
     Returns:
         Callable: The application factory function.
@@ -47,10 +47,10 @@ def headers() -> dict:
 
 @pytest.fixture(scope="function")
 def headers_same_origin(headers, app_config) -> dict:
-    """Headers with ``Referrer-Policy`` and ``Referer`` set to the same origin.
+    """Headers with `Referrer-Policy` and `Referer` set to the same origin.
 
     Returns:
-        dict: Default request headers plus same-origin ``Referer`` material.
+        dict: Default request headers plus same-origin `Referer` material.
     """
     headers["Referrer-Policy"] = "origin"
     headers["Referer"] = f"{app_config['SITE_UI_URL']}/"

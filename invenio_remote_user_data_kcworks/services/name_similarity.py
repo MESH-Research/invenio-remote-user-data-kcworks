@@ -225,8 +225,8 @@ class PersonNameComparator:
     FIXME: the vendored equivalence table is genealogy-derived and
     *will* generate false positives in the dedup feed. The clearest
     pathology is combo-name back-propagation: rows like
-    ``annemarie -> ann anne anna marie ...`` cause `_compatible()`
-    to treat unrelated tokens such as ``mary`` and ``ann`` as
+    `annemarie -> ann anne anna marie ...` cause `_compatible()`
+    to treat unrelated tokens such as `mary` and `ann` as
     equivalent. A spot-check finds ~15% of arbitrary common
     Western-name pairs share at least one canonical root through
     such compounds. Cross-language cognates (john/hans/ivan/ian via
@@ -235,7 +235,7 @@ class PersonNameComparator:
     (1) treat equivalence-index hits as a softer signal than exact
         equality by routing them through a separate, lower
         `equivalence_score_bonus` instead of returning
-        ``compatible=True`` outright (requires changing the
+        `compatible=True` outright (requires changing the
         boolean `_compatible()` API into a graded score and
         threading that through the LCS DP);
     (2) filter the CSV at vendor-load time, dropping rows whose

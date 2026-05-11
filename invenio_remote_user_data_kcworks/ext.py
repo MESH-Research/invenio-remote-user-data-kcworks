@@ -182,12 +182,18 @@ class InvenioRemoteUserData:
                   Otherwise, returns None.
             """
             # Silent SSO targets the UI app: skip REST API, static assets, broker
-            # callback. Bare ``/api`` (no trailing slash) and ``SCRIPT_NAME=/api``
-            # mounts are handled separately so we do not match e.g. ``/apiculture``.
+            # callback, and IDMS webhook receivers. On `create_api` apps, webhook
+            # routes live at `/webhooks/...` (no `/api` prefix on `request.path`);
+            # skipping them avoids `url_for(...broker_callback)` when the SSO
+            # blueprint is not registered on the API app.
+            # Bare `/api` (no trailing slash) and `SCRIPT_NAME=/api` mounts are
+            # handled separately so we do not match e.g. `/apiculture`.
             path = request.path or "/"
             script = (request.script_root or "").rstrip("/")
             if (
-                path.startswith(("/api/", "/static/", "/sso/broker-callback/"))
+                path.startswith(
+                    ("/api/", "/static/", "/sso/broker-callback/", "/webhooks/")
+                )
                 or path.rstrip("/") == "/api"
                 or script == "/api"
                 or path.rstrip("/").endswith("/sso/broker-callback")
@@ -212,16 +218,16 @@ class InvenioRemoteUserData:
 
 
 def _register_kcworks_names_schema_override(app) -> None:
-    """Point ``names/name-v1.0.0.json`` at this package's relaxed schema file.
+    """Point `names/name-v1.0.0.json` at this package's relaxed schema file.
 
-    Called from ``finalize_app`` / ``api_finalize_app`` below, which Invenio runs
-    because they are registered via the ``invenio_base.finalize_app`` and
-    ``invenio_base.api_finalize_app`` *entry point groups* in ``pyproject.toml``
-    (not via ``invenio_jsonschemas.schemas`` — we do not register schema dirs
+    Called from `finalize_app` / `api_finalize_app` below, which Invenio runs
+    because they are registered via the `invenio_base.finalize_app` and
+    `invenio_base.api_finalize_app` *entry point groups* in `pyproject.toml`
+    (not via `invenio_jsonschemas.schemas` — we do not register schema dirs
     that way here; that would duplicate the vocabulary path).
 
-    At runtime we use ``InvenioJSONSchemasState.register_schema`` so this path
-    wins over the copy bundled with ``invenio-vocabularies``.
+    At runtime we use `InvenioJSONSchemasState.register_schema` so this path
+    wins over the copy bundled with `invenio-vocabularies`.
     """
     try:
         state = app.extensions["invenio-jsonschemas"]
@@ -232,10 +238,10 @@ def _register_kcworks_names_schema_override(app) -> None:
 
 
 def finalize_app(app) -> None:
-    """UI finalize hook; registered on ``invenio_base.finalize_app``."""
+    """UI finalize hook; registered on `invenio_base.finalize_app`."""
     _register_kcworks_names_schema_override(app)
 
 
 def api_finalize_app(app) -> None:
-    """API finalize hook; registered on ``invenio_base.api_finalize_app``."""
+    """API finalize hook; registered on `invenio_base.api_finalize_app`."""
     _register_kcworks_names_schema_override(app)

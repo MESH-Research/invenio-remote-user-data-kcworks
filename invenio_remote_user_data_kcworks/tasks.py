@@ -512,7 +512,7 @@ def do_user_created(
 
     Raises:
         LocalUserNotFoundError: If the local user row is missing during
-            ``update_user_from_remote`` (after FAILED status callback).
+            `update_user_from_remote` (after FAILED status callback).
 
     Returns:
         The id of the matched/created local user, `None` when no
@@ -775,14 +775,14 @@ def _sniff_dump_format(filepath: str) -> str:
     """Detect whether a file is JSONL (Profiles-shape) or a one-column CSV of usernames.
 
     The detection is intentionally cheap: read the first non-blank line, strip,
-    and check whether it starts with ``{``. Anything else is assumed to be a
+    and check whether it starts with `{`. Anything else is assumed to be a
     plain-text username list (one username per line; CSV header optional).
 
     Args:
         filepath: Path to the file to inspect.
 
     Returns:
-        Either ``"jsonl"`` or ``"usernames"``.
+        Either `"jsonl"` or `"usernames"`.
     """
     with open(filepath, encoding="utf-8") as f:
         for line in f:

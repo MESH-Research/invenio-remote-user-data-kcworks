@@ -1,17 +1,15 @@
-from flask import url_for
-from invenio_access.permissions import system_identity
-from invenio_accounts.models import UserIdentity
-from invenio_accounts.proxies import current_accounts
-from invenio_users_resources.proxies import (
-    current_groups_service as current_groups,
-    current_users_service as current_users,
-)
-import pytest
+"""Webhook view tests for remote user-data endpoints."""
+
 import json
 import os
 
-from invenio_remote_user_data_kcworks.services.service import RemoteUserDataService
+import pytest
+from flask import url_for
+from invenio_accounts.models import UserIdentity
+from invenio_accounts.proxies import current_accounts
+
 from invenio_remote_user_data_kcworks.services.group_roles import GroupRolesService
+from invenio_remote_user_data_kcworks.services.service import RemoteUserDataService
 
 
 def test_webhook_get(client, app, search_clear):
@@ -110,9 +108,9 @@ def test_webhook_post(
     db,
     search_clear,
     requests_mock,
+    celery_worker,
 ):
     """Test webhook."""
-
     # with app.app_context():
     headers = {
         "Content-Type": "application/json",
@@ -150,8 +148,9 @@ def test_webhook_post(
                 headers["Authorization"] = f"Bearer {admin.allowed_token}"
 
                 new_user = user_factory(email=v["email"])
-                new_user.roles
-                UserIdentity.create(new_user, "knowledgeCommons", v["username"])
+                UserIdentity.create(
+                    new_user.user, "knowledgeCommons", v["username"]
+                )
 
         app.logger.debug(f"admin roles: {admin.user.roles}")
         response = client.post(

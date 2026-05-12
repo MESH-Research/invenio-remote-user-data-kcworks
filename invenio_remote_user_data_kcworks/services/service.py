@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # This file is part of the invenio-remote-user-data-kcworks package.
 # Copyright (C) 2023-2026, MESH Research.
@@ -7,16 +6,14 @@
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
-import datetime
+"""Services for synchronizing remote group and user data into KCWorks."""
+
 import os
 from collections.abc import Mapping
 from pprint import pformat
-from typing import Any, cast
+from typing import Any
 
 import requests
-
-from flask import current_app
-
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import User
 from invenio_accounts.proxies import current_accounts
@@ -25,7 +22,6 @@ from invenio_group_collections_kcworks.proxies import (
 )  # noqa
 from invenio_group_collections_kcworks.service import remote_to_invenio_visibility
 from invenio_records_resources.services import Service
-from invenio_records_resources.services.base.config import ServiceConfig
 from werkzeug.local import LocalProxy
 
 from ..client import UserDataAPIClient
@@ -53,7 +49,11 @@ class RemoteGroupDataService(Service):
     def _update_community_metadata_dict(
         self, starting_dict: dict, new_data: dict
     ) -> dict:
-        """Update a dictionary of community metadata with new data."""
+        """Update a dictionary of community metadata with new data.
+
+        Returns:
+            The updated community payload.
+        """
         assert new_data["id"] == starting_dict["custom_fields"]["kcr:commons_group_id"]
 
         metadata_updates = starting_dict["metadata"]
@@ -131,6 +131,10 @@ class RemoteGroupDataService(Service):
             "deleted" if the group collection was deleted, or the
             result of the update operation if the group collection was
             updated.
+
+        Raises:
+            RuntimeError: If more than one active group collection is
+                found for the remote group.
         """
         self.require_permission(identity, "trigger_update")
         if not timeout:
@@ -225,6 +229,9 @@ class RemoteGroupDataService(Service):
 
         # FIXME: What about the case of an orphaned group collection that is
         # soft-deleted? restored?
+
+        Returns:
+            A summary of disowned communities and deleted roles.
         """
         disowned_communities = []
         deleted_roles = []
@@ -383,6 +390,8 @@ class RemoteUserDataService(Service):
             # no record found on remote server
             self.logger.warning(f"User {remote_id} not found on remote server.")
             return user, remote_data, [], {}
+
+        self.logger.debug(f"final remote data profile: {pformat(profile)}")
 
         group_changes = CILogonHelpers.calculate_group_changes(profile, user)
         user_changes, new_data = CILogonHelpers.calculate_user_changes(profile, user)

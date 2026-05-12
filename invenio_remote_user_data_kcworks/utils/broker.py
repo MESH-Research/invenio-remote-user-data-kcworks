@@ -31,7 +31,6 @@ from ..errors import (
     BrokerPayloadExpiredError,
     BrokerPayloadProcessingError,
     BrokerTokenDecryptionError,
-    BrokerTokenMissingError,
     UserDataRequestFailed,
     UserDataRequestTimeout,
 )
@@ -232,6 +231,10 @@ class BrokerHelpers:
 
         Returns:
             True if the nonce is valid, False otherwise.
+
+        Raises:
+            BrokerNonceValidationError: If nonce validation cannot be
+                completed or fails.
         """
         verify_url = app.config.get("SSO_BROKER_VERIFY_NONCE_URL")
         if not verify_url:
@@ -266,16 +269,16 @@ class BrokerHelpers:
                 app.logger.warning("Broker nonce validation failed")
                 raise BrokerNonceValidationError
 
-        except Exception:
+        except Exception as exc:
             app.logger.exception("Nonce validation request failed")
-            raise BrokerNonceValidationError
+            raise BrokerNonceValidationError from exc
 
     def _check_broker_token_age(self, expiration: int | float) -> None:
         """Raise an error if the token has expired.
 
         Raises:
-            BrokerExpiredError if the token has expired
-            BrokerExpiryValueError if the token expiry is the wrong type
+            BrokerPayloadExpiredError: If the token has expired.
+            BrokerExpiryValueError: If the token expiry is the wrong type.
         """
         try:
             if int(float(expiration)) < int(time.time()):
@@ -294,8 +297,10 @@ class BrokerHelpers:
 
         Args:
             raw_token: The undecrypted broker token string. Decoded will have the
-                required keys: userinfo (sub, email, name, idp_name, optional orcid); final_redirect;
-                kc_username; primary_email; nonce; iat; exp.. Optional: other_emails
+                required keys: `userinfo` (sub, email, name, idp_name,
+                optional orcid), `final_redirect`, `kc_username`,
+                `primary_email`, `nonce`, `iat`, and `exp`. Optional:
+                `other_emails`.
 
         Returns:
             A tuple of (user, final_redirect). user None if the payload did not

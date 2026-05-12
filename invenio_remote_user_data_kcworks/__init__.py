@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # This file is part of the invenio-remote-user-data-kcworks package.
 # Copyright (C) 2023-2026, MESH Research.
@@ -124,8 +123,9 @@ REMOTE_USER_DATA_API_ENDPOINTS
 
     A dictionary of remote ID provider names and their associated API
     information for each kind of user data. The dictionary keys are the
-    names of SAML or oath IDPs registered for remote services. For each ID provider, the value is a dictionary whose
-    keys are the different data categories ("groups", etc.).
+    names of SAML or oath IDPs registered for remote services. For each
+    ID provider, the value is a dictionary whose keys are the different
+    data categories ("groups", etc.).
 
     For each kind of user data, the value is again a dictionary shaped like this:
 
@@ -227,7 +227,6 @@ Other environment variables
 
 """
 
-from __future__ import absolute_import, print_function
 
 from .ext import InvenioRemoteUserData
 

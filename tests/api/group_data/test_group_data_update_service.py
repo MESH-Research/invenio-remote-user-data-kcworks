@@ -6,6 +6,17 @@
 
 """Tests of the group data sync service."""
 
+from invenio_access.permissions import system_identity
+from invenio_communities.proxies import current_communities
+from invenio_rdm_records.proxies import (
+    current_community_records_service,
+    current_rdm_records_service,
+)
+
+from invenio_remote_user_data_kcworks.proxies import (
+    current_remote_group_service as group_data_service,
+)
+
 
 def test_update_group_from_remote_changes_visibility_with_public_record(
     running_app,

@@ -10,6 +10,7 @@
 import contextlib
 import json
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import requests
 from celery import shared_task
@@ -33,7 +34,6 @@ from .proxies import (
 from .types.auth import AccountInfo
 from .types.profiles_api import APIResponse
 from .utils.auth import CILogonHelpers, UserIdentifierHelpers
-from .errors import NoIDPFoundError
 
 
 def _retry_at_iso(seconds_from_now: int) -> str:
@@ -186,6 +186,8 @@ def _handle_profiles_api_failure(
         reschedule_args: Positional `args` tuple to pass to
             `reschedule_task.apply_async` on the long-delay
             reschedule path.
+        send_status_callback: Whether FAILED status callbacks should be
+            emitted while retry or reschedule handling runs.
     """
     retries = self.request.retries or 0
     countdown = min(30 * (2**retries), 600)
@@ -292,12 +294,19 @@ def do_user_data_update(
         **kwargs: Reserved for future Celery options; forwarded
             unchanged to the long-delay reschedule path.
 
+    Raises:
+        LocalUserNotFoundError: If the local user row is missing during
+            `update_user_from_remote`.
+        NoIDPFoundError: If the user has no resolvable remote identity
+            provider.
+
     Returns:
         Plain dict summarizing the run (IDs, group names, group deltas, and
         optional user-field changes when the service returns a dict). Safe for
         Celery's JSON result backend; not the raw service tuple.
     """
     with app.app_context():
+        app.logger.error("Doing update task")
         if not idp:
             my_user_identity = UserIdentity.query.filter_by(
                 id_user=user_id, method=idp or "cilogon"
@@ -417,8 +426,11 @@ def do_user_data_update(
 
 @shared_task(ignore_result=False)
 def do_group_data_update(idp, remote_id, **kwargs):
-    """Perform a group metadata update."""
+    """Perform a group metadata update.
 
+    Returns:
+        ``True`` when the update completed successfully.
+    """
     with app.app_context():
         service = current_remote_group_service
         service.update_group_from_remote(system_identity, idp, remote_id)
@@ -431,7 +443,11 @@ def do_find_names_duplicates(
     since: datetime | None = None,
     full_sweep: bool = False,
 ):
-    """Find possible duplicate entries in the Names vocabulary."""
+    """Find possible duplicate entries in the Names vocabulary.
+
+    Returns:
+        The duplicate-candidate rows returned by the names-sync service.
+    """
     with app.app_context():
         result = current_names_sync_service.find_duplicate_candidates(
             limit=limit, since=since, full_sweep=full_sweep

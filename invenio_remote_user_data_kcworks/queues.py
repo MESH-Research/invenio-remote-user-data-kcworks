@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # This file is part of the invenio-remote-user-data-kcworks package.
 # Copyright (C) 2023-2026, MESH Research.
@@ -13,7 +12,11 @@ from flask import current_app
 
 
 def declare_queues():
-    """Update user data."""
+    """Declare the queues used by the extension.
+
+    Returns:
+        The queue configuration list consumed by Invenio.
+    """
     return [
         {
             "name": "user-data-updates",

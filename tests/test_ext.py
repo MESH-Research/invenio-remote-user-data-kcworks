@@ -1,4 +1,7 @@
+"""Extension initialization smoke tests."""
+
 from flask import Flask
+
 from invenio_remote_user_data_kcworks import (
     InvenioRemoteUserData,
 )

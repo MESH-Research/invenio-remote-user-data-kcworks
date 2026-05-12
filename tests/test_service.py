@@ -1,3 +1,8 @@
+"""Service-layer tests for remote user and group synchronization."""
+
+import json
+import time
+
 import pytest
 from flask import g
 from flask_security import login_user, logout_user
@@ -5,8 +10,8 @@ from invenio_access.permissions import system_identity
 from invenio_accounts.models import UserIdentity
 from invenio_accounts.proxies import current_accounts
 from invenio_accounts.testutils import login_user_via_session
-from invenio_communities.proxies import current_communities
 from invenio_communities.communities.records.api import Community
+from invenio_communities.proxies import current_communities
 from invenio_group_collections_kcworks.proxies import current_group_collections_service
 from invenio_group_collections_kcworks.utils import add_user_to_community
 from invenio_search import current_search_client
@@ -14,14 +19,15 @@ from invenio_search.engine import dsl
 from invenio_search.utils import build_alias_name
 from invenio_users_resources.proxies import current_users_service
 from invenio_utilities_tuw.utils import get_identity_for_user
-from invenio_remote_user_data_kcworks.services.group_roles import GroupRolesService
+from werkzeug.exceptions import NotFound
+
 from invenio_remote_user_data_kcworks.proxies import (
-    current_remote_user_data_service as user_data_service,
     current_remote_group_service as group_data_service,
 )
-import json
-import time
-from werkzeug.exceptions import NotFound
+from invenio_remote_user_data_kcworks.proxies import (
+    current_remote_user_data_service as user_data_service,
+)
+from invenio_remote_user_data_kcworks.services.group_roles import GroupRolesService
 
 
 @pytest.mark.parametrize(
@@ -177,7 +183,11 @@ def test_update_invenio_group_memberships(app, user_factory, db):
                 "name": "The Inklings",
                 "url": "https://hcommons-dev.org/groups/the-inklings/",
                 "visibility": "public",
-                "description": "For scholars interested in J.R.R. Tolkien, C. S. Lewis, Charles Williams, and other writers associated with the Inklings.",
+                "description": (
+                    "For scholars interested in J.R.R. Tolkien, C. S. Lewis, "
+                    "Charles Williams, and other writers associated with the "
+                    "Inklings."
+                ),
                 "avatar": "https://hcommons-dev.org/app/plugins/buddypress/bp-core/images/mystery-group.png",
                 "groupblog": "",
                 "upload_roles": ["member", "moderator", "administrator"],
@@ -197,7 +207,7 @@ def test_update_group_from_remote_mock_new(
     requests_mock,
     search_clear,
 ):
-
+    """Test updating a remote group when no local community exists."""
     base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
         "remote_endpoint"
     ]
@@ -228,13 +238,13 @@ def test_update_group_from_remote_mock_new(
                 },
                 "slug": "the-inklings",
                 "metadata": {
-                    "title": f"The Inklings Unedited",
-                    "description": f"A collection managed by the "
-                    f"The Inklings Unedited group of Knowledge Commons",
+                    "title": "The Inklings Unedited",
+                    "description": "A collection managed by the "
+                    "The Inklings Unedited group of Knowledge Commons",
                     "curation_policy": "",
-                    "page": f"This"
+                    "page": "This"
                     " is a collection of works curated by the "
-                    f"The Inklings group of Knowledge Commons",
+                    "The Inklings group of Knowledge Commons",
                     "website": "https://theinklings.org",
                     "organizations": [
                         {
@@ -287,7 +297,10 @@ def test_update_group_from_remote_mock_new(
                             "title": "The Inklings Unedited",
                             "description": "A collection managed by the The Inklings Unedited group of Knowledge Commons",  # noqa
                             "curation_policy": "",
-                            "page": "This is a collection of works curated by the The Inklings group of Knowledge Commons",
+                            "page": (
+                                "This is a collection of works curated by the "
+                                "The Inklings group of Knowledge Commons"
+                            ),
                             "website": "https://hcommons-dev.org/groups/the-inklings/",  # noqa
                             "organizations": [
                                 {"name": "The Inklings"},
@@ -332,7 +345,8 @@ def test_update_group_from_remote_with_community(
     search_clear,
     custom_fields,
 ):
-    """Note that the group title and description are *not* updated from
+    """Note that the group title and description are *not* updated.
+
     the remote group data because these may have been edited locally.
     """
     # mock the remote group data api endpoint
@@ -421,13 +435,13 @@ def test_update_group_from_remote_with_community(
                 },
                 "slug": "the-inklings",
                 "metadata": {
-                    "title": f"The Inklings Unedited",
-                    "description": f"A collection managed by the "
-                    f"The Inklings Unedited group of Knowledge Commons",
+                    "title": "The Inklings Unedited",
+                    "description": "A collection managed by the "
+                    "The Inklings Unedited group of Knowledge Commons",
                     "curation_policy": "",
-                    "page": f"This"
+                    "page": "This"
                     " is a collection of works curated by the "
-                    f"The Inklings group of Knowledge Commons",
+                    "The Inklings group of Knowledge Commons",
                     "website": "https://theinklings.org",
                     "organizations": [
                         {
@@ -485,6 +499,7 @@ def test_update_group_from_remote_with_deleted_community(
     search_clear,
     custom_fields,
 ):
+    """Test updating a remote group when the matching community is deleted."""
     base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
         "remote_endpoint"
     ]
@@ -584,6 +599,7 @@ def test_delete_group_from_remote(
     db,
     search_clear,
 ):
+    """Test deleting remote group roles when no community remains."""
     grouper = GroupRolesService(user_data_service)
     grouper.create_new_group(group_name="knowledgeCommons---1004290|admin")
     grouper.create_new_group(group_name="knowledgeCommons---1004290|member")
@@ -595,9 +611,7 @@ def test_delete_group_from_remote(
     UserIdentity.create(u, "knowledgeCommons", "testuser")
 
     grouper.add_user_to_group("knowledgeCommons---1004290|admin", user=u)
-    assert grouper.get_current_user_roles(u) == [
-        "knowledgeCommons---1004290|admin"
-    ]
+    assert grouper.get_current_user_roles(u) == ["knowledgeCommons---1004290|admin"]
 
     actual = group_data_service.delete_group_from_remote(
         "knowledgeCommons", "1004290", "The Inklings"
@@ -611,9 +625,7 @@ def test_delete_group_from_remote(
         is None
     )
 
-    assert "knowledgeCommons---1004290|admin" not in grouper.get_current_user_roles(
-        u
-    )
+    assert "knowledgeCommons---1004290|admin" not in grouper.get_current_user_roles(u)
 
     assert actual == {
         "disowned_communities": [],
@@ -658,13 +670,13 @@ def test_delete_group_from_remote(
                 },
                 "slug": "the-inklings",
                 "metadata": {
-                    "title": f"The Inklings Unedited",
-                    "description": f"A collection managed by the "
-                    f"The Inklings Unedited group of Knowledge Commons",
+                    "title": "The Inklings Unedited",
+                    "description": "A collection managed by the "
+                    "The Inklings Unedited group of Knowledge Commons",
                     "curation_policy": "",
-                    "page": f"This"
+                    "page": "This"
                     " is a collection of works curated by the "
-                    f"The Inklings group of Knowledge Commons",
+                    "The Inklings group of Knowledge Commons",
                     "website": "https://theinklings.org",
                     "organizations": [
                         {
@@ -717,7 +729,10 @@ def test_delete_group_from_remote(
                             "title": "The Inklings Unedited",
                             "description": "A collection managed by the The Inklings Unedited group of Knowledge Commons",  # noqa
                             "curation_policy": "",
-                            "page": "This is a collection of works curated by the The Inklings group of Knowledge Commons",
+                            "page": (
+                                "This is a collection of works curated by the "
+                                "The Inklings group of Knowledge Commons"
+                            ),
                             "website": "https://hcommons-dev.org/groups/the-inklings/",  # noqa
                             "organizations": [
                                 {"name": "The Inklings"},
@@ -767,6 +782,7 @@ def test_delete_group_from_remote_with_community(
     search_clear,
     custom_fields,
 ):
+    """Test deleting a remote group while preserving disowned communities."""
     # mocker remote group data api endpoint
     base_url = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]["groups"][
         "remote_endpoint"
@@ -811,9 +827,7 @@ def test_delete_group_from_remote_with_community(
     UserIdentity.create(u, "knowledgeCommons", "testuser")
 
     grouper.add_user_to_group("knowledgeCommons---1004290|admin", user=u)
-    assert grouper.get_current_user_roles(u) == [
-        "knowledgeCommons---1004290|admin"
-    ]
+    assert grouper.get_current_user_roles(u) == ["knowledgeCommons---1004290|admin"]
     assert len(u.roles)
 
     # create a second user to be an individual member
@@ -839,9 +853,7 @@ def test_delete_group_from_remote_with_community(
     )
 
     # confirm that the user was removed from the group
-    assert "knowledgeCommons---1004290|admin" not in grouper.get_current_user_roles(
-        u
-    )
+    assert "knowledgeCommons---1004290|admin" not in grouper.get_current_user_roles(u)
 
     # confirm that the user is an individual member of the community
     user_memberships = current_communities.service.members.read_memberships(u)

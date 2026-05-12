@@ -22,7 +22,11 @@ from .views import (
 
 
 def create_api_blueprint(app):
-    """Register blueprint on api app."""
+    """Register the API blueprint on the API app.
+
+    Returns:
+        The configured API blueprint.
+    """
     with app.app_context():
         blueprint = Blueprint(
             "invenio_remote_user_data_kcworks",
@@ -129,7 +133,11 @@ def create_api_blueprint(app):
 
 
 def create_sso_blueprint(app):
-    """Blueprint for explicit broker callback routing."""
+    """Create the explicit broker-callback blueprint.
+
+    Returns:
+        The configured SSO blueprint.
+    """
     # `app` is unused but kept for consistency with other factories.
     _ = app
     blueprint = Blueprint(

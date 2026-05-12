@@ -129,6 +129,9 @@ def _load_vendored_equivalence_index() -> dict[str, frozenset[str]]:
     The canonical column is treated as the root; every variant is
     indexed back to that root, and the canonical is also indexed to
     itself. Two tokens are equivalent iff their root sets intersect.
+
+    Returns:
+        An inverted index mapping each token to its canonical-root set.
     """
     index: dict[str, set[str]] = defaultdict(set)
     resource = files(_VENDORED_VARIANTS_PACKAGE).joinpath(_VENDORED_VARIANTS_FILENAME)
@@ -167,6 +170,9 @@ def _pairs_to_index(
     transitively closed across pairs. This preserves the prior
     `frozenset({a, b}) in equivalence_pairs` semantics: tokens are
     equivalent only if they appear together in some explicit pair.
+
+    Returns:
+        An inverted index mapping each token to its synthetic-root set.
     """
     by_token: dict[str, set[str]] = defaultdict(set)
     for pair in pairs:

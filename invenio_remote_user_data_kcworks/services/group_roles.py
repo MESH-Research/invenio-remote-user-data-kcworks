@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 #
 # This file is part of the invenio-remote-user-data-kcworks package.
 # Copyright (C) 2023, MESH Research.
@@ -26,11 +25,18 @@ class GroupRolesService:
     """Service for group roles (Invenio roles used as groups)."""
 
     def __init__(self, service=None, *args, **kwargs):
-        """Initialize. Service argument is optional and unused (for API compatibility)."""
+        """Initialize the service.
+
+        The ``service`` argument is accepted for API compatibility and is unused.
+        """
         pass
 
     def get_roles_for_remote_group(self, remote_group_id: str, idp: str) -> list[Role]:
-        """Get the Invenio roles for a remote group."""
+        """Get the Invenio roles for a remote group.
+
+        Returns:
+            The local roles mapped to the remote group.
+        """
         query_string = f"{idp}---{remote_group_id}|"
 
         query = current_accounts.datastore.role_model.query.filter(
@@ -43,12 +49,23 @@ class GroupRolesService:
 
     @staticmethod
     def get_current_members_of_group(group_name: str) -> list[User]:
-        """Fetch a list of the users assigned the given group role."""
+        """Fetch the users assigned the given group role.
+
+        Returns:
+            The users currently assigned to the role.
+        """
         my_group_role = current_accounts.datastore.find_role(group_name)
         return [user for user in my_group_role.users]
 
     def get_current_user_roles(self, user: str | User) -> list[Role]:
-        """Get the current roles for a user."""
+        """Get the current roles for a user.
+
+        Returns:
+            The current roles assigned to the user.
+
+        Raises:
+            RuntimeError: If the user cannot be found.
+        """
         if isinstance(user, str):
             return_user = current_accounts.datastore.find_user(email=user)
         else:
@@ -58,7 +75,14 @@ class GroupRolesService:
         return cast("list[Role]", list(cast(Iterable[Any], return_user.roles)))
 
     def find_or_create_group(self, group_name: str, **kwargs) -> Role | None:
-        """Search for a group with a given name and create it if it doesn't exist."""
+        """Find or create a group with the given name.
+
+        Returns:
+            The existing or newly created role.
+
+        Raises:
+            RuntimeError: If the role cannot be found or created.
+        """
         my_group_role = current_accounts.datastore.find_or_create_role(
             name=group_name, **kwargs
         )
@@ -70,7 +94,14 @@ class GroupRolesService:
         return my_group_role
 
     def create_new_group(self, group_name: str, **kwargs) -> Role | None:
-        """Create a new group with the given name (and optional parameters)."""
+        """Create a new group with the given name.
+
+        Returns:
+            The newly created role.
+
+        Raises:
+            RuntimeError: If the role cannot be created.
+        """
         my_group_role = current_accounts.datastore.create_role(
             name=group_name, **kwargs
         )
@@ -85,7 +116,10 @@ class GroupRolesService:
         """Delete a group role with the given name.
 
         Returns:
-            bool: True if the group was deleted successfully, otherwise False.
+            True if the group was deleted successfully, otherwise ``False``.
+
+        Raises:
+            RuntimeError: If the role cannot be found or deleted.
         """
         deleted = False
         my_group_role = current_accounts.datastore.find_role(group_name)
@@ -101,11 +135,20 @@ class GroupRolesService:
                 app.logger.error(a)
                 deleted = True
             except Exception as e:
-                raise RuntimeError(f'Role "{group_name}" not deleted. {pformat(e)}')
+                raise RuntimeError(
+                    f'Role "{group_name}" not deleted. {pformat(e)}'
+                ) from e
         return deleted
 
     def add_user_to_group(self, group_name: str, user: User, **kwargs) -> bool:
-        """Add a user to a group."""
+        """Add a user to a group.
+
+        Returns:
+            ``True`` when the user was added successfully.
+
+        Raises:
+            RuntimeError: If the user could not be added to the role.
+        """
         app.logger.debug(f"got group name {group_name}")
         user_added = current_accounts.datastore.add_role_to_user(user, group_name)
         current_accounts.datastore.commit()
@@ -119,7 +162,11 @@ class GroupRolesService:
         return user_added
 
     def find_group(self, group_name: str) -> Role | None:
-        """Find a group role with the given name."""
+        """Find a group role with the given name.
+
+        Returns:
+            The matching role, if found.
+        """
         my_group_role = current_accounts.datastore.find_role(group_name)
         if my_group_role is None:
             app.logger.debug(f'Role "{group_name}" not found.')
@@ -136,6 +183,10 @@ class GroupRolesService:
             group_name: The name of the group to remove the user from,
                 or the Role object for the group.
             user: The user object to remove from the group, or the user's email.
+            **kwargs: Accepted for API compatibility and ignored.
+
+        Returns:
+            ``True`` if the role was removed from the user.
         """
         user = (
             user

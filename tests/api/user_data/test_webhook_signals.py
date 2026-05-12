@@ -34,7 +34,6 @@ def test_webhook_post_publishes_update_signal(
     oauth_sub = "oauth-sub-webhook-test"
     u = user_factory(
         email="webhook-signal-test@example.com",
-        oauth_src="knowledgeCommons",
         oauth_id=oauth_sub,
         kc_username="kc_webhook_user",
     )
@@ -96,7 +95,6 @@ def test_webhook_post_publishes_create_signal(
     oauth_sub = "oauth-sub-webhook-test"
     u = user_factory(
         email="webhook-signal-test@example.com",
-        oauth_src="knowledgeCommons",
         oauth_id=oauth_sub,
         kc_username="kc_webhook_user",
     )

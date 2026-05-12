@@ -40,9 +40,7 @@ from flask import Flask
 from invenio_app.factory import create_api as _create_app
 from invenio_files_rest.models import Location
 from invenio_queues import current_queues
-from invenio_search.proxies import current_search_client
 from marshmallow import Schema, fields
-from opensearchpy import OpenSearch
 
 from tests.env_defaults import PYTEST_DEFAULT_COMMONS_PROFILES_API_TOKEN
 from tests.fixtures.idms import register_idms_static_api_token_before_request
@@ -50,11 +48,13 @@ from tests.fixtures.idms import register_idms_static_api_token_before_request
 from .fixtures.custom_fields import test_config_fields
 from .fixtures.frontend import MockManifestLoader
 from .fixtures.identifiers import test_config_identifiers
+from .fixtures.logging import log_folder_path, test_config_logging
 from .fixtures.names import VOCABULARIES_NAMES_SCHEMES
 
 pytest_plugins = (
     "celery.contrib.pytest",
     # "tests.fixtures.caching",  # depends on invenio-stats-dashboard
+    "tests.fixtures.bootstrap",
     "tests.fixtures.cli",
     "tests.fixtures.communities",
     "tests.fixtures.community_events",
@@ -64,10 +64,12 @@ pytest_plugins = (
     "tests.fixtures.frontend",
     "tests.fixtures.identifiers",
     "tests.fixtures.idms",
+    "tests.fixtures.logging",
     "tests.fixtures.mail",
     "tests.fixtures.names",
     "tests.fixtures.records",
     "tests.fixtures.roles",
+    "tests.fixtures.search",
     "tests.fixtures.search_provisioning",
     # "tests.fixtures.stats",
     "tests.fixtures.uow",
@@ -122,10 +124,11 @@ def _(x: Any) -> Any:
 test_config: dict[str, Any] = {
     **test_config_identifiers,
     **test_config_fields,
+    **test_config_logging,
     "VOCABULARIES_NAMES_SCHEMES": VOCABULARIES_NAMES_SCHEMES,
     # --- IDMS ---------------------------------------------------------------
     "IDMS_BASE_API_URL": "https://profile.hcommons-dev.org/",
-    "KC_REMOTE_IDPS": ["knowledgeCommons", "cilogon"],
+    "KC_REMOTE_IDPS": ["cilogon"],  # "cilogon" *must* be the first value
     "SSO_BROKER_LOGIN_URL": "https://profile.hcommons-dev.org/login/",
     "SSO_BROKER_SILENT_LOGIN_URL": (
         "https://profile.hcommons-dev.org/broker/silent-login/"
@@ -263,19 +266,6 @@ test_config["REMOTE_USER_DATA_API_ENDPOINTS"] = {
     },
 }
 
-# --- Logging ---------------------------------------------------------------
-parent_path = Path(__file__).parent
-log_folder_path = parent_path / "test_logs"
-log_file_path = log_folder_path / "invenio.log"
-if not log_file_path.exists():
-    log_file_path.parent.mkdir(parents=True, exist_ok=True)
-    log_file_path.touch()
-
-test_config["LOGGING_FS_LEVEL"] = "DEBUG"
-test_config["LOGGING_FS_LOGFILE"] = str(log_file_path)
-test_config["LOGGING_CONSOLE_LEVEL"] = "DEBUG"
-test_config["CELERY_LOGFILE"] = str(log_folder_path / "celery.log")
-
 # --- DataCite (faked) ------------------------------------------------------
 test_config["DATACITE_ENABLED"] = True
 test_config["DATACITE_USERNAME"] = "INVALID"
@@ -293,7 +283,9 @@ test_config["SITE_UI_URL"] = os.environ.get("INVENIO_SITE_UI_URL", "http://local
 
 @pytest.fixture(scope="session")
 def celery_config(celery_config) -> dict:
-    """Celery config fixture for invenio-remote-user-data-kcworks.
+    """Celery app config fixture for invenio-remote-user-data-kcworks.
+
+    NOTE: This doesn't configure individual workers. Just the celery app.
 
     Returns:
         dict: Celery configuration dictionary.
@@ -306,16 +298,6 @@ def celery_config(celery_config) -> dict:
     celery_config["task_eager_propagates_exceptions"] = True
 
     return dict(celery_config)
-
-
-@pytest.fixture(scope="session")
-def celery_enable_logging() -> bool:
-    """Enable Celery logging for tests.
-
-    Returns:
-        bool: True to enable Celery logging.
-    """
-    return True
 
 
 @pytest.yield_fixture(scope="module")
@@ -353,20 +335,6 @@ RunningApp = namedtuple(
         "app",
         "location",
         "cache",
-        "affiliations_v",
-        "awards_v",
-        "community_type_v",
-        "contributors_role_v",
-        "creators_role_v",
-        "date_type_v",
-        "description_type_v",
-        "funders_v",
-        "language_v",
-        "licenses_v",
-        # "relation_type_v",
-        "resource_type_v",
-        "subject_v",
-        "title_type_v",
         "create_communities_custom_fields",
         "create_records_custom_fields",
     ],
@@ -378,20 +346,6 @@ def running_app(
     app,
     location,
     cache,
-    affiliations_v,
-    awards_v,
-    community_type_v,
-    contributors_role_v,
-    creators_role_v,
-    date_type_v,
-    description_type_v,
-    funders_v,
-    language_v,
-    licenses_v,
-    # relation_type_v,
-    resource_type_v,
-    subject_v,
-    title_type_v,
     create_communities_custom_fields,
     create_records_custom_fields,
 ) -> RunningApp:
@@ -407,44 +361,9 @@ def running_app(
         app,
         location,
         cache,
-        affiliations_v,
-        awards_v,
-        community_type_v,
-        contributors_role_v,
-        creators_role_v,
-        date_type_v,
-        description_type_v,
-        funders_v,
-        language_v,
-        licenses_v,
-        # relation_type_v,
-        resource_type_v,
-        subject_v,
-        title_type_v,
         create_communities_custom_fields,
         create_records_custom_fields,
     )
-
-
-@pytest.fixture(scope="function")
-def search_clear(search_clear) -> Generator[OpenSearch, None, None]:
-    """Clear search indices and templates between tests (function scope).
-
-    Extends the `pytest_invenio.search_clear` fixture to also drop stats
-    indices/templates and to flush the community identity cache before each
-    test (preventing stale role data leaking across tests).
-
-    Yields:
-        The OpenSearch client (same as the base `search_clear` fixture).
-    """
-    from invenio_communities.proxies import current_identities_cache
-
-    current_identities_cache.flush()
-
-    yield search_clear
-
-    current_search_client.indices.delete("*stats*", ignore=[404])
-    current_search_client.indices.delete_template("*stats*", ignore=[404])
 
 
 @pytest.fixture(scope="module")
@@ -497,6 +416,7 @@ def app(
     app_config,
     database,
     search,
+    bootstrap_vocabularies,
     template_loader,
     admin_roles,
 ) -> Generator[Flask, None, None]:
@@ -510,7 +430,8 @@ def app(
     Yields:
         Flask: The Flask application instance.
     """
-    current_queues.declare()
+    with app.app_context():
+        current_queues.declare()
     template_loader(app)
     register_idms_static_api_token_before_request(app)
     yield app

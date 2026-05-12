@@ -1,7 +1,8 @@
 # Part of package Invenio-Remote-User-Data-KCWorks
 # Copyright (C) 2023-2026, MESH Research
 #
-# package Invenio-Remote-User-Data-KCWorks is free software; you can redistribute and/or modify it
+# package Invenio-Remote-User-Data-KCWorks is free software; you can
+# redistribute and/or modify it
 # under the terms of the MIT License; see LICENSE file for more details.
 
 """Public type and model exports for invenio-remote-user-data-kcworks."""
@@ -29,8 +30,8 @@ from .orcid import (
     OrcidRecord,
 )
 from .profiles_api import (
-    APIResponse,
     AcademicInterest,
+    APIResponse,
     Group,
     LogoutRequest,
     Meta,

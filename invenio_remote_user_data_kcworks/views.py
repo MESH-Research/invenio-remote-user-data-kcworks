@@ -7,7 +7,6 @@
 
 """HTTP views for SSO broker flows and remote user-data webhooks."""
 
-import time
 from typing import Any, NoReturn, cast
 from urllib.parse import urlencode
 
@@ -29,15 +28,16 @@ from invenio_accounts.models import User, UserIdentity
 from invenio_accounts.sessions import delete_user_sessions
 from invenio_db import db
 from invenio_queues.proxies import current_queues
-from invenio_remote_user_data_kcworks.proxies import (
-    current_remote_user_data_service,
-)
 from werkzeug.exceptions import (
     BadRequest,
     MethodNotAllowed,
     NotFound,
 )
 from werkzeug.local import LocalProxy
+
+from invenio_remote_user_data_kcworks.proxies import (
+    current_remote_user_data_service,
+)
 
 from .errors import (
     BrokerExpiryValueError,
@@ -122,13 +122,8 @@ def _sso_broker_callback() -> Response:
     Raises:
         BrokerTokenMissingError: If neither broker_token nor no_session
             is present.
-        BrokerTokenDecryptionError: If the token cannot be decrypted.
-        BrokerPayloadExpiredError: If the token payload is expired.
-        BrokerExpiryValueError: If the expiry value is invalid.
-        BrokerNonceValidationError: If the nonce is missing or invalid.
         BrokerPayloadProcessingError: If the user cannot be resolved from
             the payload.
-        UserCreationFailed: If new user creation fails.
         UserDataRequestTimeout: Propagated from profile fetch.
         UserDataRequestFailed: Propagated from profile fetch.
     """
@@ -341,7 +336,6 @@ class RemoteUserDataUpdateWebhook(MethodView):
         current_remote_user_data_service.require_permission(
             g.identity, "trigger_update"
         )
-
         try:
             data = request.get_json()
             idp = data["idp"]

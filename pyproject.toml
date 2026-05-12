@@ -46,8 +46,8 @@ optional-dependencies.tests = [
   "pytest-cov>=6.2.1",
   "pytest-invenio>=3.3,<4",
   "pytest-mock",
-  "pytest-runner",
   "pytest-ruff>=0.1",
+  "pytest-runner",
   "requests-mock",
   "ruff>=0.3",
   "ty",
@@ -57,18 +57,15 @@ scripts.user-data = "invenio_remote_user_data_kcworks.cli.main:cli"
 entry-points."flask.commands".user-data = "invenio_remote_user_data_kcworks.cli.main:cli"
 entry-points."invenio_base.api_apps".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:InvenioRemoteUserData"
 entry-points."invenio_base.api_blueprints".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.blueprints:create_api_blueprint"
+entry-points."invenio_base.api_finalize_app".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:api_finalize_app"
 entry-points."invenio_base.apps".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:InvenioRemoteUserData"
 entry-points."invenio_base.blueprints".invenio_remote_user_data_kcworks_sso = "invenio_remote_user_data_kcworks.blueprints:create_sso_blueprint"
+entry-points."invenio_base.finalize_app".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:finalize_app"
 entry-points."invenio_celery.tasks".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.tasks"
 entry-points."invenio_queues.queues".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.queues:declare_queues"
-entry-points."invenio_base.finalize_app".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:finalize_app"
-entry-points."invenio_base.api_finalize_app".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:api_finalize_app"
 
 [dependency-groups]
-dev = [
-    "bumpver>=2025.1131",
-    "pytest-timeout>=2.4.0",
-]
+dev = ["bumpver>=2025.1131", "pytest-timeout>=2.4"]
 
 [tool.setuptools]
 package-data.invenio_remote_user_data_kcworks = [
@@ -165,9 +162,7 @@ rules.unresolved-import = "ignore"
 # allow_untyped_globals = true → don't error on undeclared globals
 rules.unresolved-global = "ignore"
 # Don't type-check tests or vendored helpers.
-src.exclude = [
-  "tests",
-]
+src.exclude = ["tests"]
 
 [tool.pytest]
 ini_options.addopts = """
@@ -180,9 +175,45 @@ ini_options.addopts = """
 --cov-report=term-missing
 """
 ini_options.norecursedirs = []
+ini_options.log_cli = true
 ini_options.log_cli_level = "DEBUG"
 ini_options.isort_show_files = true
-ini_options.plugins = []
+ini_options.plugins = [
+  "celery.contrib.pytest",
+  # "tests.fixtures.caching",  # depends on invenio-stats-dashboard
+  "tests.fixtures.bootstrap",
+  "tests.fixtures.cli",
+  "tests.fixtures.communities",
+  "tests.fixtures.community_events",
+  "tests.fixtures.custom_fields",
+  "tests.fixtures.files",
+  "tests.fixtures.fixtures",
+  "tests.fixtures.frontend",
+  "tests.fixtures.identifiers",
+  "tests.fixtures.idms",
+  "tests.fixtures.logging",
+  "tests.fixtures.mail",
+  "tests.fixtures.names",
+  "tests.fixtures.records",
+  "tests.fixtures.roles",
+  "tests.fixtures.search",
+  "tests.fixtures.search_provisioning",
+  # "tests.fixtures.stats",
+  "tests.fixtures.uow",
+  "tests.fixtures.users",
+  "tests.fixtures.vocabularies.affiliations",
+  "tests.fixtures.vocabularies.community_types",
+  "tests.fixtures.vocabularies.date_types",
+  "tests.fixtures.vocabularies.descriptions",
+  "tests.fixtures.vocabularies.funding_and_awards",
+  "tests.fixtures.vocabularies.languages",
+  "tests.fixtures.vocabularies.licenses",
+  "tests.fixtures.vocabularies.resource_types",
+  "tests.fixtures.vocabularies.roles",
+  "tests.fixtures.vocabularies.subjects",
+  "tests.fixtures.vocabularies.title_types",
+  "tests.pytest_plugins.pytest_live_status",
+]
 ini_options.testpaths = ["tests", "invenio_remote_user_data_kcworks"]
 
 [tool.coverage]

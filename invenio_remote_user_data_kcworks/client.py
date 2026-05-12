@@ -163,31 +163,34 @@ class UserDataAPIClient:
     ) -> APIResponse | Profile | None:
         """Fetch user profile data from the API endpoint.
 
-        Note that this function returns None if the API request failed or the response
-        cannot be parsed. If the user was not found it will *still* return an APIResponse
-        or Profile object:
+        Note that this function returns `None` if the API request failed or the
+        response cannot be parsed. If the user was not found it will *still*
+        return an `APIResponse` or `Profile` object:
             APIResponse - the `data` property will be an empty list
-            Profile - there will be no `results` property and `meta.error.message` will
-                read "User not found".
+            Profile - there will be no `results` property and
+                `meta.error.message` will read `"User not found"`.
 
         Args:
             sub_id: The subject ID to query for (exclusive of kc_username)
             kc_username: The username to query for (exclusive of sub_id)
             timeout: The timeout duration for the API request in seconds (default 10).
-            use_sub_endpoint: A flag to indicate that a request using the kc_username should
-              be made to the sub endpoint rather than the members endpoint. This does nothing
-              if a sub_id is supplied. If a kc_username is supplied it overrides the default
-              behaviour that uses the members endpoint.
+            use_sub_endpoint: A flag indicating that a request using the
+                `kc_username` should be made to the sub endpoint rather than
+                the members endpoint. This does nothing if a `sub_id` is
+                supplied. If a `kc_username` is supplied it overrides the
+                default behavior that uses the members endpoint.
 
         Raises:
+            ValueError: If neither `sub_id` nor `kc_username` is provided, if
+                both are provided, or if the bearer token is missing.
             requests.Timeout: If the request to the profiles user data API fails to
                 yield a timely response.
             requests.RequestException: If there were other kinds of errors communicating
                 with the user data API (e.g., connection problems).
 
         Returns:
-            APIResponse | Profile | None: Parsed response data or None if the API request
-                fails or the response cannot be parsed.
+            APIResponse | Profile | None: Parsed response data or `None` if
+                the API request fails or the response cannot be parsed.
         """
         if not timeout:
             timeout = app.config.get("REMOTE_USER_DATA_API_TIMEOUT", 5)
@@ -242,7 +245,7 @@ class UserDataAPIClient:
             message = "API request for user data failed"
             app.logger.error(message)
             raise e
-        except Exception as e:
+        except Exception:
             message = "Error parsing api response from user data endpoint"
             app.logger.error(message)
             return None
@@ -286,7 +289,8 @@ class UserDataAPIClient:
 
         Args:
             user_name: The username of the user logging out
-            timeout: The timeout duration in seconds for the logout signal request. (Optional)
+            timeout: The timeout duration in seconds for the logout signal
+                request. Optional.
 
         Returns:
             True if successful, False otherwise

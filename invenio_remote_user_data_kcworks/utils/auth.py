@@ -44,6 +44,9 @@ class UserIdentifierHelpers:
         canonical Profiles-side username) and falls back to
         `user.username` for legacy local accounts where the profile
         field was never populated. Returns `None` when both are empty.
+
+        Returns:
+            The resolved KC username, or `None`.
         """
         if user is None:
             return None
@@ -204,9 +207,12 @@ class CILogonHelpers:
             app.logger.debug("User found by KC username")
             return user
         elif isinstance(user, list):
-            app.logger.error(
-                f"Multiple users found with KC username {account_info.kc_username}"
-            )
+            if len(user) == 1:
+                user = user[0]
+            else:
+                app.logger.error(
+                    f"Multiple users found with KC username {account_info.kc_username}"
+                )
 
         # Try email lookup
         app.logger.debug(pformat(account_info.model_dump()))
@@ -605,6 +611,10 @@ class CILogonHelpers:
     def create_new_user(result: APIResponse | Profile) -> User:
         """Create a new user.
 
+        Raises:
+            UserCreationFailed: If the payload cannot be converted into a
+                local user.
+
         Returns:
             User: An invenio_accounts User object.
         """
@@ -623,7 +633,7 @@ class CILogonHelpers:
                 send_register_msg=True, **user_info
             )
             return user
-        except (TypeError, IndexError, AttributeError):
+        except (TypeError, IndexError, AttributeError) as exc:
             raise UserCreationFailed(
                 "CILogonHelpers.create_new_user received unprocessable data."
-            )
+            ) from exc

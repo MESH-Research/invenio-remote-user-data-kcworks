@@ -1,7 +1,8 @@
 # Part of invenio-remote-user-data-kcworks
 # Copyright (C) 2023-2026, MESH Research
 #
-# invenio-remote-user-data-kcworks is free software; you can redistribute and/or modify it
+# invenio-remote-user-data-kcworks is free software; you can redistribute
+# and/or modify it
 # under the terms of the MIT License; see LICENSE file for more details.
 
 
@@ -22,7 +23,6 @@ with the task id; without the flag, the work runs synchronously inside
 the CLI process.
 """
 
-import re
 from datetime import datetime
 from pprint import pprint
 
@@ -323,14 +323,14 @@ def find_duplicates_cmd(
     marked dismissed (via `dismiss-duplicate`) are suppressed from the
     output.
     """
-
     if background:
         async_result = do_find_names_duplicates.delay(
             limit=limit, since=since, full_sweep=full_sweep
         )
         click.echo(
-            f"Queued duplicate finding task: {async_result.id}. Possible duplicate pairs "
-            "will be marked on the Names vocabulary items concerned."
+            "Queued duplicate finding task: "
+            f"{async_result.id}. Possible duplicate pairs will be marked on "
+            "the Names vocabulary items concerned."
         )
         return
     rows = names_sync_service.find_duplicate_candidates(

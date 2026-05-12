@@ -43,14 +43,18 @@ def test_user_data_webhook_full_sync_workflow(
         new_remote_data=profile_data,
     )
     user_id = u.user.id
+
+    # ensure we have a clear start
+    assert u.user.user_profile == {"identifier_kc_username": "user1"}
     for mock_adapter in u.mock_adapter_subs, u.mock_adapter_members:
         assert mock_adapter is not None
         assert not mock_adapter.called
         assert mock_adapter.call_count == 0
 
+    # ensure webhook is receiving
     with app.app_context():
         ping_url = url_for(
-            "invenio_remote_user_data_kcworks.remote_user_data_kcworks_webhook_deprecated",
+            "invenio_remote_user_data_kcworks.remote_user_data_kcworks_webhook",
         )
     response = client.get(ping_url)
     assert response.status_code == 200
@@ -58,15 +62,11 @@ def test_user_data_webhook_full_sync_workflow(
         "message": "Webhook receiver is active",
         "status": 200,
     }
-    assert not u.mock_adapter_subs.called
-    assert u.mock_adapter_subs.call_count == 0
-    assert not u.mock_adapter_members.called
-    assert u.mock_adapter_members.call_count == 0
 
     with patch("invenio_accounts.utils.current_user"):
         with app.app_context():
             post_url = url_for(
-                "invenio_remote_user_data_kcworks.remote_user_data_kcworks_webhook_deprecated",
+                "invenio_remote_user_data_kcworks.remote_user_data_kcworks_webhook",
             )
         response2 = client.post(
             post_url,
@@ -101,6 +101,11 @@ def test_user_data_webhook_full_sync_workflow(
     assert u.mock_adapter_subs.called
     assert u.mock_adapter_subs.call_count == 1
     assert not u.mock_adapter_members.called
+
+    # Celery task updates the user in another db session;
+    # expire the test session's cached user so get_user_by_email
+    # loads fresh data from the DB.
+    db.session.expire(u.user)
 
     user = current_accounts.datastore.get_user_by_id(user_id)
     assert user.email == profile_data["email"]

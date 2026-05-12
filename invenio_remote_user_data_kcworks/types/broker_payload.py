@@ -15,7 +15,10 @@ from .auth import AccountInfo
 
 
 class BrokerDecodedUserinfo(BaseModel):
-    """Nested userinfo object from the Profiles broker token (observed wire shape)."""
+    """Nested userinfo object from the Profiles broker token.
+
+    This models the observed wire shape only.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
@@ -50,8 +53,12 @@ class BrokerDecodedToken(BaseModel):
         """Preferred email: primary_email, falling back to userinfo.email."""
         return self.primary_email or self.userinfo.email
 
-    def to_account_info(self):
-        """Build an AccountInfo model based on this data"""
+    def to_account_info(self) -> AccountInfo:
+        """Build an `AccountInfo` model from the decoded token.
+
+        Returns:
+            The normalized account info derived from the broker token.
+        """
         info = AccountInfo(
             external_id=self.userinfo.sub,
             email=self.resolved_email,

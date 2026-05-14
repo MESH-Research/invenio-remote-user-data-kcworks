@@ -1,11 +1,9 @@
 """Webhook view tests for remote user-data endpoints."""
 
 import json
-import os
 
 import pytest
 from flask import url_for
-from invenio_accounts.models import UserIdentity
 from invenio_accounts.proxies import current_accounts
 
 from invenio_remote_user_data_kcworks.services.group_roles import GroupRolesService
@@ -42,8 +40,14 @@ def test_webhook_get(client, app, search_clear):
                 },
             },
             {},
-            400,  # Unauthorized gets "CSRF cookie not set." message
-            {"message": "CSRF cookie not set.", "status": 400},
+            403,
+            {
+                "error": "Forbidden",
+                "message": (
+                    "The user does not have permission to perform this action."
+                ),
+                "status": 403,
+            },
         ),
         (
             {
@@ -117,40 +121,18 @@ def test_webhook_post(
         "Accept": "application/json",
     }
 
-    remote_api_token = os.getenv("COMMONS_API_TOKEN")
-    # mock admin user data for the token login
-    requests_mock.get(
-        "https://hcommons-dev.org/wp-json/commons/v1/users/myuser",
-        headers={"Authorization": f"Bearer {remote_api_token}"},
-        json={
-            "username": "myuser",
-            "email": "myuser@hcommons.org",
-            "name": "My User",
-            "first_name": "My",
-            "last_name": "User",
-            "institutional_affiliation": "Michigan State University",
-            "orcid": "0000-0002-1825-0100",
-            "groups": [],
-        },
-    )
-
     with app.test_client() as client:
         for key, value in callback_responses.items():
             for v in value:
-                requests_mock.get(
-                    # "https://hcommons-dev.org/wp-json/commons/v1/users/joeuser",
-                    f"https://hcommons-dev.org/wp-json/commons/v1/{key}"
-                    f"/{v['username']}",
-                    headers={"Authorization": f"Bearer {remote_api_token}"},
-                    json=v,
-                )
-
                 headers["Authorization"] = f"Bearer {admin.allowed_token}"
-
-                new_user = user_factory(email=v["email"])
-                UserIdentity.create(
-                    new_user.user, "knowledgeCommons", v["username"]
-                )
+                if key == "users":
+                    user_factory(
+                        email=v["email"],
+                        oauth_src="cilogon",
+                        oauth_id=v["username"],
+                        kc_username=v["username"],
+                        new_remote_data=v,
+                    )
 
         app.logger.debug(f"admin roles: {admin.user.roles}")
         response = client.post(
@@ -171,6 +153,7 @@ def test_webhook_post(
                     # myuser = current_users.search(
                     #     system_identity, q=f"email:{v['email']}"
                     # ).to_dict()["hits"]["hits"]
+                    db.session.expire_all()
                     myuser = current_accounts.datastore.find_user(email=v["email"])
                     app.logger.debug(f"myuser: {myuser}")
                     assert myuser.email == v["email"]
@@ -179,7 +162,7 @@ def test_webhook_post(
                         myuser.user_profile["affiliations"]
                         == (v["institutional_affiliation"])
                     )
-                    assert json.dumps(myuser.user_profile["name_parts"]) == {
+                    assert json.loads(myuser.user_profile["name_parts"]) == {
                         "first": v["first_name"],
                         "last": v["last_name"],
                     }

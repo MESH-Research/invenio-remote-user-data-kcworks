@@ -22,10 +22,12 @@ differences from the root KCWorks `conftest.py`:
    that can be useful for these tests are listed below as commented
    placeholders so a contributor can flip them on without hunting.
 
-Per the agreed plan, all the bespoke `COMMUNITIES_*` overrides and
-duplicate vocabulary/user/role fixtures previously defined here have
-been removed in favour of the shared fixture modules vendored from
-`kcworks-test-fixtures` (the `tests/fixtures` submodule).
+Per the agreed plan, duplicate vocabulary/user/role fixtures previously
+defined here were removed in favour of the shared fixture modules vendored
+from `kcworks-test-fixtures` (the `tests/fixtures` submodule). One
+`COMMUNITIES_SERVICE_COMPONENTS` override remains so API-only tests match
+KCWorks community visibility behaviour without loading the full KCWorks
+extension.
 """
 
 import os
@@ -38,8 +40,16 @@ import jinja2
 import pytest
 from flask import Flask
 from invenio_app.factory import create_api as _create_app
-from invenio_files_rest.models import Location
+from invenio_communities.communities.services.components import (
+    CommunityAccessComponent as BaseCommunityAccessComponent,
+)
 from invenio_queues import current_queues
+from invenio_rdm_records.services.communities.components import (
+    CommunityAccessComponent as RDMCommunityAccessComponent,
+)
+from invenio_rdm_records.services.communities.components import (
+    CommunityServiceComponents,
+)
 from marshmallow import Schema, fields
 
 from tests.env_defaults import PYTEST_DEFAULT_COMMONS_PROFILES_API_TOKEN
@@ -93,18 +103,18 @@ pytest_plugins = (
 def _commons_profiles_api_token_default() -> None:
     """Set a dummy Profiles bearer token when the env omits one.
 
-    ``UserDataAPIClient.fetch_user_profile`` (and related paths) read
-    ``COMMONS_PROFILES_API_TOKEN`` from the environment. Tests that mock
-    IDMS with ``requests_mock`` still execute that code, so the variable
+    `UserDataAPIClient.fetch_user_profile` (and related paths) read
+    `COMMONS_PROFILES_API_TOKEN` from the environment. Tests that mock
+    IDMS with `requests_mock` still execute that code, so the variable
     must be present.
 
-    Uses ``os.environ.setdefault`` so an explicit real token set in the
+    Uses `os.environ.setdefault` so an explicit real token set in the
     environment is never overwritten. Live IDMS tests use
     `commons_profiles_api_token_is_live_configured` in `tests/env_defaults.py`
     so they still skip when only this placeholder is present.
 
     Tests that need a specific secret (broker crypto, Authorization header
-    assertions, etc.) continue to use ``monkeypatch.setenv`` per test.
+    assertions, etc.) continue to use `monkeypatch.setenv` per test.
     """
     os.environ.setdefault(
         "COMMONS_PROFILES_API_TOKEN",
@@ -127,7 +137,7 @@ test_config: dict[str, Any] = {
     **test_config_logging,
     "VOCABULARIES_NAMES_SCHEMES": VOCABULARIES_NAMES_SCHEMES,
     # --- IDMS ---------------------------------------------------------------
-    "IDMS_BASE_API_URL": "https://profile.hcommons-dev.org/",
+    "IDMS_BASE_API_URL": "https://profile.hcommons-dev.org/api/v1/",
     "KC_REMOTE_IDPS": ["cilogon"],  # "cilogon" *must* be the first value
     "SSO_BROKER_LOGIN_URL": "https://profile.hcommons-dev.org/login/",
     "SSO_BROKER_SILENT_LOGIN_URL": (
@@ -280,6 +290,35 @@ test_config["SITE_API_URL"] = os.environ.get(
 )
 test_config["SITE_UI_URL"] = os.environ.get("INVENIO_SITE_UI_URL", "http://localhost")
 
+# Match KCWorks `KCWorks.init_components`: replace RDM's
+# `CommunityAccessComponent` (blocks restricting visibility when the
+# community has public records) with the base Invenio Communities
+# component so remote group sync tests behave like production.
+test_config["COMMUNITIES_SERVICE_COMPONENTS"] = [
+    BaseCommunityAccessComponent if c is RDMCommunityAccessComponent else c
+    for c in CommunityServiceComponents
+]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _patch_rdm_community_inclusion_access_check() -> Generator[None, None, None]:
+    """Mirror KCWorks `patch_community_access_restriction_check` for tests.
+
+    Dependency tests use `create_api` without the KCWorks extension; this
+    keeps `is_access_restriction_valid` aligned with production for record
+    inclusion paths.
+    """
+    from invenio_rdm_records import requests as rdm_requests
+
+    original = rdm_requests.community_inclusion.is_access_restriction_valid
+
+    def _allow_all(_record, _community) -> bool:
+        return True
+
+    rdm_requests.community_inclusion.is_access_restriction_valid = _allow_all
+    yield
+    rdm_requests.community_inclusion.is_access_restriction_valid = original
+
 
 @pytest.fixture(scope="session")
 def celery_config(celery_config) -> dict:
@@ -298,32 +337,6 @@ def celery_config(celery_config) -> dict:
     celery_config["task_eager_propagates_exceptions"] = True
 
     return dict(celery_config)
-
-
-@pytest.yield_fixture(scope="module")
-def location(database: Callable) -> Generator[Location, None, None]:
-    """Create a default `Location` for the module's tests.
-
-    Use this fixture if your test requires a `files location <https://invenio-
-    files-rest.readthedocs.io/en/latest/api.html#invenio_files_rest.models.
-    Location>`_. The location will be a default location with the name
-    `pytest-location`.
-
-    Yields:
-        Location: The created test location.
-    """
-    import shutil
-    import tempfile
-
-    uri = tempfile.mkdtemp()
-    location_obj = Location(name="pytest-location", uri=uri, default=True)
-
-    database.session.add(location_obj)
-    database.session.commit()
-
-    yield location_obj
-
-    shutil.rmtree(uri)
 
 
 # Namedtuple aggregating the fixtures most tests need together. Mirrors the

@@ -25,6 +25,7 @@ def test_update_group_from_remote_changes_visibility_with_public_record(
     requests_mock,
     minimal_community_factory,
     minimal_published_record_factory,
+    mock_send_remote_api_update_fixture,
 ):
     """Remote group update can change community visibility to restricted.
 
@@ -63,6 +64,7 @@ def test_update_group_from_remote_changes_visibility_with_public_record(
             "kcr:commons_group_description": "",
             "kcr:commons_group_visibility": "public",
         },
+        mock_search_api=False,
     )
 
     record = minimal_published_record_factory(
@@ -91,26 +93,27 @@ def test_update_group_from_remote_changes_visibility_with_public_record(
 
     assert community["access"]["visibility"] == "public"
     assert record_ref["access"]["record"] == "public"
-    assert (
-        current_community_records_service.search(
-            system_identity,
-            community_id=community.id,
-        ).total
-        == 1
-    )
+    with app.app_context():
+        assert (
+            current_community_records_service.search(
+                system_identity,
+                community_id=community.id,
+            ).total
+            == 1
+        )
 
-    actual = group_data_service.update_group_from_remote(
-        system_identity, idp, remote_group_id
-    )
-    assert actual is not None
-    assert community["slug"] in actual
+        actual = group_data_service.update_group_from_remote(
+            system_identity, idp, remote_group_id
+        )
+        assert actual is not None
+        assert community["slug"] in actual
 
-    updated = current_communities.service.read(system_identity, community.id)
-    assert updated["access"]["visibility"] == "restricted"
-    assert updated["custom_fields"]["kcr:commons_group_visibility"] == "hidden"
+        updated = current_communities.service.read(system_identity, community.id)
+        assert updated["access"]["visibility"] == "restricted"
+        assert updated["custom_fields"]["kcr:commons_group_visibility"] == "hidden"
 
-    record_reread = current_rdm_records_service.read(
-        system_identity, record.id
-    ).to_dict()
+        record_reread = current_rdm_records_service.read(
+            system_identity, record.id
+        ).to_dict()
     assert record_reread["access"]["record"] == "public"
     assert record_reread["access"]["record"] != updated["access"]["visibility"]

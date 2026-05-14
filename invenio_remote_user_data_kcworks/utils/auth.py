@@ -20,6 +20,10 @@ from flask import current_app as app
 from invenio_accounts import current_accounts
 from invenio_accounts.models import Role, User, UserIdentity
 from invenio_db import db
+from invenio_group_collections_kcworks.utils import (
+    format_group_role_name,
+    get_configured_remote_group_role_labels,
+)
 
 from ..errors import UserCreationFailed
 from ..services.group_roles import GroupRolesService
@@ -577,10 +581,24 @@ class CILogonHelpers:
 
         if profile and profile.groups:
             groups = [g for g in profile.groups]
+            kc_idp = "knowledgeCommons"
+            configured = get_configured_remote_group_role_labels(kc_idp)
 
             for g in groups:
-                role_string = f"knowledgeCommons---{g.id}|{g.role}"
-                remote_groups.append(role_string)
+                if configured and g.role not in configured:
+                    app.logger.warning(
+                        "Profile group role %r (group id=%r) is not listed in "
+                        "REMOTE_USER_DATA_API_ENDPOINTS[%r]['groups']['group_roles']; "
+                        "still syncing local role %s.",
+                        g.role,
+                        g.id,
+                        kc_idp,
+                        format_group_role_name(g.role, kc_idp, g.id)[0],
+                    )
+                role_string = format_group_role_name(
+                    remote_role=g.role, idp=kc_idp, group_id=g.id
+                )
+                remote_groups.append(role_string[0])
 
         # Also add roles for admin to remote superusers
         if profile and profile.is_superadmin is True:
@@ -622,12 +640,14 @@ class CILogonHelpers:
             profile = (
                 result.data[0].profile if isinstance(result, APIResponse) else result
             )
+            timestamp = datetime.datetime.now(datetime.UTC)
 
             user_info = {
                 "username": profile.username,
                 "email": profile.email,
                 "active": True,
-                "confirmed_at": (datetime.datetime.now(datetime.UTC)),
+                "confirmed_at": timestamp,
+                "verified_at": timestamp,
             }
             user = invenio_oauthclient.oauth.register_user(
                 send_register_msg=True, **user_info

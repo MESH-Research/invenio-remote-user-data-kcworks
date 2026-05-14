@@ -264,8 +264,8 @@ class RemoteGroupDataService(Service):
         for role in stranded_roles:
             # the query above returns a list of GroupItem objects that
             # can't be used to delete the roles straightforwardly
-            if self.group_roles_service.delete_group(role.id):
-                deleted_roles.append(role.id)
+            if self.group_roles_service.delete_group(role.name):
+                deleted_roles.append(role.name)
             else:
                 self.logger.error(
                     f"RemoteGroupDataService: Error deleting role {role.id}"

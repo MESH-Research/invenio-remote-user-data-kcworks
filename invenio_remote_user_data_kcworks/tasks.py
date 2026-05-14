@@ -429,7 +429,7 @@ def do_group_data_update(idp, remote_id, **kwargs):
     """Perform a group metadata update.
 
     Returns:
-        ``True`` when the update completed successfully.
+        `True` when the update completed successfully.
     """
     with app.app_context():
         service = current_remote_group_service

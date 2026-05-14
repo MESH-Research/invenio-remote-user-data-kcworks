@@ -27,7 +27,7 @@ class GroupRolesService:
     def __init__(self, service=None, *args, **kwargs):
         """Initialize the service.
 
-        The ``service`` argument is accepted for API compatibility and is unused.
+        The `service` argument is accepted for API compatibility and is unused.
         """
         pass
 
@@ -40,7 +40,7 @@ class GroupRolesService:
         query_string = f"{idp}---{remote_group_id}|"
 
         query = current_accounts.datastore.role_model.query.filter(
-            Role.id.contains(query_string)
+            Role.name.contains(query_string)
         )
 
         local_groups = query.all()
@@ -116,7 +116,7 @@ class GroupRolesService:
         """Delete a group role with the given name.
 
         Returns:
-            True if the group was deleted successfully, otherwise ``False``.
+            True if the group was deleted successfully, otherwise `False`.
 
         Raises:
             RuntimeError: If the role cannot be found or deleted.
@@ -144,7 +144,7 @@ class GroupRolesService:
         """Add a user to a group.
 
         Returns:
-            ``True`` when the user was added successfully.
+            `True` when the user was added successfully.
 
         Raises:
             RuntimeError: If the user could not be added to the role.
@@ -186,14 +186,14 @@ class GroupRolesService:
             **kwargs: Accepted for API compatibility and ignored.
 
         Returns:
-            ``True`` if the role was removed from the user.
+            `True` if the role was removed from the user.
         """
         user = (
             user
             if isinstance(user, User)
             else current_accounts.datastore.get_user_by_id(user)
         )
-        group_name = group_name if isinstance(group_name, str) else group_name.id
+        group_name = group_name if isinstance(group_name, str) else group_name.name
         removed_user = current_accounts.datastore.remove_role_from_user(
             user, group_name
         )

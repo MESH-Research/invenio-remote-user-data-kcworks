@@ -225,7 +225,7 @@ class UserDataAPIClient:
 
             json_data = response.json()
 
-            if sub_id:
+            if sub_id or use_sub_endpoint:
                 parsed_response = APIResponse(**json_data)
             else:
                 parsed_response = Profile(**json_data.get("results", json_data))

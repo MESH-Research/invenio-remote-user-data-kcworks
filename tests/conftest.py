@@ -52,7 +52,7 @@ from invenio_rdm_records.services.communities.components import (
 )
 from marshmallow import Schema, fields
 
-from tests.env_defaults import PYTEST_DEFAULT_COMMONS_PROFILES_API_TOKEN
+from tests.fixtures.env_defaults import PYTEST_DEFAULT_COMMONS_PROFILES_API_TOKEN
 from tests.fixtures.idms import register_idms_static_api_token_before_request
 
 from .fixtures.custom_fields import test_config_fields
@@ -110,7 +110,7 @@ def _commons_profiles_api_token_default() -> None:
 
     Uses `os.environ.setdefault` so an explicit real token set in the
     environment is never overwritten. Live IDMS tests use
-    `commons_profiles_api_token_is_live_configured` in `tests/env_defaults.py`
+    `commons_profiles_api_token_is_live_configured` in `tests/fixtures/env_defaults.py`
     so they still skip when only this placeholder is present.
 
     Tests that need a specific secret (broker crypto, Authorization header

@@ -19,7 +19,7 @@ import os
 import pytest
 import requests
 
-from tests.env_defaults import commons_profiles_api_token_is_live_configured
+from tests.fixtures.env_defaults import commons_profiles_api_token_is_live_configured
 
 from ..fixtures.idms import IDMS_MEMBERS_RESPONSE
 

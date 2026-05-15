@@ -108,10 +108,6 @@ def _members_url(base_api_url: str, kc_username: str) -> str:
                     "identifier_orcid": "0000-0002-1825-0097",
                     "affiliations": "Michigan State University",
                 },
-                "preferences": {
-                    "visibility": "public",
-                    "email_visibility": "public",
-                },
             },
             [
                 "knowledgeCommons---1000551|member",

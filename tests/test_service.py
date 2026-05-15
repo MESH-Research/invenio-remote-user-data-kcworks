@@ -1,6 +1,5 @@
 """Service-layer tests for remote user and group synchronization."""
 
-
 import pytest
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import UserIdentity
@@ -43,7 +42,7 @@ from invenio_remote_user_data_kcworks.utils.auth import CILogonHelpers
                         {
                             "id": 1000576,
                             "name": "awesome-mock",
-                            "role": "admin",
+                            "role": "administrator",
                         },
                         {
                             "id": 1000577,
@@ -56,7 +55,7 @@ from invenio_remote_user_data_kcworks.utils.auth import CILogonHelpers
             {
                 "user": {"email": "myaddress@hcommons.org"},
                 "groups": [
-                    {"id": 1000570, "name": "cool-group", "role": "admin"},
+                    {"id": 1000570, "name": "cool-group", "role": "administrator"},
                     {"id": 1000577, "name": "cool-group2", "role": "member"},
                 ],
             },
@@ -75,7 +74,7 @@ from invenio_remote_user_data_kcworks.utils.auth import CILogonHelpers
                     "email_visibility": "public",
                     "visibility": "public",
                     "locale": "en",
-                    "timezone": "Europe/Zurich",
+                    "timezone": "America/Detroit",
                 },
             },
             {
@@ -91,8 +90,8 @@ from invenio_remote_user_data_kcworks.utils.auth import CILogonHelpers
                 },
             },
             {
-                "dropped_groups": ["knowledgeCommons---1000570|admin"],
-                "added_groups": ["knowledgeCommons---1000576|admin"],
+                "dropped_groups": ["knowledgeCommons---1000570|administrator"],
+                "added_groups": ["knowledgeCommons---1000576|administrator"],
                 "unchanged_groups": [
                     "admin",
                     "knowledgeCommons---1000577|member",
@@ -625,7 +624,7 @@ def test_update_group_from_remote_with_deleted_community(
                         "name": "Digital Humanists",
                         "role": "member",
                     },
-                    {"id": 1000576, "name": "test bpges", "role": "admin"},
+                    {"id": 1000576, "name": "test bpges", "role": "administrator"},
                 ],
             },
         )
@@ -707,7 +706,7 @@ def test_delete_group_from_remote(
                         "name": "Digital Humanists",
                         "role": "member",
                     },
-                    {"id": 1004290, "name": "The Inklings", "role": "admin"},
+                    {"id": 1004290, "name": "The Inklings", "role": "administrator"},
                 ],
             },
             "knowledgeCommons",
@@ -866,7 +865,6 @@ def test_delete_group_from_remote_with_community(
         for r in role_search_result
         if r.name
         not in [
-            "knowledgeCommons---1004290|admin",
             "knowledgeCommons---1004290|administrator",
             "knowledgeCommons---1004290|editor",
             "knowledgeCommons---1004290|member",
@@ -948,12 +946,9 @@ def test_delete_group_from_remote_with_community(
 
     # confirm that the return value reporting the operations is correct
     assert actual["disowned_communities"] == [existing_collection["slug"]]
-    assert sorted(actual["deleted_roles"]) == sorted(
-        [
-            "knowledgeCommons---1004290|admin",
-            "knowledgeCommons---1004290|administrator",
-            "knowledgeCommons---1004290|editor",
-            "knowledgeCommons---1004290|member",
-            "knowledgeCommons---1004290|moderator",
-        ]
-    )
+    assert sorted(actual["deleted_roles"]) == sorted([
+        "knowledgeCommons---1004290|administrator",
+        "knowledgeCommons---1004290|editor",
+        "knowledgeCommons---1004290|member",
+        "knowledgeCommons---1004290|moderator",
+    ])

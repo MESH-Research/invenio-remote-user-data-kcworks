@@ -135,6 +135,7 @@ test_config: dict[str, Any] = {
     **test_config_identifiers,
     **test_config_fields,
     **test_config_logging,
+    "BABEL_DEFAULT_TIMEZONE": "America/Detroit",
     "VOCABULARIES_NAMES_SCHEMES": VOCABULARIES_NAMES_SCHEMES,
     # --- IDMS ---------------------------------------------------------------
     "IDMS_BASE_API_URL": "https://profile.hcommons-dev.org/api/v1/",
@@ -170,12 +171,12 @@ test_config: dict[str, Any] = {
     # Tests set `TEST_IDMS_STATIC_API_TOKEN`;
     # `idms_static_api_auth` overrides user id.
     "STATIC_API_TOKEN_ROUTES": {
-        "/api/webhooks/user_data_update": "TEST_IDMS_STATIC_API_TOKEN",
-        "/api/webhooks/users/logout": "TEST_IDMS_STATIC_API_TOKEN",
-        "/api/webhooks/users/update": "TEST_IDMS_STATIC_API_TOKEN",
-        "/webhooks/user_data_update": "TEST_IDMS_STATIC_API_TOKEN",
-        "/webhooks/users/logout": "TEST_IDMS_STATIC_API_TOKEN",
-        "/webhooks/users/update": "TEST_IDMS_STATIC_API_TOKEN",
+        "/api/webhooks/user_data_update": "COMMONS_PROFILES_API_TOKEN",
+        "/api/webhooks/users/logout": "COMMONS_PROFILES_API_TOKEN",
+        "/api/webhooks/users/update": "COMMONS_PROFILES_API_TOKEN",
+        "/webhooks/user_data_update": "COMMONS_PROFILES_API_TOKEN",
+        "/webhooks/users/logout": "COMMONS_PROFILES_API_TOKEN",
+        "/webhooks/users/update": "COMMONS_PROFILES_API_TOKEN",
     },
     "STATIC_API_TOKEN_USER_ID": 1,
     "APP_DEFAULT_SECURE_HEADERS": {
@@ -246,6 +247,8 @@ class CustomUserProfileSchema(Schema):
 
 test_config["ACCOUNTS_USER_PROFILE_SCHEMA"] = CustomUserProfileSchema()
 
+test_config["ACCOUNTS_DEFAULT_EMAIL_VISIBILITY"] = "public"
+test_config["ACCOUNTS_DEFAULT_USER_VISIBILITY"] = "public"
 
 # --- API endpoint configuration -------------------------------------------
 test_config["REMOTE_USER_DATA_API_ENDPOINTS"] = {
@@ -263,7 +266,7 @@ test_config["REMOTE_USER_DATA_API_ENDPOINTS"] = {
             "remote_method": "GET",
             "token_env_variable_label": "COMMONS_PROFILES_API_TOKEN",
             "group_roles": {
-                "owner": ["administrator", "admin"],
+                "owner": ["administrator"],
                 "curator": ["editor", "moderator"],
                 "reader": ["member"],
             },

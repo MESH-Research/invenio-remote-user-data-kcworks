@@ -79,7 +79,7 @@ def test_webhook_get(client, app, search_clear):
                             {
                                 "id": 1000576,
                                 "name": "test bpges",
-                                "role": "admin",
+                                "role": "administrator",
                             },
                         ],
                     },

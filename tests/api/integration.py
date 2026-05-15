@@ -24,8 +24,7 @@ from invenio_remote_user_data_kcworks.proxies import (
     current_remote_user_data_service as user_data_service,
 )
 from invenio_remote_user_data_kcworks.services.group_roles import GroupRolesService
-
-from ..fixtures.users import user_data_set
+from tests.fixtures.users import user_data_set
 
 
 @pytest.mark.usefixtures("mock_send_remote_api_update_fixture")
@@ -260,10 +259,10 @@ def test_group_roles_sync_on_login_logout(
     myuser1 = u1_fixture.user
 
     grouper = GroupRolesService(user_data_service)
-    grouper.create_new_group(group_name="knowledgeCommons---222222|admin")
+    grouper.create_new_group(group_name="knowledgeCommons---222222|administrator")
     grouper.create_new_group(group_name="admin")
     grouper.add_user_to_group(
-        group_name="knowledgeCommons---222222|admin", user=myuser1
+        group_name="knowledgeCommons---222222|administrator", user=myuser1
     )
     grouper.add_user_to_group(group_name="admin", user=myuser1)
 

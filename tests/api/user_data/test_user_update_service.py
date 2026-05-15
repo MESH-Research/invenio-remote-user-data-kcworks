@@ -77,7 +77,11 @@ def _members_url(base_api_url: str, kc_username: str) -> str:
                         "group_name": "Digital Humanists",
                         "role": "member",
                     },
-                    {"id": 1000576, "group_name": "test bpges", "role": "admin"},
+                    {
+                        "id": 1000576,
+                        "group_name": "test bpges",
+                        "role": "administrator",
+                    },
                 ],
             },
             {
@@ -94,7 +98,7 @@ def _members_url(base_api_url: str, kc_username: str) -> str:
                     "email_visibility": "public",
                     "visibility": "public",
                     "locale": "en",
-                    "timezone": "Europe/Zurich",
+                    "timezone": "America/Detroit",
                 },
             },
             {
@@ -111,12 +115,12 @@ def _members_url(base_api_url: str, kc_username: str) -> str:
             },
             [
                 "knowledgeCommons---1000551|member",
-                "knowledgeCommons---1000576|admin",
+                "knowledgeCommons---1000576|administrator",
             ],
             {
                 "added_groups": [
                     "knowledgeCommons---1000551|member",
-                    "knowledgeCommons---1000576|admin",
+                    "knowledgeCommons---1000576|administrator",
                 ],
                 "dropped_groups": [],
                 "unchanged_groups": [],

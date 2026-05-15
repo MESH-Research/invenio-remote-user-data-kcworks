@@ -100,11 +100,11 @@ else
 fi
 
 # Build the documentation only when a docs/ source tree exists.
-if [ -d "docs" ]; then
+if [ -d "docs/source/" ]; then
   echo "Building the documentation"
   uv run sphinx-build -b html docs/source/ docs/build/
 else
-  echo "No docs/ directory; skipping documentation build"
+  echo "No docs/source/ directory; skipping documentation build"
 fi
 
 # Check for running docker-compose projects before starting services
@@ -130,10 +130,10 @@ unset INVENIO_SQLALCHEMY_DATABASE_URI
 # Install the package in editable mode (needed for pytest-ruff to resolve the
 # in-tree source rather than the installed copy).
 if ! uv pip show invenio-remote-user-data-kcworks 2>/dev/null | grep -q "Editable project location"; then
-    echo "Installing package in editable mode"
-    uv pip install -e .
+  echo "Installing package in editable mode"
+  uv pip install -e .
 else
-    echo "Package already installed as editable, skipping installation"
+  echo "Package already installed as editable, skipping installation"
 fi
 
 # Run ty (replaces mypy; settings live under [tool.ty] in pyproject.toml)

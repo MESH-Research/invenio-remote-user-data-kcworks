@@ -252,6 +252,13 @@ def _make_draft_item(draft_id: str, metadata: dict[str, Any]):
     return item
 
 
+def _make_scan_hit(record_id: str, metadata: dict[str, Any]):
+    """Return a duck-typed search hit from `_search().scan()`."""
+    hit = MagicMock()
+    hit.to_dict.return_value = {"id": record_id, "metadata": metadata}
+    return hit
+
+
 class TestRewritePublished:
     """`rewrite()` (published phase) scans, edits, updates, and publishes."""
 
@@ -270,24 +277,24 @@ class TestRewritePublished:
             "failed": 0,
             "drafts_left_uncommitted": 0,
         }
-        records_mock.scan.assert_not_called()
+        records_mock._search.assert_not_called()
 
     def test_happy_path_published_record_is_edited_and_republished(
         self, base_app, sync_service
     ):
         """Each match: scan -> edit -> update_draft -> publish."""
-        hit = {"id": "rec-1"}
-        scan_result = MagicMock()
-        scan_result.hits = iter([hit])
-
         edited_metadata = {
             "creators": [_personal_creator("Doe", "Jane", kc_username="oldname")],
             "contributors": [],
         }
+        search_obj = MagicMock()
+        search_obj.scan.return_value = iter([
+            _make_scan_hit("rec-1", edited_metadata),
+        ])
         draft_item = _make_draft_item("rec-1", edited_metadata)
 
         records_mock = MagicMock()
-        records_mock.scan.return_value = scan_result
+        records_mock._search.return_value = search_obj
         records_mock.edit.return_value = draft_item
 
         with base_app.app_context():
@@ -298,7 +305,7 @@ class TestRewritePublished:
             ):
                 stats = sync_service.rewrite("oldname", "newname")
 
-        records_mock.scan.assert_called_once()
+        records_mock._search.assert_called_once()
         records_mock.edit.assert_called_once()
         records_mock.update_draft.assert_called_once()
         records_mock.publish.assert_called_once()
@@ -319,23 +326,21 @@ class TestRewritePublished:
             "drafts_left_uncommitted": 0,
         }
 
-    def test_false_positive_match_leaves_draft_in_place(self, base_app, sync_service):
-        """If the rewriter finds nothing to change, no update/publish happens."""
-        hit = {"id": "rec-1"}
-        scan_result = MagicMock()
-        scan_result.hits = iter([hit])
-
+    def test_false_positive_match_is_filtered_before_edit(self, base_app, sync_service):
+        """If the scan hit is not a kc_username match, no draft is opened."""
         # The hit's metadata carries `oldname` only on an ORCID scheme, so
-        # the rewriter returns False. The draft must NOT be published.
-        edited_metadata = {
+        # `_scan_ids` filters it before `edit()` can open a draft.
+        source_metadata = {
             "creators": [_personal_creator("Doe", "Jane", orcid="oldname")],
             "contributors": [],
         }
-        draft_item = _make_draft_item("rec-1", edited_metadata)
+        search_obj = MagicMock()
+        search_obj.scan.return_value = iter([
+            _make_scan_hit("rec-1", source_metadata),
+        ])
 
         records_mock = MagicMock()
-        records_mock.scan.return_value = scan_result
-        records_mock.edit.return_value = draft_item
+        records_mock._search.return_value = search_obj
 
         with base_app.app_context():
             with patch(
@@ -345,28 +350,30 @@ class TestRewritePublished:
             ):
                 stats = sync_service.rewrite("oldname", "newname")
 
-        records_mock.edit.assert_called_once()
+        records_mock.edit.assert_not_called()
         records_mock.update_draft.assert_not_called()
         records_mock.publish.assert_not_called()
         assert stats == {
-            "matched": 1,
+            "matched": 0,
             "updated": 0,
             "failed": 0,
-            "drafts_left_uncommitted": 1,
+            "drafts_left_uncommitted": 0,
         }
 
     def test_per_record_failure_is_logged_and_counted(self, base_app, sync_service):
         """A failure on one record does not stop the loop or escape the service."""
-        hits = [{"id": "rec-good"}, {"id": "rec-bad"}]
-        scan_result = MagicMock()
-        scan_result.hits = iter(hits)
-
         good_metadata = {
             "creators": [_personal_creator("A", kc_username="oldname")],
             "contributors": [],
         }
+        search_obj = MagicMock()
+        search_obj.scan.return_value = iter([
+            _make_scan_hit("rec-good", good_metadata),
+            _make_scan_hit("rec-bad", good_metadata),
+        ])
+
         records_mock = MagicMock()
-        records_mock.scan.return_value = scan_result
+        records_mock._search.return_value = search_obj
 
         def _edit(identity, record_id):
             if record_id == "rec-bad":
@@ -405,11 +412,12 @@ class TestRewriteDrafts:
         draft_item = _make_draft_item("draft-1", edited_metadata)
 
         records_mock = MagicMock()
-        records_mock.read_draft.return_value = draft_item
-
         search_obj = MagicMock()
-        search_obj.query.return_value = search_obj
-        search_obj.scan.return_value = iter([{"id": "draft-1"}])
+        search_obj.scan.return_value = iter([
+            _make_scan_hit("draft-1", edited_metadata),
+        ])
+        records_mock._search.return_value = search_obj
+        records_mock.read_draft.return_value = draft_item
 
         with base_app.app_context():
             with patch(
@@ -417,14 +425,7 @@ class TestRewriteDrafts:
                 "current_rdm_records_service",
                 records_mock,
             ):
-                with patch(
-                    "invenio_remote_user_data_kcworks.services.record_username_sync."
-                    "Search",
-                    return_value=search_obj,
-                ):
-                    stats = sync_service.rewrite(
-                        "oldname", "newname", drafts=True
-                    )
+                stats = sync_service.rewrite("oldname", "newname", drafts=True)
 
         records_mock.update_draft.assert_called_once()
         records_mock.publish.assert_not_called()

@@ -2706,3 +2706,117 @@ class NamesSyncService(Service):
                 "b_name": b["name"],
             })
         return out
+
+    def prune_stale_user_records(
+        self,
+        user: User,
+        *,
+        identity: Identity | None = None,
+    ) -> list[str]:
+        """Delete Names records owned by this user that live at a stale PID.
+
+        Called from the `rewrite_records_for_kc_username_change` Celery task
+        after a Profiles-side rename: the canonical record at PID equal to
+        the user's *current* `identifier_kc_username` is upserted by the
+        existing `sync_user_to_names` task; this method cleans up any
+        records still sitting at the user's previous PID(s).
+
+        Records are matched by `props.kcworks_user_id == str(user.id)` and
+        `tags` containing `KCNamesTag.USER`. The two filters together
+        guarantee we never delete a cited-ORCID stub that happens to share
+        a name or ORCID with the user. The "current PID" — the one we keep
+        — is `user.user_profile["identifier_kc_username"]`.
+
+        Note on field selection: the `internal_id` model field is the
+        natural primary link (the upstream Names column carries `index=True`
+        on it), but `invenio-vocabularies` configures the Names
+        `SearchDumper` with `ModelField("internal_id", dump=False)`, so the
+        value is **not** indexed into OpenSearch. The dynamic `props`
+        sub-mapping is indexed, and we already write
+        `props["kcworks_user_id"] = str(user.id)` on every USER upsert; that
+        is the indexed equivalent we query here.
+
+        Args:
+            user: The local Invenio `User` whose stale Names PIDs should be
+                pruned. The user's *current* PID is read from
+                `user.user_profile["identifier_kc_username"]`.
+            identity: Optional Invenio identity. Defaults to
+                `system_identity`.
+
+        Returns:
+            A list of PIDs that were deleted (empty when there was
+            nothing stale to clean up, when the user has no current
+            `identifier_kc_username`, or when the search failed).
+        """
+        if user is None:
+            return []
+        identity = identity or system_identity
+
+        profile = dict(user.user_profile or {})
+        current_pid = profile.get("identifier_kc_username") or ""
+        if not current_pid:
+            self.logger.debug(
+                "prune_stale_user_records: user %s has no current "
+                "identifier_kc_username; skipping",
+                user.id,
+            )
+            return []
+
+        service = self.names_service
+        try:
+            search_result = service.search(
+                identity,
+                q=f'props.kcworks_user_id:"{user.id}"',
+            )
+            hits = search_result.to_dict().get("hits", {}).get("hits", [])
+        except Exception:
+            self.logger.warning(
+                "prune_stale_user_records: search failed for user %s; "
+                "no PIDs pruned this pass",
+                user.id,
+                exc_info=True,
+            )
+            return []
+
+        deleted: list[str] = []
+        for hit in hits:
+            tags = hit.get("tags") or []
+            if KCNamesTag.USER not in tags:
+                continue
+            pid = hit.get("id") or ""
+            if not pid or pid == current_pid:
+                continue
+            # Defensive: confirm the indexed `props.kcworks_user_id` truly
+            # belongs to this user (OS dynamic-mapped numeric strings can
+            # cross-match across analyzers in edge cases).
+            props = hit.get("props") or {}
+            if str(props.get("kcworks_user_id") or "") != str(user.id):
+                continue
+            try:
+                service.delete(identity, pid)
+                deleted.append(pid)
+                self.logger.info(
+                    "prune_stale_user_records: deleted stale Names PID %s "
+                    "for user %s (current PID is %s)",
+                    pid,
+                    user.id,
+                    current_pid,
+                )
+            except (PIDDoesNotExistError, NoResultFound):
+                # Idempotent: the record may have been deleted by a
+                # concurrent sweep. Treat as success.
+                self.logger.debug(
+                    "prune_stale_user_records: stale Names PID %s for "
+                    "user %s already gone; treating as success",
+                    pid,
+                    user.id,
+                )
+            except Exception:
+                self.logger.warning(
+                    "prune_stale_user_records: failed to delete stale "
+                    "Names PID %s for user %s; the next prune will retry",
+                    pid,
+                    user.id,
+                    exc_info=True,
+                )
+        return deleted

@@ -23,3 +23,7 @@ current_remote_group_service = LocalProxy(
 current_names_sync_service = LocalProxy(
     lambda: current_remote_user_data.names_sync_service
 )
+
+current_record_kc_username_sync_service = LocalProxy(
+    lambda: current_remote_user_data.record_kc_username_sync_service
+)

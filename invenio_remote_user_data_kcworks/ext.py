@@ -21,6 +21,7 @@ from . import config
 from .proxies import current_remote_user_data_service
 from .services.config import RemoteGroupDataServiceConfig, RemoteUserDataServiceConfig
 from .services.names_sync import NamesSyncService
+from .services.record_username_sync import RecordKcUsernameSyncService
 from .services.service import RemoteGroupDataService, RemoteUserDataService
 from .signals import remote_data_updated
 from .tasks import (
@@ -152,6 +153,9 @@ class InvenioRemoteUserData:
             app, config=RemoteGroupDataServiceConfig.build(app)
         )
         self.names_sync_service = NamesSyncService(app, config=app.config)
+        self.record_kc_username_sync_service = RecordKcUsernameSyncService(
+            app, config=app.config
+        )
 
     def init_listeners(self, app):
         """Initialize listeners for the extension.

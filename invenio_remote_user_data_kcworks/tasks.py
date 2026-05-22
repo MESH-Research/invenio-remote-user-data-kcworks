@@ -28,6 +28,7 @@ from .config import UserDataEvent, UserDataStatus
 from .errors import LocalUserNotFoundError, NoIDPFoundError, UserCreationFailed
 from .proxies import (
     current_names_sync_service,
+    current_record_kc_username_sync_service,
     current_remote_group_service,
     current_remote_user_data_service,
 )
@@ -761,6 +762,113 @@ def do_user_created(
             method=auth_method,
         )
         return user.id
+
+
+@shared_task(ignore_result=False)
+def rewrite_records_for_kc_username_change(
+    user_id: int,
+    old_kc_username: str,
+    new_kc_username: str,
+) -> dict[str, Any]:
+    """Propagate a Profiles-side kc_username rename through RDM records.
+
+    Dispatched from `RemoteUserDataService.update_user_from_remote` when the
+    committed user's `identifier_kc_username` differs from its pre-update
+    value. Runs three steps in sequence; each is wrapped in its own
+    try/except so a failure in one phase does not skip the others.
+
+    1. Published records pass — `RecordKcUsernameSyncService.rewrite` (with
+       `drafts=False`) opens a draft for each matching published record,
+       rewrites creators+contributors, and re-publishes. Re-publish triggers
+       normal publish-time hooks (DataCite, remote-API provisioner, stats);
+       this is the same path a manual edit would take.
+    2. Drafts pass — `RecordKcUsernameSyncService.rewrite` (with `drafts=True`)
+       patches in-progress drafts with `update_draft` (no auto-publish; their
+       owner may still be editing).
+    3. Names prune — `NamesSyncService.prune_stale_user_records` deletes any
+       Names vocabulary records still sitting at the user's previous PID.
+       The new PID is upserted by the existing `sync_user_to_names` task
+       that `do_user_data_update` already fires; this step only removes
+       what's stale, so ordering against `sync_user_to_names` doesn't
+       matter.
+
+    Args:
+        user_id: The local Invenio user id that was renamed.
+        old_kc_username: The pre-rename KC username.
+        new_kc_username: The post-rename KC username.
+
+    Returns:
+        Stats dict aggregating both rewrite passes and the Names prune.
+        Top-level keys:
+
+        - `user_id`, `old_kc_username`, `new_kc_username`: echo of inputs.
+        - `records`: stats from `RecordKcUsernameSyncService.rewrite_all`.
+        - `pruned_names_pids`: list of Names PIDs deleted by the prune step.
+        - `errors`: count of top-level phase failures (per-record failures
+          are reported inside `records`).
+    """
+    with app.app_context():
+        summary: dict[str, Any] = {
+            "user_id": user_id,
+            "old_kc_username": old_kc_username,
+            "new_kc_username": new_kc_username,
+            "records": {},
+            "pruned_names_pids": [],
+            "errors": 0,
+        }
+
+        if (
+            not old_kc_username
+            or not new_kc_username
+            or old_kc_username == new_kc_username
+        ):
+            app.logger.warning(
+                "rewrite_records_for_kc_username_change: refusing to run "
+                "with old=%r new=%r (must be non-empty and distinct)",
+                old_kc_username,
+                new_kc_username,
+            )
+            return summary
+
+        try:
+            summary["records"] = (
+                current_record_kc_username_sync_service.rewrite_all(
+                    old_kc_username, new_kc_username
+                )
+            )
+        except Exception:  # noqa: BLE001 - logged, never propagated
+            summary["errors"] += 1
+            app.logger.exception(
+                "rewrite_records_for_kc_username_change: records rewrite "
+                "phase raised for user_id=%s old=%s new=%s",
+                user_id,
+                old_kc_username,
+                new_kc_username,
+            )
+
+        try:
+            user = datastore.get_user_by_id(user_id)
+            if user is None:
+                app.logger.warning(
+                    "rewrite_records_for_kc_username_change: user %s not "
+                    "found at prune time; skipping Names prune",
+                    user_id,
+                )
+            else:
+                summary["pruned_names_pids"] = (
+                    current_names_sync_service.prune_stale_user_records(user)
+                )
+        except Exception:  # noqa: BLE001 - logged, never propagated
+            summary["errors"] += 1
+            app.logger.exception(
+                "rewrite_records_for_kc_username_change: Names prune phase "
+                "raised for user_id=%s old=%s new=%s",
+                user_id,
+                old_kc_username,
+                new_kc_username,
+            )
+
+        return summary
 
 
 @shared_task(ignore_result=True)

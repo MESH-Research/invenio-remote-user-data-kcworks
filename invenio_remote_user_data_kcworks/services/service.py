@@ -396,6 +396,15 @@ class RemoteUserDataService(Service):
         group_changes = CILogonHelpers.calculate_group_changes(profile, user)
         user_changes, new_data = CILogonHelpers.calculate_user_changes(profile, user)
 
+        new_kc_username = (user_changes.get("user_profile") or {}).get(
+            "identifier_kc_username"
+        )
+        old_kc_username = (
+            (user.user_profile or {}).get("identifier_kc_username")
+            if new_kc_username
+            else None
+        )
+
         updated_data = CILogonHelpers.update_local_user_data(
             user,
             new_data,
@@ -404,6 +413,15 @@ class RemoteUserDataService(Service):
             remote_service,
             **kwargs,
         )
+
+        if old_kc_username and new_kc_username and old_kc_username != new_kc_username:
+            # Imported lazily to avoid a circular import via `tasks.py`,
+            # which itself imports `current_remote_user_data_service`.
+            from ..tasks import rewrite_records_for_kc_username_change
+
+            rewrite_records_for_kc_username_change.delay(
+                user.id, old_kc_username, new_kc_username
+            )
 
         return (
             user,

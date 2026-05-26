@@ -18,6 +18,8 @@ from invenio_access.permissions import system_identity
 from invenio_accounts.profiles import UserProfileDict
 from invenio_accounts.proxies import current_accounts
 from invenio_accounts.testutils import login_user_via_session
+from invenio_rdm_records.proxies import current_rdm_records_service
+from invenio_search.proxies import current_search_client
 from invenio_users_resources.proxies import current_users_service
 
 from invenio_remote_user_data_kcworks.proxies import (
@@ -144,20 +146,58 @@ def test_user_data_sync_on_login_workflow(
     running_app,
     db,
     user_factory,
+    minimal_published_record_factory,
+    minimal_draft_record_factory,
     search_clear,
     celery_worker,
     mock_send_remote_api_update_fixture,
 ):
-    """Test that the user data is synced when a user logs in.
+    """End-to-end login → remote-fetch → local-sync → record-rewrite workflow.
 
-    The actual api call is mocked, so this tests that the api request is made
-    and that the user data is updated in Invenio.
+    Starts from an **existing** local KCWorks account whose fields are stale
+    relative to the remote Profiles record, then logs that user in. The
+    remote Profiles API is stubbed via `mock_send_remote_api_update_fixture`,
+    so this exercises every step on the *local* side of the boundary: the
+    `user_logged_in` signal handler, the `do_user_data_update` Celery task,
+    `CILogonHelpers.calculate_user_changes` / `update_local_user_data`, the
+    rename-detection in `RemoteUserDataService.update_user_from_remote`, and
+    the records-rewrite task that fan-out dispatches from it.
 
-    - Includes test of username updating if the remote username
-      has changed.
+    Preconditions checked before login (sanity, not behaviour under test):
 
-    Also tests that the api call does *not* happen for simple programmatic
-    user creation. It only happens when the user logs in.
+    - The mocked subs/members adapters have not yet been called — the
+      `user_factory` itself must not contact the remote API.
+    - The pre-login `User.username` is the stale `"beforesync"` value.
+
+    Asserted behaviour:
+
+    1. **Login triggers exactly one subs fetch.** Backdating
+       `user.updated` past `INVENIO_REMOTE_USER_DATA_UPDATE_INTERVAL`
+       and then calling `login_user` causes `do_user_data_update` to be
+       enqueued and the subs endpoint to be hit once; the members
+       endpoint stays untouched on this path.
+    2. **Email is propagated.** A remote-side email change overwrites the
+       stale local `User.email`.
+    3. **SQL username is propagated.** A remote-side `kc_username`
+       change overwrites the stale local `User.username`.
+    4. **Profile blob is propagated.** `User.user_profile` picks up the
+       remote `full_name`, `affiliations`, `identifier_orcid`,
+       `identifier_kc_username`, and `name_parts` (JSON-encoded
+       first/last split).
+    5. **Preferences are forced public.** `visibility` and
+       `email_visibility` are set to `"public"` by
+       `calculate_user_changes`.
+    6. **Group memberships are reconciled.** Local roles match the
+       expected `knowledgeCommons---<id>|<role>` set derived from the
+       remote `groups` payload.
+    7. **kc_username rename propagates to published records.** A
+       published record citing the old `kc_username` on a personal
+       creator is re-published with the new value (same record id,
+       new revision) via `RecordKcUsernameSyncService.rewrite`.
+    8. **kc_username rename propagates to in-progress drafts.** A draft
+       citing the old `kc_username` on a personal creator is patched in
+       place with `update_draft` (no auto-publish), keeping the same
+       draft id.
     """
     app = running_app.app
     # Mock additional user data from the remote service
@@ -177,6 +217,46 @@ def test_user_data_sync_on_login_workflow(
     user_id = u.user.id
     old_username = u.user.username
     assert old_username == "beforesync"
+
+    # Create one published record and one in-progress draft that cite the
+    # pre-rename `kc_username` ("beforesync") on a personal creator. The
+    # rewrite Celery task dispatched by the user-data update should rewrite
+    # both, leaving the published record at a new revision and the draft
+    # patched in place.
+    creator_with_old_username = {
+        "person_or_org": {
+            "family_name": "Doe",
+            "given_name": "Jane",
+            "name": "Doe, Jane",
+            "type": "personal",
+            "identifiers": [
+                {"scheme": "kc_username", "identifier": "beforesync"},
+            ],
+        },
+    }
+    published_record = minimal_published_record_factory(
+        metadata_updates={"metadata|creators|0": creator_with_old_username},
+    )
+    draft_record = minimal_draft_record_factory(
+        metadata={
+            "pids": {},
+            "access": {"record": "public", "files": "public"},
+            "files": {"enabled": False},
+            "metadata": {
+                "creators": [creator_with_old_username],
+                "publication_date": "2020-06-01",
+                "publisher": "Acme Inc",
+                "resource_type": {"id": "image-photograph"},
+                "title": "Draft cited by oldname",
+            },
+            "custom_fields": {},
+        },
+    )
+    published_record_id = published_record.id
+    draft_record_id = draft_record.id
+    # The rename task scans the records index; make our two new
+    # writes immediately visible to that scan.
+    current_search_client.indices.refresh(index="*rdmrecords*")
 
     # `on_user_logged_in` only enqueues `do_user_data_update` when `user.updated`
     # is older than `INVENIO_REMOTE_USER_DATA_UPDATE_INTERVAL` (default 30s).
@@ -224,6 +304,32 @@ def test_user_data_sync_on_login_workflow(
         "knowledgeCommons---12345|administrator",
         "knowledgeCommons---67891|member",
     ])
+
+    # The rename Celery task should have rewritten the `kc_username` identifier
+    # on both the published record (re-published as a new revision) and the
+    # in-progress draft.
+    new_kc_username = new_data_payload["kc_username"]
+    published_after = current_rdm_records_service.read(
+        system_identity, published_record_id
+    ).to_dict()
+    published_identifiers = (
+        published_after["metadata"]["creators"][0]["person_or_org"]["identifiers"]
+    )
+    assert any(
+        ident["scheme"] == "kc_username" and ident["identifier"] == new_kc_username
+        for ident in published_identifiers
+    ), published_identifiers
+
+    draft_after = current_rdm_records_service.read_draft(
+        system_identity, draft_record_id
+    ).to_dict()
+    draft_identifiers = (
+        draft_after["metadata"]["creators"][0]["person_or_org"]["identifiers"]
+    )
+    assert any(
+        ident["scheme"] == "kc_username" and ident["identifier"] == new_kc_username
+        for ident in draft_identifiers
+    ), draft_identifiers
 
 
 def test_group_roles_sync_on_login_logout(

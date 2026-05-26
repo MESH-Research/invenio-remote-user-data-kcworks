@@ -75,7 +75,7 @@ class RecordKcUsernameSyncService(Service):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _identifier_filter(old_username: str) -> dsl.Q:
+    def _identifier_filter(old_username: str) -> dsl.query.Query:
         """Build the shared identifier filter for records and drafts.
 
         The OpenSearch filter is intentionally broad enough to use the
@@ -89,21 +89,15 @@ class RecordKcUsernameSyncService(Service):
         Returns:
             A query DSL object matching creator or contributor identifiers.
         """
+        creators_field = "metadata.creators.person_or_org.identifiers.identifier"
+        contributors_field = (
+            "metadata.contributors.person_or_org.identifiers.identifier"
+        )
         return dsl.Q(
             "bool",
             should=[
-                dsl.Q(
-                    "term",
-                    **{
-                        "metadata.creators.person_or_org.identifiers.identifier": old_username
-                    },
-                ),
-                dsl.Q(
-                    "term",
-                    **{
-                        "metadata.contributors.person_or_org.identifiers.identifier": old_username
-                    },
-                ),
+                dsl.Q("term", **{creators_field: old_username}),
+                dsl.Q("term", **{contributors_field: old_username}),
             ],
             minimum_should_match=1,
         )

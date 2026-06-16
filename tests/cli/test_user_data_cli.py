@@ -189,7 +189,11 @@ def test_ingest_inline_runs_task_synchronously(runner, tmp_path):
 
     assert result.exit_code == 0, result.output
     fake_task.assert_called_once_with(
-        str(p), fmt="auto", source="knowledgeCommons"
+        str(p),
+        fmt="auto",
+        source="knowledgeCommons",
+        limit=None,
+        rate_per_second=2,
     )
     assert "rows_seen=1" in result.output
 
@@ -220,7 +224,78 @@ def test_ingest_background_dispatches_celery_task(runner, tmp_path):
     assert result.exit_code == 0, result.output
     assert "task-ccc" in result.output
     fake_task.delay.assert_called_once_with(
-        str(p), fmt="jsonl", source="knowledgeCommons"
+        str(p),
+        fmt="jsonl",
+        source="knowledgeCommons",
+        limit=None,
+        rate_per_second=2,
+    )
+    fake_task.assert_not_called()
+
+
+def test_ingest_limit_and_rate_per_second_forwarded_inline(runner, tmp_path):
+    """`--limit` and `--rate-per-second` propagate to the synchronous task call."""
+    p = tmp_path / "users.csv"
+    p.write_text("alice\n")
+
+    fake_task = MagicMock(
+        return_value={"rows_seen": 1, "processed": 1, "skipped": 0, "errors": 0}
+    )
+    with patch.object(users_cli_mod, "do_ingest_profiles_dump", fake_task):
+        result = runner.invoke(
+            cli,
+            [
+                "users",
+                "ingest-profiles-dump",
+                "--limit",
+                "25",
+                "--rate-per-second",
+                "0.5",
+                str(p),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    fake_task.assert_called_once_with(
+        str(p),
+        fmt="auto",
+        source="knowledgeCommons",
+        limit=25,
+        rate_per_second=0.5,
+    )
+
+
+def test_ingest_limit_and_rate_per_second_forwarded_background(runner, tmp_path):
+    """`--limit` and `--rate-per-second` propagate to the Celery `.delay()` call."""
+    p = tmp_path / "users.csv"
+    p.write_text("alice\n")
+
+    fake_task = MagicMock()
+    fake_task.delay.return_value = MagicMock(id="task-ddd")
+
+    with patch.object(users_cli_mod, "do_ingest_profiles_dump", fake_task):
+        result = runner.invoke(
+            cli,
+            [
+                "users",
+                "ingest-profiles-dump",
+                "--background",
+                "--limit",
+                "10",
+                "--rate-per-second",
+                "0",
+                str(p),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "task-ddd" in result.output
+    fake_task.delay.assert_called_once_with(
+        str(p),
+        fmt="auto",
+        source="knowledgeCommons",
+        limit=10,
+        rate_per_second=0,
     )
     fake_task.assert_not_called()
 

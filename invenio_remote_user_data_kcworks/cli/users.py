@@ -269,6 +269,12 @@ def update_user_data(
     help="IDP key passed to the underlying do_user_created task.",
 )
 @click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Maximum number of dump rows to process. Default: all.",
+)
+@click.option(
     "--background",
     is_flag=True,
     default=False,
@@ -277,8 +283,26 @@ def update_user_data(
         "the task id, instead of running synchronously in the CLI."
     ),
 )
+@click.option(
+    "--rate-per-second",
+    type=click.FloatRange(0),
+    default=2,
+    show_default=True,
+    help=(
+        "Maximum users per second for `usernames` ingest (live Profiles "
+        "API). `0` disables pacing. Fractional values allowed (e.g. "
+        "`0.5` = one user every 2s). Ignored for `jsonl` (no API I/O)."
+    ),
+)
 @with_appcontext
-def ingest_profiles_dump_cmd(filepath: str, fmt: str, source: str, background: bool):
+def ingest_profiles_dump_cmd(
+    filepath: str,
+    fmt: str,
+    source: str,
+    limit: int | None,
+    background: bool,
+    rate_per_second: float,
+):
     r"""Bulk-create / update local users from a Profiles JSONL dump or username CSV.
 
     Two input shapes are accepted:
@@ -294,10 +318,22 @@ def ingest_profiles_dump_cmd(filepath: str, fmt: str, source: str, background: b
     Celery task and the task id is printed immediately.
     """
     if background:
-        async_result = do_ingest_profiles_dump.delay(filepath, fmt=fmt, source=source)
+        async_result = do_ingest_profiles_dump.delay(
+            filepath,
+            fmt=fmt,
+            source=source,
+            limit=limit,
+            rate_per_second=rate_per_second,
+        )
         click.echo(f"Queued ingest task: {async_result.id}")
         return
-    stats = do_ingest_profiles_dump(filepath, fmt=fmt, source=source)
+    stats = do_ingest_profiles_dump(
+        filepath,
+        fmt=fmt,
+        source=source,
+        limit=limit,
+        rate_per_second=rate_per_second,
+    )
     click.echo(
         f"Done. rows_seen={stats['rows_seen']}  processed={stats['processed']}  "
         f"skipped={stats['skipped']}  errors={stats['errors']}"

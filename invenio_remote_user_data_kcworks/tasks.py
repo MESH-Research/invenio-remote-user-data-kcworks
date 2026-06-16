@@ -9,6 +9,7 @@
 
 import contextlib
 import json
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -307,7 +308,6 @@ def do_user_data_update(
         Celery's JSON result backend; not the raw service tuple.
     """
     with app.app_context():
-        app.logger.error("Doing update task")
         if not idp:
             my_user_identity = UserIdentity.query.filter_by(
                 id_user=user_id, method=idp or "cilogon"
@@ -947,12 +947,52 @@ def _iter_username_rows(filepath: str):
             yield line.split(",", 1)[0].strip().strip('"')
 
 
+def _pace_ingest_rows(
+    *,
+    last_row_started_at: float | None,
+    rate_per_second: float,
+) -> float:
+    """Block until the next ingest row may start under a rows-per-second cap.
+
+    Args:
+        last_row_started_at: Monotonic timestamp when the previous row started,
+            or `None` before the first row.
+        rate_per_second: Maximum number of rows to start per second. `0` disables
+            pacing (returns immediately). Fractional values are allowed (e.g.
+            `0.5` = one row every 2 seconds).
+
+    Returns:
+        Monotonic timestamp marking when this row's processing started.
+
+    Raises:
+        ValueError: If `rate_per_second` is negative.
+    """
+    if rate_per_second < 0:
+        raise ValueError(
+            "do_ingest_profiles_dump: rate_per_second must be >= 0, "
+            f"got {rate_per_second}"
+        )
+    if rate_per_second == 0:
+        return time.monotonic()
+
+    now = time.monotonic()
+    if last_row_started_at is not None:
+        min_interval = 1.0 / rate_per_second
+        delay = last_row_started_at + min_interval - now
+        if delay > 0:
+            time.sleep(delay)
+            now = time.monotonic()
+    return now
+
+
 @shared_task(ignore_result=False)
 def do_ingest_profiles_dump(
     filepath: str,
     *,
     fmt: str = "auto",
     source: str = "knowledgeCommons",
+    limit: int | None = None,
+    rate_per_second: float = 2,
 ) -> dict[str, int]:
     """Bulk-create / update local users from a Profiles dump file.
 
@@ -975,7 +1015,10 @@ def do_ingest_profiles_dump(
     Both code paths run synchronously *inside this single task* so a
     long ingest is observable as one Celery entry rather than thousands
     of per-row tasks; this is friendlier to Profiles API rate limits and
-    easier for operators to monitor / abort.
+    easier for operators to monitor / abort. For the `usernames` format,
+    row starts are paced by `rate_per_second` (default 2 rows/s) via a
+    sleep between rows. Pacing is skipped for `jsonl` (no live API I/O)
+    and when `rate_per_second` is `0` (unlimited).
 
     The operation is idempotent provided Profiles API-served data does not
     change between runs. Already-existing KCWorks users simply have their
@@ -986,6 +1029,14 @@ def do_ingest_profiles_dump(
         fmt: `"auto"` (sniff), `"jsonl"`, or `"usernames"`.
         source: The IDP key to pass to `do_user_created`. Defaults to
             `"knowledgeCommons"`.
+        limit: Maximum number of dump rows to process; `None` processes
+            the entire file.
+        rate_per_second: Maximum number of dump rows to start per second for
+            the `usernames` format. A delay is inserted between row starts
+            when processing would otherwise exceed this rate. `0` disables
+            pacing. Fractional values are allowed (e.g. `0.5` = one row
+            every 2 seconds). Ignored for `jsonl` ingest (no Profiles API
+            calls).
 
     Returns:
         A stats dict with keys:
@@ -999,7 +1050,8 @@ def do_ingest_profiles_dump(
 
     Raises:
         ValueError: When `fmt` is not one of `"auto"`, `"jsonl"`, or
-            `"usernames"`.
+            `"usernames"`, when `rate_per_second` is negative, or when
+            `limit` is less than 1.
     """
     with app.app_context():
         if fmt == "auto":
@@ -1009,6 +1061,15 @@ def do_ingest_profiles_dump(
                 f"do_ingest_profiles_dump: unknown fmt={fmt!r} "
                 "(expected 'auto', 'jsonl', or 'usernames')"
             )
+        if rate_per_second < 0:
+            raise ValueError(
+                "do_ingest_profiles_dump: rate_per_second must be >= 0, "
+                f"got {rate_per_second}"
+            )
+        if limit is not None and limit < 1:
+            raise ValueError(
+                f"do_ingest_profiles_dump: limit must be >= 1, got {limit}"
+            )
 
         stats = {"rows_seen": 0, "processed": 0, "skipped": 0, "errors": 0}
 
@@ -1017,7 +1078,16 @@ def do_ingest_profiles_dump(
         else:
             iterator = _iter_username_rows(filepath)
 
+        pace_rows = fmt != "jsonl" and rate_per_second > 0
+        last_row_started_at: float | None = None
         for row in iterator:
+            if limit is not None and stats["rows_seen"] >= limit:
+                break
+            if pace_rows:
+                last_row_started_at = _pace_ingest_rows(
+                    last_row_started_at=last_row_started_at,
+                    rate_per_second=rate_per_second,
+                )
             stats["rows_seen"] += 1
             try:
                 if fmt == "jsonl":

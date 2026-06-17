@@ -99,6 +99,7 @@ test_config = {
     "RATELIMIT_ENABLED": False,
     "SECRET_KEY": "test-secret-key",
     "SECURITY_PASSWORD_SALT": "test-secret-key",
+    "KC_REMOTE_IDPS": ["cilogon"],
     "TESTING": True,
 }
 

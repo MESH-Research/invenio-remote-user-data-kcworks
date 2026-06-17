@@ -23,14 +23,20 @@ from .errors import NoIDPFoundError
 
 @shared_task(ignore_result=True)
 def do_user_data_update(
-    user_id: int, idp: str | None = None, remote_id: str | None = None, **kwargs
+    user_id: int,
+    idp: str | None = None,
+    remote_id: str | None = None,
+    kc_username: str | None = None,
+    **kwargs,
 ) -> dict[str, Any]:
     """Perform a user metadata update.
 
     Args:
         user_id: The local ID of the user to update.
         idp: The remote service configuration to use for the update.
-        remote_id: The ID of the user on the remote system.
+        remote_id: The OAuth ``sub`` on the remote system, when known.
+        kc_username: KC member name for Profiles API lookup (webhook path).
+        **kwargs: Reserved for future Celery options.
 
     Returns:
         Plain dict summarizing the run (IDs, group names, group deltas, and
@@ -52,13 +58,18 @@ def do_user_data_update(
 
             user, updated_data, groups, groups_changes = (
                 service.update_user_from_remote(
-                    system_identity, user_id, idp, remote_id
+                    system_identity,
+                    user_id,
+                    idp,
+                    remote_id=remote_id,
+                    kc_username=kc_username,
                 )
             )
             summary: dict[str, Any] = {
                 "user_id": user_id,
                 "idp": idp,
                 "remote_id": remote_id,
+                "kc_username": kc_username,
                 "completed_user_id": user.id if user is not None else None,
                 "groups": list(groups),
                 "group_changes": dict(groups_changes)

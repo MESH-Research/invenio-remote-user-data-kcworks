@@ -15,6 +15,23 @@ from invenio_remote_user_data_kcworks.services import (
     GroupRolesService,
     RemoteUserDataService,
 )
+from invenio_remote_user_data_kcworks.views import _resolve_webhook_config_idp
+
+
+def test_resolve_webhook_config_idp_knowledge_commons(app):
+    """knowledgeCommons idp maps to itself with cilogon auth method."""
+    with app.app_context():
+        config_idp, auth_method = _resolve_webhook_config_idp("knowledgeCommons")
+    assert config_idp == "knowledgeCommons"
+    assert auth_method == "cilogon"
+
+
+def test_resolve_webhook_config_idp_cilogon_alias(app):
+    """KC_REMOTE_IDPS aliases resolve to knowledgeCommons config."""
+    with app.app_context():
+        config_idp, auth_method = _resolve_webhook_config_idp("cilogon")
+    assert config_idp == "knowledgeCommons"
+    assert auth_method == "cilogon"
 
 
 def test_webhook_get(client, app, search_clear):
@@ -97,6 +114,53 @@ def test_webhook_get(client, app, search_clear):
                     "users": [
                         {"id": "joeuser", "event": "updated"},
                         # {"id": "5678", "event": "created"},
+                    ],
+                },
+            },
+        ),
+        (
+            {
+                "idp": "cilogon",
+                "updates": {
+                    "users": [
+                        {"id": "joeuser", "event": "updated"},
+                    ],
+                },
+            },
+            {
+                "users": [
+                    {
+                        "username": "joeuser",
+                        "email": "joeuser@hcommons.org",
+                        "name": "Joe User",
+                        "first_name": "Joe",
+                        "last_name": "User",
+                        "institutional_affiliation": (
+                            "Michigan State University"
+                        ),
+                        "orcid": "0000-0002-1825-0097",
+                        "groups": [
+                            {
+                                "id": 1000551,
+                                "name": "Digital Humanists",
+                                "role": "member",
+                            },
+                            {
+                                "id": 1000576,
+                                "name": "test bpges",
+                                "role": "admin",
+                            },
+                        ],
+                    },
+                ],
+            },
+            202,
+            {
+                "message": "Webhook notification accepted",
+                "status": 202,
+                "updates": {
+                    "users": [
+                        {"id": "joeuser", "event": "updated"},
                     ],
                 },
             },

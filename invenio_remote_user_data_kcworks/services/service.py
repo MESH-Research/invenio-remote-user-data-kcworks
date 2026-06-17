@@ -331,7 +331,10 @@ class RemoteUserDataService(Service):
                 if event["entity_type"] == "users" and event["event"] == "updated":
                     try:
                         do_user_data_update.delay(  # noqa
-                            event["user_id"], event["idp"], event["oauth_id"]
+                            event["user_id"],
+                            event["idp"],
+                            remote_id=event.get("oauth_id"),
+                            kc_username=event.get("kc_username"),
                         )  # noqa
                     except AssertionError:
                         self.logger.info(
@@ -347,8 +350,9 @@ class RemoteUserDataService(Service):
         identity,
         user_id: int,
         idp: str,
-        remote_id: str,
+        remote_id: str | None = None,
         remote_data: APIResponse | None = None,
+        kc_username: str | None = None,
         **kwargs,
     ) -> tuple[
         Optional[User],
@@ -362,10 +366,12 @@ class RemoteUserDataService(Service):
             user_id (int): The user's id in the Invenio database.
             idp (str): The identity provider name. This is not the oauth
                 method name but rather the name of the user data source.
-            remote_id (str): The identifier for the user on the remote idp
-                service.
+            remote_id (str | None): The OAuth ``sub`` on the remote IDP, when
+                known. Ignored when ``kc_username`` is provided.
             remote_data (APIResponse | None): A pre-fetched user data API response
                 to use instead of making a new remote request (optional)
+            kc_username (str | None): KC member name to fetch profile data by.
+                Preferred for webhook-triggered updates.
             **kwargs: Additional keyword arguments to pass to the method.
 
         Returns:
@@ -407,17 +413,34 @@ class RemoteUserDataService(Service):
         try:
             user: User = current_accounts.datastore.get_user_by_id(user_id)
 
-            if not remote_data or len(remote_data.data) == 0:
-                remote_data: APIResponse = UserDataAPIClient.fetch_user_profile(
-                    sub_id=remote_id
-                )
+            if not remote_data:
+                if kc_username:
+                    remote_data: Profile = UserDataAPIClient.fetch_user_profile(
+                        kc_username=kc_username
+                    )
+                elif remote_id:
+                    remote_data: APIResponse = UserDataAPIClient.fetch_user_profile(
+                        sub_id=remote_id
+                    )
 
-            if not remote_data.data or len(remote_data.data) == 0:
-                kc_username = user.user_profile.get("identifier_kc_username")
-                remote_data: Profile = UserDataAPIClient.fetch_user_profile(
-                    kc_username=kc_username
+            if (
+                remote_data
+                and hasattr(remote_data, "data")
+                and (not remote_data.data or len(remote_data.data) == 0)
+            ):
+                fallback_username = kc_username or user.user_profile.get(
+                    "identifier_kc_username"
                 )
-            else:
+                if fallback_username:
+                    remote_data: Profile = UserDataAPIClient.fetch_user_profile(
+                        kc_username=fallback_username
+                    )
+            elif (
+                remote_data
+                and hasattr(remote_data, "data")
+                and remote_data.data
+                and len(remote_data.data) > 0
+            ):
                 if not remote_data.meta.authorized:
                     self.logger.error(
                         "Problem with static bearer key for user data update."
@@ -432,7 +455,7 @@ class RemoteUserDataService(Service):
                 hasattr(remote_data, "results")
                 and remote_data.results
                 and len(remote_data.results) > 0
-            ):
+            ) or isinstance(remote_data, Profile):
                 try:
                     profile = remote_data.data[0].profile
                 except AttributeError:

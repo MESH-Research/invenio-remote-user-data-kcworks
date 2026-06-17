@@ -294,6 +294,15 @@ def update_user_data(
         "`0.5` = one user every 2s). Ignored for `jsonl` (no API I/O)."
     ),
 )
+@click.option(
+    "--offset",
+    type=click.IntRange(1),
+    default=1,
+    show_default=True,
+    help=(
+        "Start importing records at this line number in the source document. (`1` is the first document line.)"
+    ),
+)
 @with_appcontext
 def ingest_profiles_dump_cmd(
     filepath: str,
@@ -302,6 +311,7 @@ def ingest_profiles_dump_cmd(
     limit: int | None,
     background: bool,
     rate_per_second: float,
+    offset: int,
 ):
     r"""Bulk-create / update local users from a Profiles JSONL dump or username CSV.
 
@@ -324,6 +334,7 @@ def ingest_profiles_dump_cmd(
             source=source,
             limit=limit,
             rate_per_second=rate_per_second,
+            offset=offset,
         )
         click.echo(f"Queued ingest task: {async_result.id}")
         return
@@ -333,6 +344,7 @@ def ingest_profiles_dump_cmd(
         source=source,
         limit=limit,
         rate_per_second=rate_per_second,
+        offset=offset,
     )
     click.echo(
         f"Done. rows_seen={stats['rows_seen']}  processed={stats['processed']}  "

@@ -11,6 +11,7 @@ import contextlib
 import json
 import time
 from datetime import UTC, datetime, timedelta
+from itertools import islice
 from typing import Any
 
 import requests
@@ -831,10 +832,8 @@ def rewrite_records_for_kc_username_change(
             return summary
 
         try:
-            summary["records"] = (
-                current_record_kc_username_sync_service.rewrite_all(
-                    old_kc_username, new_kc_username
-                )
+            summary["records"] = current_record_kc_username_sync_service.rewrite_all(
+                old_kc_username, new_kc_username
             )
         except Exception:  # noqa: BLE001 - logged, never propagated
             summary["errors"] += 1
@@ -923,20 +922,26 @@ def _sniff_dump_format(filepath: str) -> str:
     return "usernames"
 
 
-def _iter_jsonl_rows(filepath: str):
-    """Yield parsed JSON objects from a JSONL file, skipping blank lines."""
+def _iter_jsonl_rows(filepath: str, offset: int):
+    """Yield ``(line_number, parsed_json)`` from a JSONL file, skipping blank lines.
+
+    ``line_number`` is the 1-based physical line number in the source file.
+    """
     with open(filepath, encoding="utf-8") as f:
-        for raw in f:
+        for line_no, raw in enumerate(islice(f, offset - 1, None), start=offset):
             line = raw.strip()
             if not line:
                 continue
-            yield json.loads(line)
+            yield line_no, json.loads(line)
 
 
-def _iter_username_rows(filepath: str):
-    """Yield trimmed usernames from a one-column file, skipping blanks and comments."""
+def _iter_username_rows(filepath: str, offset: int):
+    """Yield ``(line_number, username)`` from a one-column file, skipping blanks and comments.
+
+    ``line_number`` is the 1-based physical line number in the source file.
+    """
     with open(filepath, encoding="utf-8") as f:
-        for raw in f:
+        for line_no, raw in enumerate(islice(f, offset - 1, None), start=offset):
             line = raw.strip()
             if not line or line.startswith("#"):
                 continue
@@ -944,7 +949,7 @@ def _iter_username_rows(filepath: str):
             if line.lower() in {"username", '"username"'}:
                 continue
             # If somebody hands us a CSV with extra columns, take the first one.
-            yield line.split(",", 1)[0].strip().strip('"')
+            yield line_no, line.split(",", 1)[0].strip().strip('"')
 
 
 def _pace_ingest_rows(
@@ -1045,6 +1050,7 @@ def do_ingest_profiles_dump(
     source: str = "knowledgeCommons",
     limit: int | None = None,
     rate_per_second: float = 2,
+    offset: int = 1,
 ) -> dict[str, int]:
     """Bulk-create / update local users from a Profiles dump file.
 
@@ -1088,6 +1094,9 @@ def do_ingest_profiles_dump(
             pacing. Fractional values are allowed (e.g. `0.5` = one row
             every 2 seconds). Ignored for `jsonl` ingest (no Profiles API
             calls).
+        offset: Source document line number to begin with for the ingest.
+            The first line is `1` (Not 0 indexed.) Default is 1, which is
+            the first line of the file.
 
     Returns:
         A stats dict with keys:
@@ -1125,13 +1134,13 @@ def do_ingest_profiles_dump(
         stats = {"rows_seen": 0, "processed": 0, "skipped": 0, "errors": 0}
 
         if fmt == "jsonl":
-            iterator = _iter_jsonl_rows(filepath)
+            iterator = _iter_jsonl_rows(filepath, offset)
         else:
-            iterator = _iter_username_rows(filepath)
+            iterator = _iter_username_rows(filepath, offset)
 
         pace_rows = fmt != "jsonl" and rate_per_second > 0
         last_row_started_at: float | None = None
-        for row in iterator:
+        for line_no, row in iterator:
             if limit is not None and stats["rows_seen"] >= limit:
                 break
             if pace_rows:
@@ -1153,8 +1162,8 @@ def do_ingest_profiles_dump(
             except Exception:  # noqa: BLE001 - logged, never propagated
                 stats["errors"] += 1
                 app.logger.exception(
-                    "do_ingest_profiles_dump: row %d failed; continuing",
-                    stats["rows_seen"],
+                    "do_ingest_profiles_dump: line %d failed; continuing",
+                    line_no,
                 )
                 continue
             if user_id is None:

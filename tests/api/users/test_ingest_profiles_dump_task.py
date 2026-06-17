@@ -11,6 +11,7 @@ Exercises file parsing, format sniffing, stats, and per-row delegation with
 """
 
 import json
+import logging
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -197,7 +198,7 @@ def test_usernames_handles_extra_csv_columns(base_app, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_per_row_failures_are_counted_not_raised(base_app, tmp_path):
+def test_per_row_failures_are_counted_not_raised(base_app, tmp_path, caplog):
     """A raising row increments `errors`; the rest of the dump still runs."""
     p = tmp_path / "users.csv"
     p.write_text("alice\nbob\ncarol\n")
@@ -211,6 +212,7 @@ def test_per_row_failures_are_counted_not_raised(base_app, tmp_path):
     with (
         base_app.app_context(),
         patch.object(tasks_mod, "do_ingest_user_by_kc_username", fake),
+        caplog.at_level(logging.ERROR),
     ):
         stats = do_ingest_profiles_dump(str(p))
 
@@ -221,6 +223,39 @@ def test_per_row_failures_are_counted_not_raised(base_app, tmp_path):
         "errors": 1,
     }
     assert fake.call_count == 3
+    assert any(
+        "line 2 failed" in record.getMessage() for record in caplog.records
+    )
+
+
+def test_error_log_uses_absolute_line_number_with_offset(base_app, tmp_path, caplog):
+    """Failure logs report the physical source line, not the in-run row index."""
+    p = tmp_path / "users.csv"
+    p.write_text("alice\nbob\ncarol\n")
+
+    def side_effect(username, **_kwargs):
+        if username == "carol":
+            raise RuntimeError("boom")
+        return 99
+
+    fake = MagicMock(side_effect=side_effect)
+    with (
+        base_app.app_context(),
+        patch.object(tasks_mod, "do_ingest_user_by_kc_username", fake),
+        caplog.at_level(logging.ERROR),
+    ):
+        stats = do_ingest_profiles_dump(str(p), offset=2)
+
+    assert stats == {
+        "rows_seen": 2,
+        "processed": 1,
+        "skipped": 0,
+        "errors": 1,
+    }
+    assert fake.call_count == 2
+    assert any(
+        "line 3 failed" in record.getMessage() for record in caplog.records
+    )
 
 
 def test_do_user_created_returning_none_is_counted_as_skipped(base_app, tmp_path):

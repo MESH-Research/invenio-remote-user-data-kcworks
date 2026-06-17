@@ -165,6 +165,7 @@ rules.unresolved-global = "ignore"
 src.exclude = ["tests"]
 
 [tool.pytest]
+ini_options.python_files = ["test_*.py", "*_integration.py", "integration.py"]
 ini_options.addopts = """
 --ruff --doctest-modules
 --ignore=docs

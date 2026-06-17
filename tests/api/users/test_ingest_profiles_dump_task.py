@@ -4,17 +4,11 @@
 # and/or modify it under the terms of the MIT License; see LICENSE file for
 # more details.
 
-"""End-to-end tests for the `do_ingest_profiles_dump` Celery task.
+"""Wiring tests for the `do_ingest_profiles_dump` Celery task.
 
-The task is exercised through its public synchronous form
-(`do_ingest_profiles_dump(filepath, fmt=...)`) with the underlying
-`do_user_created` patched out so we can observe per-row arguments
-without provisioning real users. Format sniffing, JSONL replay, the
-plain-username CSV path, error tolerance, and stats accuracy are all
-covered.
+Exercises file parsing, format sniffing, stats, and per-row delegation with
+`do_user_created` / `do_ingest_user_by_kc_username` mocked (no real users).
 """
-
-from __future__ import annotations
 
 import json
 from typing import Any
@@ -55,23 +49,12 @@ def _profiles_row(sub: str, *, email: str = "x@example.org") -> dict[str, Any]:
     }
 
 
-@pytest.fixture()
-def app_ctx(base_app):
-    """Push the pytest-invenio app context for `with app.app_context()` calls.
-
-    Yields:
-        The pytest-invenio `base_app` whose context is active for the test.
-    """
-    with base_app.app_context():
-        yield base_app
-
-
 # ---------------------------------------------------------------------------
 # JSONL path
 # ---------------------------------------------------------------------------
 
 
-def test_jsonl_with_auto_sniff_replays_each_row_with_remote_data(tmp_path, app_ctx):
+def test_jsonl_with_auto_sniff_replays_each_row_with_remote_data(base_app, tmp_path):
     """Each JSONL line becomes a `do_user_created(..., remote_data=...)` call.
 
     The task should sniff format = jsonl from the leading `{`, validate
@@ -84,7 +67,7 @@ def test_jsonl_with_auto_sniff_replays_each_row_with_remote_data(tmp_path, app_c
     p.write_text("\n".join(json.dumps(r) for r in rows))
 
     fake = MagicMock(side_effect=[101, 202])
-    with patch.object(tasks_mod, "do_user_created", fake):
+    with base_app.app_context(), patch.object(tasks_mod, "do_user_created", fake):
         stats = do_ingest_profiles_dump(str(p))
 
     assert stats == {
@@ -102,7 +85,7 @@ def test_jsonl_with_auto_sniff_replays_each_row_with_remote_data(tmp_path, app_c
         assert rd.data[0].sub == call.args[1]
 
 
-def test_jsonl_skips_blank_lines(tmp_path, app_ctx):
+def test_jsonl_skips_blank_lines(base_app, tmp_path):
     """Blank lines in the JSONL file are not counted and not processed."""
     p = tmp_path / "dump.jsonl"
     rows = [_profiles_row("sub-aaa"), _profiles_row("sub-bbb")]
@@ -114,14 +97,14 @@ def test_jsonl_skips_blank_lines(tmp_path, app_ctx):
     )
 
     fake = MagicMock(return_value=1)
-    with patch.object(tasks_mod, "do_user_created", fake):
+    with base_app.app_context(), patch.object(tasks_mod, "do_user_created", fake):
         stats = do_ingest_profiles_dump(str(p), fmt="jsonl")
 
     assert stats["rows_seen"] == 2
     assert fake.call_count == 2
 
 
-def test_jsonl_row_with_empty_data_is_skipped(tmp_path, app_ctx):
+def test_jsonl_row_with_empty_data_is_skipped(base_app, tmp_path):
     """Rows whose `data` array is empty are counted as `skipped`, not `errors`."""
     p = tmp_path / "dump.jsonl"
     p.write_text(
@@ -133,7 +116,7 @@ def test_jsonl_row_with_empty_data_is_skipped(tmp_path, app_ctx):
     )
 
     fake = MagicMock(return_value=42)
-    with patch.object(tasks_mod, "do_user_created", fake):
+    with base_app.app_context(), patch.object(tasks_mod, "do_user_created", fake):
         stats = do_ingest_profiles_dump(str(p), fmt="jsonl")
 
     assert stats == {
@@ -150,11 +133,19 @@ def test_jsonl_row_with_empty_data_is_skipped(tmp_path, app_ctx):
 # ---------------------------------------------------------------------------
 
 
-def test_usernames_with_auto_sniff_calls_do_user_created_per_row(tmp_path, app_ctx):
-    """Each non-blank, non-comment line becomes a `do_user_created` call.
+def test_usernames_dump_delegates_parsed_lines_to_ingest_helper(base_app, tmp_path):
+    """Exercise `do_ingest_profiles_dump` file-loop wiring for username CSV input.
 
-    `remote_data` is *not* passed, so the underlying task hits the live
-    Profiles API exactly as a webhook event would.
+    This is **not** an end-to-end username ingest test: `do_ingest_user_by_kc_username`
+    is mocked, so no Profiles API calls or user provisioning occur.
+
+    Asserts that the dump task:
+
+    - auto-sniffs `usernames` format (header line is not JSON);
+    - skips `#` comment lines, blank lines, and a `username` CSV header;
+    - invokes `do_ingest_user_by_kc_username` once per remaining row with
+      `source="knowledgeCommons"`;
+    - maps non-`None` mock return values into `processed` stats.
     """
     p = tmp_path / "users.csv"
     p.write_text(
@@ -167,7 +158,10 @@ def test_usernames_with_auto_sniff_calls_do_user_created_per_row(tmp_path, app_c
     )
 
     fake = MagicMock(side_effect=[1, 2, 3])
-    with patch.object(tasks_mod, "do_user_created", fake):
+    with (
+        base_app.app_context(),
+        patch.object(tasks_mod, "do_ingest_user_by_kc_username", fake),
+    ):
         stats = do_ingest_profiles_dump(str(p))
 
     assert stats == {
@@ -176,23 +170,26 @@ def test_usernames_with_auto_sniff_calls_do_user_created_per_row(tmp_path, app_c
         "skipped": 0,
         "errors": 0,
     }
-    seen = [c.args[1] for c in fake.call_args_list]
+    seen = [c.args[0] for c in fake.call_args_list]
     assert seen == ["alice", "bob", "carol"]
     for call in fake.call_args_list:
-        assert "remote_data" not in call.kwargs
+        assert call.kwargs.get("source") == "knowledgeCommons"
 
 
-def test_usernames_handles_extra_csv_columns(tmp_path, app_ctx):
+def test_usernames_handles_extra_csv_columns(base_app, tmp_path):
     """If somebody hands us a wider CSV, only the first column is taken."""
     p = tmp_path / "users.csv"
     p.write_text("alice,foo\nbob,bar\n")
 
     fake = MagicMock(return_value=1)
-    with patch.object(tasks_mod, "do_user_created", fake):
+    with (
+        base_app.app_context(),
+        patch.object(tasks_mod, "do_ingest_user_by_kc_username", fake),
+    ):
         stats = do_ingest_profiles_dump(str(p), fmt="usernames")
 
     assert stats["rows_seen"] == 2
-    assert [c.args[1] for c in fake.call_args_list] == ["alice", "bob"]
+    assert [c.args[0] for c in fake.call_args_list] == ["alice", "bob"]
 
 
 # ---------------------------------------------------------------------------
@@ -200,18 +197,21 @@ def test_usernames_handles_extra_csv_columns(tmp_path, app_ctx):
 # ---------------------------------------------------------------------------
 
 
-def test_per_row_failures_are_counted_not_raised(tmp_path, app_ctx):
+def test_per_row_failures_are_counted_not_raised(base_app, tmp_path):
     """A raising row increments `errors`; the rest of the dump still runs."""
     p = tmp_path / "users.csv"
     p.write_text("alice\nbob\ncarol\n")
 
-    def side_effect(_idp, username, **_kwargs):
+    def side_effect(username, **_kwargs):
         if username == "bob":
             raise RuntimeError("boom")
         return 99
 
     fake = MagicMock(side_effect=side_effect)
-    with patch.object(tasks_mod, "do_user_created", fake):
+    with (
+        base_app.app_context(),
+        patch.object(tasks_mod, "do_ingest_user_by_kc_username", fake),
+    ):
         stats = do_ingest_profiles_dump(str(p))
 
     assert stats == {
@@ -223,13 +223,16 @@ def test_per_row_failures_are_counted_not_raised(tmp_path, app_ctx):
     assert fake.call_count == 3
 
 
-def test_do_user_created_returning_none_is_counted_as_skipped(tmp_path, app_ctx):
+def test_do_user_created_returning_none_is_counted_as_skipped(base_app, tmp_path):
     """Rows where the underlying task returns `None` are `skipped`, not `errors`."""
     p = tmp_path / "users.csv"
     p.write_text("alice\nbob\n")
 
     fake = MagicMock(side_effect=[None, 99])
-    with patch.object(tasks_mod, "do_user_created", fake):
+    with (
+        base_app.app_context(),
+        patch.object(tasks_mod, "do_ingest_user_by_kc_username", fake),
+    ):
         stats = do_ingest_profiles_dump(str(p))
 
     assert stats == {
@@ -240,22 +243,22 @@ def test_do_user_created_returning_none_is_counted_as_skipped(tmp_path, app_ctx)
     }
 
 
-def test_invalid_fmt_raises_value_error(tmp_path, app_ctx):
+def test_invalid_fmt_raises_value_error(base_app, tmp_path):
     """An unknown explicit `fmt` is rejected loudly before reading the file."""
     p = tmp_path / "users.csv"
     p.write_text("alice\n")
 
-    with pytest.raises(ValueError, match="unknown fmt"):
+    with base_app.app_context(), pytest.raises(ValueError, match="unknown fmt"):
         do_ingest_profiles_dump(str(p), fmt="xml")
 
 
-def test_empty_file_yields_zeroed_stats(tmp_path, app_ctx):
+def test_empty_file_yields_zeroed_stats(base_app, tmp_path):
     """A whitespace-only file walks zero rows and makes zero calls."""
     p = tmp_path / "empty.csv"
     p.write_text("\n\n\n")
 
     fake = MagicMock()
-    with patch.object(tasks_mod, "do_user_created", fake):
+    with base_app.app_context(), patch.object(tasks_mod, "do_user_created", fake):
         stats = do_ingest_profiles_dump(str(p))
 
     assert stats == {

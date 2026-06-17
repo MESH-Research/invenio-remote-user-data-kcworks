@@ -25,7 +25,7 @@ from invenio_records_resources.services import Service
 from werkzeug.local import LocalProxy
 
 from ..client import UserDataAPIClient
-from ..errors import LocalUserNotFoundError
+from ..errors import LocalUserNotFoundError, UserCreationFailed
 from ..types.profiles_api import APIResponse, Profile
 from ..utils.auth import CILogonHelpers
 from .config import RemoteGroupDataServiceConfig, RemoteUserDataServiceConfig
@@ -289,6 +289,179 @@ class RemoteUserDataService(Service):
             lambda: app.extensions["invenio-communities"].service
         )
 
+    @staticmethod
+    def find_local_user_by_kc_username(kc_username: str) -> User | None:
+        """Return a local user keyed by KC username, if one exists.
+
+        Matches `identifier_kc_username`, legacy `UserIdentity` rows, and
+        other heuristics shared with login matching.
+
+        Args:
+            kc_username: The Commons / KC member username.
+
+        Returns:
+            The matching `User`, or `None`.
+        """
+        if not kc_username:
+            return None
+        matched = CILogonHelpers.try_get_user_by_kc_username(
+            kc_username, "knowledgeCommons"
+        )
+        if isinstance(matched, User):
+            return matched
+        if isinstance(matched, list):
+            return matched[0] if len(matched) == 1 else None
+        return None
+
+    @staticmethod
+    def fetch_subs_profile_for_kc_username(
+        kc_username: str,
+    ) -> APIResponse | None:
+        """Fetch Profiles subs payload for a KC username when OAuth is linked.
+
+        Uses `GET …/subs/{kc_username}/`, the canonical subs-index lookup for
+        KC users who already have one or more linked identity providers.
+
+        Args:
+            kc_username: The Commons / KC member username.
+
+        Returns:
+            Parsed `APIResponse` when `data` is non-empty; otherwise `None`.
+        """
+        if not kc_username:
+            return None
+        response = UserDataAPIClient.fetch_user_profile(
+            kc_username=kc_username,
+            use_sub_endpoint=True,
+        )
+        if isinstance(response, APIResponse) and response.data:
+            return response
+        return None
+
+    def _apply_profile_to_local_user(
+        self,
+        user: User,
+        profile: Profile,
+        *,
+        remote_service: str,
+        **kwargs,
+    ) -> tuple[User, Mapping[str, Any], list[str], Mapping[str, Any]]:
+        """Apply a Profiles `Profile` onto an existing local `User`.
+
+        Shared by `update_user_from_remote` and members-only username ingest.
+
+        Args:
+            user: Local KCWorks user to update.
+            profile: Remote Profiles profile payload.
+            remote_service: Remote service key for group role naming
+                (e.g. `"knowledgeCommons"`).
+            **kwargs: Forwarded to `CILogonHelpers.update_local_user_data`.
+
+        Returns:
+            A four-tuple of `(user, user_field_changes, groups, group_changes)`.
+        """
+        self.logger.debug(f"final remote data profile: {pformat(profile)}")
+
+        group_changes = CILogonHelpers.calculate_group_changes(profile, user)
+        user_changes, new_data = CILogonHelpers.calculate_user_changes(profile, user)
+
+        new_kc_username = (user_changes.get("user_profile") or {}).get(
+            "identifier_kc_username"
+        )
+        old_kc_username = (
+            (user.user_profile or {}).get("identifier_kc_username")
+            if new_kc_username
+            else None
+        )
+
+        updated_data = CILogonHelpers.update_local_user_data(
+            user,
+            new_data,
+            user_changes,
+            group_changes,
+            remote_service,
+            **kwargs,
+        )
+
+        if old_kc_username and new_kc_username and old_kc_username != new_kc_username:
+            from ..tasks import rewrite_records_for_kc_username_change
+
+            rewrite_records_for_kc_username_change.delay(
+                user.id, old_kc_username, new_kc_username
+            )
+
+        return (
+            user,
+            updated_data["user"],
+            updated_data["groups"],
+            group_changes,
+        )
+
+    def provision_user_from_members_profile(
+        self,
+        identity,
+        kc_username: str,
+        *,
+        idp: str = "knowledgeCommons",
+        profile: Profile | None = None,
+    ) -> User | None:
+        """Create a local user from `members/{kc_username}/` without a `sub`.
+
+        Used by username-list ingest for Commons members who exist on Profiles
+        but have not linked OAuth yet. Does **not** create a `UserIdentity` or
+        send Profiles status callbacks.
+
+        Callers must skip when a local user with this KC username already exists
+        (see `do_ingest_user_by_kc_username`).
+
+        Args:
+            identity: Invenio identity for permission checks.
+            kc_username: Commons member username to provision.
+            idp: Remote IDP configuration key (default `knowledgeCommons`).
+            profile: Optional pre-fetched `Profile`; when omitted, fetched live
+                from the members endpoint.
+
+        Returns:
+            The created local `User` after profile fields and groups are applied,
+            or `None` when the remote profile is missing or user creation fails.
+        """
+        self.require_permission(identity, "trigger_update")
+
+        remote_service = idp
+        if idp in self.config.kc_remote_idps:
+            remote_service = "knowledgeCommons"
+
+        if profile is None:
+            fetched = UserDataAPIClient.fetch_user_profile(
+                kc_username=kc_username,
+                use_sub_endpoint=False,
+            )
+            if not isinstance(fetched, Profile) or not fetched.username:
+                self.logger.info(
+                    "provision_user_from_members_profile: no members profile "
+                    "for kc_username=%s",
+                    kc_username,
+                )
+                return None
+            profile = fetched
+
+        try:
+            user = CILogonHelpers.create_new_user(profile)
+        except UserCreationFailed:
+            self.logger.warning(
+                "provision_user_from_members_profile: could not create user "
+                "for kc_username=%s",
+                kc_username,
+            )
+            return None
+
+        self._apply_profile_to_local_user(
+            user,
+            profile,
+            remote_service=remote_service,
+        )
+        return user
+
     def update_user_from_remote(
         self,
         identity,
@@ -391,43 +564,11 @@ class RemoteUserDataService(Service):
             self.logger.warning(f"User {remote_id} not found on remote server.")
             return user, remote_data, [], {}
 
-        self.logger.debug(f"final remote data profile: {pformat(profile)}")
-
-        group_changes = CILogonHelpers.calculate_group_changes(profile, user)
-        user_changes, new_data = CILogonHelpers.calculate_user_changes(profile, user)
-
-        new_kc_username = (user_changes.get("user_profile") or {}).get(
-            "identifier_kc_username"
-        )
-        old_kc_username = (
-            (user.user_profile or {}).get("identifier_kc_username")
-            if new_kc_username
-            else None
-        )
-
-        updated_data = CILogonHelpers.update_local_user_data(
+        return self._apply_profile_to_local_user(
             user,
-            new_data,
-            user_changes,
-            group_changes,
-            remote_service,
+            profile,
+            remote_service=remote_service,
             **kwargs,
-        )
-
-        if old_kc_username and new_kc_username and old_kc_username != new_kc_username:
-            # Imported lazily to avoid a circular import via `tasks.py`,
-            # which itself imports `current_remote_user_data_service`.
-            from ..tasks import rewrite_records_for_kc_username_change
-
-            rewrite_records_for_kc_username_change.delay(
-                user.id, old_kc_username, new_kc_username
-            )
-
-        return (
-            user,
-            updated_data["user"],
-            updated_data["groups"],
-            group_changes,
         )
 
     def log_user_out_global(self, kc_username: str):

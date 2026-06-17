@@ -985,6 +985,58 @@ def _pace_ingest_rows(
     return now
 
 
+def do_ingest_user_by_kc_username(
+    kc_username: str,
+    *,
+    source: str = "knowledgeCommons",
+) -> int | None:
+    """Provision one KCWorks user from a KC username (bulk ingest helper).
+
+    1. Skip when a local user with this `identifier_kc_username` already exists.
+    2. ``GET subs/{kc_username}/`` — when Profiles returns linked subs, delegate
+       to `do_user_created` with the resolved `sub` and pre-fetched payload.
+    3. Otherwise create from ``GET members/{kc_username}/`` via
+       `provision_user_from_members_profile` (no `UserIdentity`, no status
+       callbacks).
+
+    Args:
+        kc_username: Commons member username from the ingest file.
+        source: IDP key passed to `do_user_created` on the sub path.
+
+    Returns:
+        Local user id when a row was provisioned or sub-delegation succeeded;
+        `None` when the row was skipped or remote data was insufficient.
+    """
+    service = current_remote_user_data_service
+    kc_username = (kc_username or "").strip()
+    if not kc_username:
+        app.logger.warning("do_ingest_user_by_kc_username: empty username; skipping")
+        return None
+
+    if service.find_local_user_by_kc_username(kc_username) is not None:
+        app.logger.debug(
+            "do_ingest_user_by_kc_username: local user exists for %s; skipping",
+            kc_username,
+        )
+        return None
+
+    subs_payload = service.fetch_subs_profile_for_kc_username(kc_username)
+    if subs_payload is not None and subs_payload.data:
+        oauth_id = subs_payload.data[0].sub
+        return do_user_created(source, oauth_id, remote_data=subs_payload)
+
+    user = service.provision_user_from_members_profile(
+        system_identity,
+        kc_username,
+        idp=source,
+    )
+    if user is None:
+        return None
+
+    sync_user_to_names.delay(user.id)
+    return user.id
+
+
 @shared_task(ignore_result=False)
 def do_ingest_profiles_dump(
     filepath: str,
@@ -1004,13 +1056,12 @@ def do_ingest_profiles_dump(
       every row we call `do_user_created` *synchronously* with
       `remote_data=<row>` so no live Profiles API I/O is performed.
     - **Usernames** (`fmt="usernames"`): one KC username per line (CSV
-      header `username` and `#` comment lines tolerated). For every row
-      we call `do_user_created` *synchronously* without pre-fetched
-      data, so the live Profiles API is hit per row exactly as a
-      webhook `users.created` event would. The downstream lazy-
-      provisioning logic (the `UserIdentity`-exists short-circuit
-      delegating to `do_user_data_update`) gives "create or update"
-      semantics for both new and known usernames.
+      header `username` and `#` comment lines tolerated). Each row is
+      handled by `do_ingest_user_by_kc_username`, which skips existing
+      local users, delegates to `do_user_created` when
+      ``subs/{username}/`` returns linked subs, or provisions from
+      ``members/{username}/`` when no sub exists yet (no `UserIdentity`
+      until OAuth is linked on Profiles).
 
     Both code paths run synchronously *inside this single task* so a
     long ingest is observable as one Celery entry rather than thousands
@@ -1098,7 +1149,7 @@ def do_ingest_profiles_dump(
                     oauth_id = payload.data[0].sub
                     user_id = do_user_created(source, oauth_id, remote_data=payload)
                 else:
-                    user_id = do_user_created(source, row)
+                    user_id = do_ingest_user_by_kc_username(row, source=source)
             except Exception:  # noqa: BLE001 - logged, never propagated
                 stats["errors"] += 1
                 app.logger.exception(

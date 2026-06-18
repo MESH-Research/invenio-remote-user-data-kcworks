@@ -28,7 +28,6 @@ from flask_login import login_user
 from invenio_accounts.models import User, UserIdentity
 from invenio_accounts.sessions import delete_user_sessions
 from invenio_db import db
-from invenio_queues.proxies import current_queues
 from invenio_remote_user_data_kcworks.proxies import (
     current_remote_user_data_service,
 )
@@ -48,7 +47,7 @@ from .errors import (
     UserDataRequestFailed,
     UserDataRequestTimeout,
 )
-from .signals import remote_data_updated
+from .tasks import do_group_data_update, do_user_data_update
 from .utils import BrokerHelpers, CILogonHelpers, safe_redirect_target
 
 
@@ -85,9 +84,7 @@ def _resolve_webhook_config_idp(idp: str) -> tuple[str, str]:
     raise BadRequest(f"Unknown idp {idp!r}")
 
 
-def _resolve_user_for_webhook(
-    kc_username: str, auth_method: str
-) -> User | None:
+def _resolve_user_for_webhook(kc_username: str, auth_method: str) -> User | None:
     """Look up a local user by KC member name from a webhook ``users`` event.
 
     Args:
@@ -260,6 +257,43 @@ def sso_broker_callback() -> Response:
         raise e
 
 
+def _enqueue_update_tasks(events):
+    """Enqueue Celery tasks on the appropriate queue for each update type."""
+
+    for event in events:
+        if event["entity_type"] == "users" and event["event"] == "updated":
+            try:
+                do_user_data_update.delay(  # noqa
+                    event["user_id"],
+                    event["idp"],
+                    remote_id=event.get("oauth_id"),
+                    kc_username=event.get("kc_username"),
+                )  # noqa
+            except AssertionError:
+                app.logger.info(
+                    f"Cannot update: user {event['kc_username']} does not exist in Invenio."
+                )
+        elif event["entity_type"] == "groups" and event["event"] in [
+            "created",
+            "updated",
+        ]:
+            celery_result = do_group_data_update.delay(  # noqa:F841
+                event["idp"], event["id"]
+            )  # type: ignore
+        elif event["entity_type"] == "groups" and event["event"] == "deleted":
+            app.logger.error(
+                "Received webhook signal to delete group %s. Group role deletion from remote "
+                "signal is not yet implemented.",
+                event["id"],
+            )
+        else:
+            app.logger.error(
+                "Received webhook signal for unexpected event: %s, %s",
+                event["entity_type"],
+                event["event"],
+            )
+
+
 class RemoteUserDataUpdateWebhook(MethodView):
     """View class for the user/group data update webhook receiver.
 
@@ -417,9 +451,7 @@ class RemoteUserDataUpdateWebhook(MethodView):
                                         "event": u["event"],
                                         "kc_username": kc_username,
                                         "oauth_id": (
-                                            user_identity.id
-                                            if user_identity
-                                            else None
+                                            user_identity.id if user_identity else None
                                         ),
                                         "user_id": user.id,
                                     })
@@ -444,8 +476,7 @@ class RemoteUserDataUpdateWebhook(MethodView):
                     self.logger.warning(data)
 
             if len(events) > 0:
-                current_queues.queues["user-data-updates"].publish(events)
-                remote_data_updated.send(app._get_current_object(), events=events)
+                _enqueue_update_tasks(events)
             else:
                 if not users and bad_users or not groups and bad_groups:
                     entity_string = ""

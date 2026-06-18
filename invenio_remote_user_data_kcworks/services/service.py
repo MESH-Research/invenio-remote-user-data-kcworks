@@ -26,15 +26,12 @@ from invenio_group_collections_kcworks.proxies import (
     current_group_collections_service,
 )  # noqa
 from invenio_group_collections_kcworks.service import remote_to_invenio_visibility
-from invenio_queues.proxies import current_queues
 from invenio_records_resources.services import Service
 from werkzeug.local import LocalProxy
 
 from ..client import UserDataAPIClient
 from ..types import APIResponse, Profile
 from .group_roles import GroupRolesService
-from ..signals import remote_data_updated
-from ..tasks import do_group_data_update, do_user_data_update
 from ..utils import (
     CILogonHelpers,
     diff_between_nested_dicts,
@@ -62,26 +59,6 @@ class RemoteGroupDataService(Service):
         )
         self.group_data_stale = True
         self.group_roles_service = GroupRolesService(self)
-
-        @remote_data_updated.connect_via(app)
-        def on_webhook_update_signal(_, events: list) -> None:
-            """Update group roles and metadata data from remote server
-            when webhook is triggered.
-            """
-            self.logger.debug("RemoteGroupDataService: webhook update signal received")
-
-            for event in current_queues.queues["user-data-updates"].consume():
-                if event["entity_type"] == "groups" and event["event"] in [
-                    "created",
-                    "updated",
-                ]:
-                    celery_result = do_group_data_update.delay(  # noqa:F841
-                        event["idp"], event["id"]
-                    )  # type: ignore
-                elif event["entity_type"] == "groups" and event["event"] == "deleted":
-                    raise NotImplementedError(
-                        "Group role deletion from remote signal is not yet implemented."
-                    )
 
     def _update_community_metadata_dict(
         self, starting_dict: dict, new_data: dict
@@ -319,31 +296,6 @@ class RemoteUserDataService(Service):
         self.communities_service = LocalProxy(
             lambda: app.extensions["invenio-communities"].service
         )
-        # TODO: Is there a risk of colliding operations?
-        self.update_in_progress = False
-
-        @remote_data_updated.connect_via(app)
-        def on_webhook_update_signal(_, events: list) -> None:
-            """Update user data from remote when webhook is triggered."""
-            self.logger.debug("User data update webhook signal received")
-
-            for event in current_queues.queues["user-data-updates"].consume():
-                if event["entity_type"] == "users" and event["event"] == "updated":
-                    try:
-                        do_user_data_update.delay(  # noqa
-                            event["user_id"],
-                            event["idp"],
-                            remote_id=event.get("oauth_id"),
-                            kc_username=event.get("kc_username"),
-                        )  # noqa
-                    except AssertionError:
-                        self.logger.info(
-                            f"Cannot update: user {event['id']} does not exist"
-                            " in Invenio."
-                        )
-                elif event["entity_type"] == "groups" and event["event"] == "updated":
-                    # TODO: implement group updates and group/user creation
-                    pass
 
     def update_user_from_remote(
         self,
@@ -448,14 +400,18 @@ class RemoteUserDataService(Service):
                     return user, remote_data, [], {}
 
             if (
-                hasattr(remote_data, "data")
-                and remote_data.data
-                and len(remote_data.data) > 0
-            ) or (
-                hasattr(remote_data, "results")
-                and remote_data.results
-                and len(remote_data.results) > 0
-            ) or isinstance(remote_data, Profile):
+                (
+                    hasattr(remote_data, "data")
+                    and remote_data.data
+                    and len(remote_data.data) > 0
+                )
+                or (
+                    hasattr(remote_data, "results")
+                    and remote_data.results
+                    and len(remote_data.results) > 0
+                )
+                or isinstance(remote_data, Profile)
+            ):
                 try:
                     profile = remote_data.data[0].profile
                 except AttributeError:

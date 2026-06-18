@@ -25,7 +25,6 @@ from invenio_communities.proxies import (
 )
 from invenio_oauthclient.models import UserIdentity
 from invenio_oauth2server.models import Token
-from invenio_queues.proxies import current_queues
 from invenio_records_resources.services.custom_fields import (
     TextCF,
 )
@@ -44,7 +43,6 @@ from invenio_search.engine import search as search_engine
 from invenio_search.utils import build_alias_name
 from invenio_vocabularies.proxies import current_service as vocabulary_service
 from invenio_vocabularies.records.api import Vocabulary
-from kombu import Exchange
 
 from marshmallow import Schema, fields
 import os
@@ -86,12 +84,6 @@ test_config = {
     },
     "BROKER_URL": "amqp://guest:guest@localhost:5672//",
     "QUEUES_BROKER_URL": "amqp://guest:guest@localhost:5672//",
-    "REMOTE_USER_DATA_MQ_EXCHANGE": Exchange(
-        "user-data-updates",
-        type="direct",
-        delivery_mode="transient",  # in-memory queue
-        durable=True,
-    ),
     "CELERY_CACHE_BACKEND": "memory",
     "CELERY_RESULT_BACKEND": "cache",
     "CELERY_TASK_ALWAYS_EAGER": True,
@@ -469,17 +461,6 @@ def app_config(app_config) -> dict:
 @pytest.fixture(scope="module")
 def create_app(entry_points):
     return create_api
-
-
-@pytest.fixture()
-def event_queues(app):
-    """Delete and declare test queues."""
-    current_queues.delete()
-    try:
-        current_queues.declare()
-        yield
-    finally:
-        current_queues.delete()
 
 
 @pytest.fixture(scope="function")

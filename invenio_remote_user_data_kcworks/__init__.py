@@ -199,12 +199,6 @@ REMOTE_USER_DATA_UPDATE_INTERVAL
     The period (in minutes) between background calls to the remote API to
     update user data during a logged-in session. Default is 60 minutes.
 
-REMOTE_USER_DATA_MQ_EXCHANGE
-
-    The configuration for the message queue exchange used to trigger the
-    background update calls. Default is a direct exchange with transient
-    delivery mode (in-memory queue).
-
 Environment variables
 ~~~~~~~~~~~~~~~~~~~~~
 

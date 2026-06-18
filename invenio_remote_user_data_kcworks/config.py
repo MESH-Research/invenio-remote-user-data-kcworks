@@ -38,12 +38,6 @@ REMOTE_USER_DATA_API_ENDPOINTS = {
 
 REMOTE_USER_DATA_UPDATE_INTERVAL = 1  # 1 hour
 
-REMOTE_USER_DATA_MQ_EXCHANGE = Exchange(
-    "user-data-updates",
-    type="direct",
-    delivery_mode="transient",  # in-memory queue
-)
-
 COMMUNITIES_PERMISSION_POLICY = CustomCommunitiesPermissionPolicy
 
 REMOTE_USER_DATA_PERMISSION_POLICY = RemoteUserDataPermissionPolicy

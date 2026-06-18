@@ -88,12 +88,15 @@ def on_remote_data_updated(_, events: list) -> None:
 
         if entity_type == "users" and evt == "updated":
             do_user_data_update.delay(  # noqa
-                event["user_id"], event["idp"], event["oauth_id"]
+                event["user_id"],
+                event["idp"],
+                kc_username=event.get("kc_username"),
             )
         elif entity_type == "users" and evt == "created":
-            # Lazy provisioning: the task is idempotent and will
-            # short-circuit if the user already exists.
-            do_user_created.delay(event["idp"], event["oauth_id"])  # noqa
+            do_user_created.delay(  # noqa
+                event["idp"],
+                kc_username=event.get("kc_username"),
+            )
         elif entity_type == "groups" and evt in ("created", "updated"):
             do_group_data_update.delay(event["idp"], event["id"])  # noqa
         else:

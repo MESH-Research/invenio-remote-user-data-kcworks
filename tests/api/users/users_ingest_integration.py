@@ -6,12 +6,11 @@
 
 """Integration tests for the username bulk-ingest workflow.
 
-Exercises `do_ingest_user_by_kc_username` and `do_ingest_profiles_dump` without
-mocking the service layer: real Profiles HTTP is stubbed, local users and Names
-records are created, and `sync_user_to_names` runs via eager Celery.
+Exercises `do_user_created` (username-list ingest) and `do_ingest_profiles_dump`
+without mocking the service layer: real Profiles HTTP is stubbed, local users
+and Names records are created, and `sync_user_to_names` runs via eager Celery.
 
-Unit/service coverage lives in `test_username_ingest_service.py` and
-`test_ingest_user_by_kc_username.py`.
+Unit/service coverage lives in `test_username_ingest_service.py`.
 """
 
 import re
@@ -27,13 +26,25 @@ from invenio_remote_user_data_kcworks.proxies import (
 )
 from invenio_remote_user_data_kcworks.tasks import (
     do_ingest_profiles_dump,
-    do_ingest_user_by_kc_username,
+    do_user_created,
 )
 from tests.fixtures.idms import (
     empty_api_response,
     minimal_api_response,
     minimal_profile,
 )
+
+
+def _ingest_username_row(kc_username: str, *, source: str = "knowledgeCommons"):
+    """Username-list ingest: same kwargs as `do_ingest_profiles_dump` usernames path."""
+    return do_user_created(
+        source,
+        kc_username=kc_username,
+        resolve_sub_from_username=True,
+        update_existing=False,
+        send_status_callback=False,
+        run_synchronously=True,
+    )
 
 
 def _subs_by_username_url(base_api_url: str, kc_username: str) -> str:
@@ -101,7 +112,7 @@ def test_members_path_creates_user_and_names_record(
     )
 
     with app.app_context():
-        user_id = do_ingest_user_by_kc_username(kc_username)
+        user_id = _ingest_username_row(kc_username)
 
     assert user_id is not None
     db.session.expire_all()
@@ -127,7 +138,7 @@ def test_skips_when_local_user_already_exists(
     )
 
     with app.app_context():
-        result = do_ingest_user_by_kc_username("integ-skip")
+        result = _ingest_username_row("integ-skip")
 
     assert result is None
     assert len(requests_mock.request_history) == 0
@@ -148,7 +159,7 @@ def test_subs_path_creates_user_with_identity_and_names(
     _mock_subs_linked_profile(requests_mock, base, kc_username, sub=sub, email=email)
 
     with app.app_context():
-        user_id = do_ingest_user_by_kc_username(kc_username)
+        user_id = _ingest_username_row(kc_username)
 
     assert user_id is not None
     db.session.expire_all()

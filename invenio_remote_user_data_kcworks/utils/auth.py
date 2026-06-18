@@ -71,10 +71,11 @@ class UserIdentifierHelpers:
     ) -> str | None:
         """Resolve a KC member name for status callback purposes.
 
-        The webhook payload's `id` is the OAuth `sub` (i.e. the value
-        stored as `UserIdentity.id`), not the KC member name. To address
-        the Profiles status callback we need the actual member name, so
-        this helper performs the resolution chain:
+        When the caller already knows the KC member name (e.g. a
+        username-based webhook path), pass it to `_send_status` as
+        `kc_username` instead of using this helper.
+
+        Otherwise this helper performs the resolution chain:
 
         1. If a local `user` is already in hand, read from it directly
            (preferring `user_profile["identifier_kc_username"]`, with
@@ -85,9 +86,8 @@ class UserIdentifierHelpers:
 
         Returns `None` when no member name can be resolved (e.g. an
         early failure in `do_user_created` before the local user has
-        been created); callers should still send a status callback in
-        that case but with `username=None`, addressed to the
-        `unknown` member-name slot in the URL.
+        been created); callers may still send a status callback using
+        `sub` alone (URL `unknown` slot) or an explicit `kc_username`.
 
         Args:
             sub: The OAuth `sub` from the webhook (`UserIdentity.id`).

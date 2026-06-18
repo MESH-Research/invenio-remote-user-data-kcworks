@@ -10,8 +10,7 @@ Covers `fetch_subs_profile_for_kc_username`, `find_local_user_by_kc_username`,
 and `provision_user_from_members_profile` with real service code (mocked Profiles
 HTTP; DB/search fixtures when users are created).
 
-See `tests/api/users/test_ingest_user_by_kc_username.py` for task orchestration
-(`do_ingest_user_by_kc_username`) with the service mocked.
+See `tests/api/users/users_ingest_integration.py` for end-to-end username ingest.
 """
 
 from invenio_access.permissions import system_identity

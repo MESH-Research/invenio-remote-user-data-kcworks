@@ -7,7 +7,7 @@
 """Wiring tests for the `do_ingest_profiles_dump` Celery task.
 
 Exercises file parsing, format sniffing, stats, and per-row delegation with
-`do_user_created` / `do_ingest_user_by_kc_username` mocked (no real users).
+`do_user_created` mocked (no real users).
 """
 
 import json
@@ -56,12 +56,12 @@ def _profiles_row(sub: str, *, email: str = "x@example.org") -> dict[str, Any]:
 
 
 def test_jsonl_with_auto_sniff_replays_each_row_with_remote_data(base_app, tmp_path):
-    """Each JSONL line becomes a `do_user_created(..., remote_data=...)` call.
+    """Each JSONL line becomes a `do_user_created(..., kc_username=..., remote_data=...)` call.
 
     The task should sniff format = jsonl from the leading `{`, validate
     each row through `APIResponse`, extract `data[0].sub` as the
-    oauth_id, and pass the parsed payload as `remote_data` so no live
-    Profiles API I/O is performed.
+    oauth_id and `profile.username` as kc_username, and pass the parsed
+    payload as `remote_data` so no live Profiles API I/O is performed.
     """
     p = tmp_path / "dump.jsonl"
     rows = [_profiles_row("sub-aaa"), _profiles_row("sub-bbb")]
@@ -78,12 +78,14 @@ def test_jsonl_with_auto_sniff_replays_each_row_with_remote_data(base_app, tmp_p
         "errors": 0,
     }
     assert fake.call_count == 2
-    seen_subs = [c.args[1] for c in fake.call_args_list]
+    seen_subs = [c.kwargs["oauth_id"] for c in fake.call_args_list]
     assert seen_subs == ["sub-aaa", "sub-bbb"]
     for call in fake.call_args_list:
-        # remote_data must be present and be the parsed APIResponse.
         rd = call.kwargs["remote_data"]
-        assert rd.data[0].sub == call.args[1]
+        assert rd.data[0].sub == call.kwargs["oauth_id"]
+        assert call.kwargs["kc_username"] == rd.data[0].profile.username
+        assert call.kwargs["send_status_callback"] is False
+        assert call.kwargs["run_synchronously"] is True
 
 
 def test_jsonl_skips_blank_lines(base_app, tmp_path):
@@ -134,18 +136,18 @@ def test_jsonl_row_with_empty_data_is_skipped(base_app, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_usernames_dump_delegates_parsed_lines_to_ingest_helper(base_app, tmp_path):
+def test_usernames_dump_delegates_parsed_lines_to_do_user_created(base_app, tmp_path):
     """Exercise `do_ingest_profiles_dump` file-loop wiring for username CSV input.
 
-    This is **not** an end-to-end username ingest test: `do_ingest_user_by_kc_username`
+    This is **not** an end-to-end username ingest test: `do_user_created`
     is mocked, so no Profiles API calls or user provisioning occur.
 
     Asserts that the dump task:
 
     - auto-sniffs `usernames` format (header line is not JSON);
     - skips `#` comment lines, blank lines, and a `username` CSV header;
-    - invokes `do_ingest_user_by_kc_username` once per remaining row with
-      `source="knowledgeCommons"`;
+    - invokes `do_user_created` once per remaining row with username-list
+      ingest kwargs;
     - maps non-`None` mock return values into `processed` stats.
     """
     p = tmp_path / "users.csv"
@@ -161,7 +163,7 @@ def test_usernames_dump_delegates_parsed_lines_to_ingest_helper(base_app, tmp_pa
     fake = MagicMock(side_effect=[1, 2, 3])
     with (
         base_app.app_context(),
-        patch.object(tasks_mod, "do_ingest_user_by_kc_username", fake),
+        patch.object(tasks_mod, "do_user_created", fake),
     ):
         stats = do_ingest_profiles_dump(str(p))
 
@@ -171,10 +173,14 @@ def test_usernames_dump_delegates_parsed_lines_to_ingest_helper(base_app, tmp_pa
         "skipped": 0,
         "errors": 0,
     }
-    seen = [c.args[0] for c in fake.call_args_list]
+    seen = [c.kwargs["kc_username"] for c in fake.call_args_list]
     assert seen == ["alice", "bob", "carol"]
     for call in fake.call_args_list:
-        assert call.kwargs.get("source") == "knowledgeCommons"
+        assert call.args[0] == "knowledgeCommons"
+        assert call.kwargs["resolve_sub_from_username"] is True
+        assert call.kwargs["update_existing"] is False
+        assert call.kwargs["send_status_callback"] is False
+        assert call.kwargs["run_synchronously"] is True
 
 
 def test_usernames_handles_extra_csv_columns(base_app, tmp_path):
@@ -185,12 +191,12 @@ def test_usernames_handles_extra_csv_columns(base_app, tmp_path):
     fake = MagicMock(return_value=1)
     with (
         base_app.app_context(),
-        patch.object(tasks_mod, "do_ingest_user_by_kc_username", fake),
+        patch.object(tasks_mod, "do_user_created", fake),
     ):
         stats = do_ingest_profiles_dump(str(p), fmt="usernames")
 
     assert stats["rows_seen"] == 2
-    assert [c.args[0] for c in fake.call_args_list] == ["alice", "bob"]
+    assert [c.kwargs["kc_username"] for c in fake.call_args_list] == ["alice", "bob"]
 
 
 # ---------------------------------------------------------------------------
@@ -203,15 +209,15 @@ def test_per_row_failures_are_counted_not_raised(base_app, tmp_path, caplog):
     p = tmp_path / "users.csv"
     p.write_text("alice\nbob\ncarol\n")
 
-    def side_effect(username, **_kwargs):
-        if username == "bob":
+    def side_effect(_source, **kwargs):
+        if kwargs["kc_username"] == "bob":
             raise RuntimeError("boom")
         return 99
 
     fake = MagicMock(side_effect=side_effect)
     with (
         base_app.app_context(),
-        patch.object(tasks_mod, "do_ingest_user_by_kc_username", fake),
+        patch.object(tasks_mod, "do_user_created", fake),
         caplog.at_level(logging.ERROR),
     ):
         stats = do_ingest_profiles_dump(str(p))
@@ -233,15 +239,15 @@ def test_error_log_uses_absolute_line_number_with_offset(base_app, tmp_path, cap
     p = tmp_path / "users.csv"
     p.write_text("alice\nbob\ncarol\n")
 
-    def side_effect(username, **_kwargs):
-        if username == "carol":
+    def side_effect(_source, **kwargs):
+        if kwargs["kc_username"] == "carol":
             raise RuntimeError("boom")
         return 99
 
     fake = MagicMock(side_effect=side_effect)
     with (
         base_app.app_context(),
-        patch.object(tasks_mod, "do_ingest_user_by_kc_username", fake),
+        patch.object(tasks_mod, "do_user_created", fake),
         caplog.at_level(logging.ERROR),
     ):
         stats = do_ingest_profiles_dump(str(p), offset=2)
@@ -266,7 +272,7 @@ def test_do_user_created_returning_none_is_counted_as_skipped(base_app, tmp_path
     fake = MagicMock(side_effect=[None, 99])
     with (
         base_app.app_context(),
-        patch.object(tasks_mod, "do_ingest_user_by_kc_username", fake),
+        patch.object(tasks_mod, "do_user_created", fake),
     ):
         stats = do_ingest_profiles_dump(str(p))
 

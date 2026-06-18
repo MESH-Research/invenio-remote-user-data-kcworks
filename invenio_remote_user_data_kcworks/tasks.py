@@ -57,10 +57,11 @@ def _retry_at_iso(seconds_from_now: int) -> str:
 
 
 def _send_status(
-    sub: str | None,
     status: UserDataStatus,
     event: UserDataEvent,
     *,
+    kc_username: str | None = None,
+    sub: str | None = None,
     user: User | None = None,
     method: str | None = None,
     retry_at: str | None = None,
@@ -68,27 +69,23 @@ def _send_status(
 ) -> None:
     """Best-effort wrapper around the Profiles status callback.
 
-    Resolves the KC member name from `user` (preferred) or from
-    `UserIdentity(method, id=sub)` and forwards the call to
-    `UserDataAPIClient.send_user_status_callback()`, which
-    constructs the URL as
-    `/api/v1/members/{username or "unknown"}/works/status` and
-    sends both the resolved `username` (possibly `null`) and the
-    raw `sub` in the body.
+    The KC member name routes the callback URL
+    (`/api/v1/members/{username or "unknown"}/works/status`). When
+    `kc_username` is not supplied it is resolved from `user` (preferred)
+    or from `UserIdentity(method, id=sub)`. The OAuth `sub` in the JSON
+    body is optional correlation (`null` for members-only users).
 
-    The callback is skipped only when `sub` is also missing (no
-    addressee at all is meaningful for the Profiles side). Otherwise
-    even an unresolvable sub gets a callback under the `unknown`
-    member-name slot so the Profiles operator at least sees the
-    failure.
+    The callback is skipped with a warning when neither `kc_username`
+    nor `sub` is supplied.
 
     Args:
-        sub: The OAuth `sub` from the webhook
-            (`UserIdentity.id`), or `None`.
         status: `UserDataStatus` member.
             `UserDataStatus.PROCESSED` or `UserDataStatus.FAILED`.
         event: `UserDataEvent` member, mirroring the inbound webhook
             `event` field.
+        kc_username: KC member name when already known (e.g. username-based
+            webhook path).
+        sub: The OAuth `sub` (`UserIdentity.id`), or `None`.
         user: Optional local `User` to read the member name from
             without an extra `UserIdentity` lookup.
         method: Optional `UserIdentity.method` to disambiguate the
@@ -97,11 +94,21 @@ def _send_status(
             attempt is already scheduled.
         note: Optional freeform diagnostic string.
     """
-    if not sub:
-        # No sub means the upstream side has nothing to correlate
-        # against either; bail silently.
+    if not kc_username and not sub:
+        # Neither identifier can route or correlate the callback.
+        app.logger.warning(
+            "_send_status: missing kc_username and sub; skipping (status=%s event=%s)",
+            status,
+            event,
+        )
         return
-    username = UserIdentifierHelpers.resolve_kc_username(sub, user, method=method)
+
+    username = kc_username
+    if not username and user is not None:
+        username = UserIdentifierHelpers.username_from_user(user)
+    if not username and sub:
+        username = UserIdentifierHelpers.resolve_kc_username(sub, user, method=method)
+
     try:
         UserDataAPIClient.send_user_status_callback(
             sub=sub,
@@ -125,17 +132,49 @@ def _send_status(
         )
 
 
+def _reschedule_callback_context(
+    reschedule_task,
+    reschedule_args: tuple,
+    reschedule_kwargs: dict,
+) -> tuple[
+    str | None,
+    str | None,
+    str | None,
+    UserDataEvent,
+    bool,
+]:
+    """Derive status-callback fields from a long-delay reschedule payload.
+
+    Returns:
+        Tuple of ``sub``, ``method``, ``kc_username``, ``event``,
+        ``send_status_callback``.
+    """
+    send_status_callback = reschedule_kwargs.get("send_status_callback", True)
+    event = reschedule_kwargs.get("status_event", UserDataEvent.UPDATED)
+    if isinstance(event, str):
+        event = UserDataEvent(event)
+    kc_username = reschedule_kwargs.get("kc_username")
+
+    task_name = getattr(reschedule_task, "name", "") or ""
+    if task_name.endswith("do_user_data_update"):
+        sub = reschedule_args[2] if len(reschedule_args) > 2 else None
+        method = reschedule_args[1] if len(reschedule_args) > 1 else None
+    else:
+        sub = reschedule_kwargs.get("oauth_id")
+        method = reschedule_kwargs.get("callback_method")
+        if method is None and reschedule_args:
+            method = reschedule_args[0]
+
+    return sub, method, kc_username, event, send_status_callback
+
+
 def _handle_profiles_api_failure(
     self,
     exc: Exception,
     *,
-    sub: str | None,
-    event: UserDataEvent,
-    method: str | None,
-    kwargs: dict,
     reschedule_task,
     reschedule_args: tuple,
-    send_status_callback: bool = True,
+    reschedule_kwargs: dict,
 ) -> None:
     """Apply the shared HTTP retry + long-delay reschedule policy.
 
@@ -169,37 +208,40 @@ def _handle_profiles_api_failure(
       task should `return` immediately so it doesn't try to
       continue work after the reschedule has been queued).
 
+    Status callbacks read ``sub``, ``method``, ``kc_username``, ``event``,
+    and ``send_status_callback`` from ``reschedule_kwargs`` and
+    ``reschedule_args`` (see `_reschedule_callback_context`).
+
     Args:
         self: The bound Celery task instance (caller passes its own
             `self`). Used for `self.request.retries`,
             `self.retry`, `self.max_retries`, and `self.name`.
         exc: The HTTP exception that triggered this call.
-        sub: The OAuth `sub` (`UserIdentity.id`) for the affected
-            user, used for the status callback. May be `None`;
-            `_send_status` will skip silently in that case.
-        event: `UserDataEvent` member, mirroring the inbound webhook
-            `event` field.
-        method: The `UserIdentity.method` for resolving the sub
-            into a KC member name (status-callback addressing).
-        kwargs: The original `**kwargs` passed to the calling task,
-            forwarded to `apply_async` on the long-delay reschedule
-            so any caller-specified Celery options are preserved.
         reschedule_task: The Celery task object to re-enqueue
             (typically the calling task itself).
         reschedule_args: Positional `args` tuple to pass to
             `reschedule_task.apply_async` on the long-delay
             reschedule path.
-        send_status_callback: Whether FAILED status callbacks should be
-            emitted while retry or reschedule handling runs.
+        reschedule_kwargs: Keyword args for the long-delay
+            reschedule; also supplies callback context
+            (`kc_username`, `oauth_id`, `status_event`,
+            `send_status_callback`, `callback_method` for
+            `do_user_created`).
     """
+    sub, method, kc_username, event, send_status_callback = (
+        _reschedule_callback_context(
+            reschedule_task, reschedule_args, reschedule_kwargs
+        )
+    )
     retries = self.request.retries or 0
     countdown = min(30 * (2**retries), 600)
     try:
         if send_status_callback:
             _send_status(
-                sub,
                 UserDataStatus.FAILED,
                 event,
+                kc_username=kc_username,
+                sub=sub,
                 method=method,
                 retry_at=_retry_at_iso(countdown),
                 note=f"profiles_api:{type(exc).__name__}",
@@ -222,9 +264,10 @@ def _handle_profiles_api_failure(
         )
         if send_status_callback:
             _send_status(
-                sub,
                 UserDataStatus.FAILED,
                 event,
+                kc_username=kc_username,
+                sub=sub,
                 method=method,
                 retry_at=_retry_at_iso(long_delay),
                 note=(
@@ -233,7 +276,7 @@ def _handle_profiles_api_failure(
             )
         reschedule_task.apply_async(
             args=reschedule_args,
-            kwargs=kwargs,
+            kwargs=reschedule_kwargs,
             countdown=long_delay,
         )
 
@@ -248,19 +291,33 @@ def do_user_data_update(
     user_id: int,
     idp: str | None = None,
     remote_id: str | None = None,
+    kc_username: str | None = None,
+    remote_data: APIResponse | None = None,
     send_status_callback: bool = True,
+    status_event: UserDataEvent = UserDataEvent.UPDATED,
     **kwargs,
 ) -> tuple[User, dict, list[str], dict] | None:
     """Perform a user metadata update.
 
-    On every resolution path this task sends a PROCESSED/FAILED
-    callback response to the Profiles
-    `/api/v1/members/{member_name}/works/status` endpoint. The
-    KC member name needed for the callback URL and body is resolved
-    locally. When no member name can be resolved the callback still
-    fires with `unknown` in place of the member username in the URL,
-    so that the Profiles operator can correlate by `sub` in the
-    response body.
+    Profiles fetch needs `kc_username` or `remote_id` (OAuth `sub`).
+    Webhook callers pass `user_id`, `idp`, and `kc_username` (members
+    endpoint). Login callers pass `user_id` only; omitting `idp`
+    triggers a `UserIdentity` lookup that sets `remote_id` (subs
+    endpoint).
+
+    When `send_status_callback` is True (default), the task sends
+    PROCESSED/FAILED callbacks to Profiles on completion or failure.
+    Login enqueue passes `send_status_callback=False`.
+
+    Status callback
+    ---------------
+
+    Callbacks target
+    `/api/v1/members/{member_name}/works/status`. The KC member name
+    for the URL and body is resolved locally (`kc_username`, the local
+    user row, or `UserIdentity`). When no member name can be resolved
+    the callback still fires with `unknown` in the URL so the Profiles
+    operator can correlate by optional `sub` in the response body.
 
     After update, we also keep the user's Names vocabulary record in
     sync with their just-updated profile. Failures in this vocabulary sync
@@ -278,22 +335,30 @@ def do_user_data_update(
     at 600s) that `do_user_created` uses; on exhaustion the task is
     re-enqueued with a long countdown
     (`REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY`, shared
-    config key). Status callbacks include a `retry_at` timestamp so
-    the Profiles operator can see another attempt is pending.
+    config key). When `send_status_callback` is True, FAILED
+    callbacks include a `retry_at` timestamp so the Profiles
+    operator can see another attempt is pending.
 
-    Other unexpected exceptions trigger a FAILED callback and are
-    re-raised so Celery surfaces the error.
+    Other unexpected exceptions trigger a FAILED callback when
+    `send_status_callback` is True and are re-raised so Celery
+    surfaces the error.
 
     Args:
         self: The bound Celery task instance, used by
             `_handle_profiles_api_failure()` for `self.retry`.
         user_id: The local ID of the user to update.
-        idp: The remote service configuration to use for the update.
-        remote_id: The ID of the user on the remote system (the
-            OAuth `sub`, also stored as `UserIdentity.id`).
-        send_status_callback: A boolean flag to control whether a status
-            callback is sent to the remote API endpoint on task failure/completion.
-            Defaults to True.
+        idp: Remote service key. Webhook callers pass this; login omits
+            it so the task can resolve `UserIdentity`.
+        remote_id: OAuth `sub`. Webhook callers omit this (use
+            `kc_username` instead). Login path: set from `UserIdentity`.
+        kc_username: KC member name. Webhook callers pass this. Login
+            callers omit this (use `remote_id` instead).
+        remote_data: Optional pre-fetched Profiles subs payload. When set,
+            passed through to `update_user_from_remote` instead of fetching.
+        send_status_callback: Send PROCESSED/FAILED callbacks to
+            Profiles. Defaults to True; False on login enqueue.
+        status_event: Profiles status-callback `event` field. Defaults to
+            `updated`; `do_user_created` delegates with `created`.
         **kwargs: Reserved for future Celery options; forwarded
             unchanged to the long-delay reschedule path.
 
@@ -309,6 +374,9 @@ def do_user_data_update(
         Celery's JSON result backend; not the raw service tuple.
     """
     with app.app_context():
+        if isinstance(status_event, str):
+            status_event = UserDataEvent(status_event)
+
         if not idp:
             my_user_identity = UserIdentity.query.filter_by(
                 id_user=user_id, method=idp or "cilogon"
@@ -322,9 +390,10 @@ def do_user_data_update(
             user = datastore.get_user_by_id(user_id)
             if send_status_callback:
                 _send_status(
-                    remote_id,
                     UserDataStatus.FAILED,
-                    UserDataEvent.UPDATED,
+                    status_event,
+                    kc_username=kc_username,
+                    sub=remote_id,
                     user=user,
                     note="NoIDPFoundError",
                 )
@@ -334,7 +403,12 @@ def do_user_data_update(
         try:
             user, updated_data, groups, groups_changes = (
                 service.update_user_from_remote(
-                    system_identity, user_id, idp, remote_id
+                    system_identity,
+                    user_id,
+                    idp,
+                    remote_id=remote_id,
+                    kc_username=kc_username,
+                    remote_data=remote_data,
                 )
             )
             app.logger.debug("returned from task user update")
@@ -348,13 +422,15 @@ def do_user_data_update(
             _handle_profiles_api_failure(
                 self,
                 exc,
-                sub=remote_id,
-                event=UserDataEvent.UPDATED,
-                method=idp,
-                kwargs=kwargs,
                 reschedule_task=do_user_data_update,
                 reschedule_args=(user_id, idp, remote_id),
-                send_status_callback=send_status_callback,
+                reschedule_kwargs={
+                    **kwargs,
+                    "kc_username": kc_username,
+                    "remote_data": remote_data,
+                    "status_event": status_event,
+                    "send_status_callback": send_status_callback,
+                },
             )
             # Only reached on the long-delay reschedule branch; the
             # normal retry branch raises `Retry` out of the helper.
@@ -371,9 +447,10 @@ def do_user_data_update(
             user = datastore.get_user_by_id(user_id)
             if send_status_callback:
                 _send_status(
-                    remote_id,
                     UserDataStatus.FAILED,
-                    UserDataEvent.UPDATED,
+                    status_event,
+                    kc_username=kc_username,
+                    sub=remote_id,
                     user=user,
                     method=idp,
                     note="LocalUserNotFoundError",
@@ -383,9 +460,10 @@ def do_user_data_update(
             user = datastore.get_user_by_id(user_id)
             if send_status_callback:
                 _send_status(
-                    remote_id,
                     UserDataStatus.FAILED,
-                    UserDataEvent.UPDATED,
+                    status_event,
+                    kc_username=kc_username,
+                    sub=remote_id,
                     user=user,
                     method=idp,
                     note=type(exc).__name__,
@@ -398,9 +476,10 @@ def do_user_data_update(
 
         if send_status_callback:
             _send_status(
-                remote_id,
                 UserDataStatus.PROCESSED,
-                UserDataEvent.UPDATED,
+                status_event,
+                kc_username=kc_username,
+                sub=remote_id,
                 user=user,
                 method=idp,
             )
@@ -409,6 +488,7 @@ def do_user_data_update(
             "user_id": user_id,
             "idp": idp,
             "remote_id": remote_id,
+            "kc_username": kc_username,
             "completed_user_id": user.id if user is not None else None,
             "groups": list(groups),
             "group_changes": dict(groups_changes)
@@ -424,6 +504,37 @@ def do_user_data_update(
             )
         encoded = json.dumps(summary, default=str)
         return json.loads(encoded)
+
+
+def _enqueue_user_data_update(
+    user_id: int,
+    idp: str,
+    remote_id: str | None = None,
+    *,
+    kc_username: str | None = None,
+    remote_data: APIResponse | None = None,
+    send_status_callback: bool = True,
+    status_event: UserDataEvent = UserDataEvent.UPDATED,
+    run_synchronously: bool = False,
+) -> None:
+    """Queue or run ``do_user_data_update`` for a local user.
+
+    Webhook paths use ``delay``; ingest passes ``run_synchronously=True``
+    so ``apply`` runs the update inline before the ingest row returns.
+    """
+    update_kwargs = {
+        "kc_username": kc_username,
+        "remote_data": remote_data,
+        "send_status_callback": send_status_callback,
+        "status_event": status_event,
+    }
+    if run_synchronously:
+        do_user_data_update.apply(
+            args=(user_id, idp, remote_id),
+            kwargs=update_kwargs,
+        )
+    else:
+        do_user_data_update.delay(user_id, idp, remote_id, **update_kwargs)
 
 
 @shared_task(ignore_result=False)
@@ -465,302 +576,327 @@ def do_find_names_duplicates(
 def do_user_created(
     self,
     idp: str,
-    oauth_id: str,
     *,
+    oauth_id: str | None = None,
     remote_data: APIResponse | None = None,
+    kc_username: str | None = None,
+    update_existing: bool = True,
+    send_status_callback: bool = True,
+    run_synchronously: bool = False,
+    resolve_sub_from_username: bool = False,
     **kwargs,
 ) -> int | None:
-    """Provision a local KCWorks user from a remote `created` webhook event.
+    """Provision a local KCWorks user from a remote ``created`` signal.
 
     Triggered from
     `invenio_remote_user_data_kcworks.services.service.RemoteUserDataService`
     when a `users.created` webhook event is consumed from the
-    `user-data-updates` queue. The remote profile is fetched from the
-    Profiles API by the OAuth `sub` (`oauth_id` — also the value
-    stored as `UserIdentity.id`), the local `User` is created
-    (or matched if it already exists by external id, ORCID, KC
-    username, or email), the `UserIdentity` link is ensured
-    (idempotent), and finally the standard update path is invoked to
-    populate `user_profile` fields and group memberships.
+    `user-data-updates` queue, and reused by username-list rows in
+    `do_ingest_profiles_dump`.
 
-    The task is idempotent: if a `UserIdentity` already exists for the
-    given `(idp, oauth_id)` pair the task delegates to
-    `do_user_data_update()` and returns the existing user id.
+    Routes on identifiers (at least one required):
+
+    1. Neither ``kc_username`` nor ``oauth_id`` — optional FAILED callback,
+       return.
+    2. ``oauth_id`` present (subs path; ``kc_username`` optional) — fetch or
+       use pre-fetched subs payload, match/create local `User`, ensure
+       `UserIdentity` (idempotent), delegate to `do_user_data_update`.
+    3. ``kc_username`` only (members path) — find or provision from
+       ``members/{kc_username}/`` (no `UserIdentity`; PROCESSED callback
+       from this task on success).
+
+    Idempotent when ``update_existing`` is True (default): an existing local
+    user (by `UserIdentity` on the subs path or KC username on the members
+    path) delegates to `do_user_data_update` without a duplicate callback
+    from this task. Ingest passes ``update_existing=False``; an existing
+    ``identifier_kc_username`` row returns ``None`` before any Profiles I/O.
 
     Failure handling
     ----------------
 
-    Transient HTTP failures while talking to the Profiles API
-    (`requests.RequestException` / `requests.Timeout`) -- whether
-    they occur during the initial profile fetch or during the
-    follow-up `update_user_from_remote` call -- are routed through
-    the shared `_handle_profiles_api_failure()` helper. That
-    helper applies bounded exponential backoff (30s, 60s, 120s, …,
-    capped at 600s) for up to `max_retries` attempts; on exhaustion
-    it logs an error and re-enqueues the task with a long countdown
-    (`REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY`, default 1
-    hour, shared with `do_user_data_update`) so provisioning will
-    eventually succeed once the Profiles service recovers.
+    Transient HTTP failures on the subs **profile fetch** use
+    `_handle_profiles_api_failure()` (bounded exponential backoff, then
+    long-delay reschedule via `REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY`,
+    shared with `do_user_data_update`). Follow-up `update_user_from_remote`
+    failures are handled inside the delegated `do_user_data_update` task.
 
     Status callback
     ---------------
 
-    On every resolution path (success, give-up after no profile data,
-    give-up after user could not be matched/created, scheduled retry,
-    or scheduled long-delay reschedule) this task sends a
-    PROCESSED/FAILED callback response body to the Profiles
-    `/api/v1/members/{member_name}/works/status` endpoint. When a
-    follow-up attempt is already queued (a Celery retry or the
-    long-delay reschedule) the callback body includes a `retry_at`
-    timestamp so the Profiles side can avoid prompting an operator
-    while the next attempt is still pending.
+    When ``send_status_callback`` is True (default), this task emits
+    PROCESSED/FAILED on give-up paths here (missing identifiers, no profile
+    data, user match/create failure, members provision failure). Subs-path
+    success and delegated updates rely on `do_user_data_update` for PROCESSED.
+    Scheduled retries/reschedules include `retry_at` in FAILED callbacks.
+    Ingest passes ``send_status_callback=False``.
 
     Args:
-        self: The bound Celery task instance, used to drive
-            `self.retry` for transient Profiles API failures.
-        idp: The identity provider name (matches a key in
-            `REMOTE_USER_DATA_API_ENDPOINTS`). For Knowledge Commons this
-            is `"knowledgeCommons"`.
-        oauth_id: The external subject identifier (`sub`) for the
-            user on the remote IDP.
-        remote_data: Optional pre-fetched Profiles API response for
-            `oauth_id`. When provided, skips the initial Profiles API
-            fetch and uses the supplied payload for both user creation
-            and the downstream `update_user_from_remote` call. Used by
-            the bulk JSONL ingest path
-            (`do_ingest_profiles_dump`) so we can replay an offline
-            Profiles dump without re-hitting the live API. The
-            delegating-to-`do_user_data_update` short-circuit (when a
-            local `UserIdentity` already exists) ignores this argument.
-        **kwargs: Reserved for future Celery options; currently ignored.
+        self: Bound Celery task instance (subs fetch retries only).
+        idp: Remote service key (e.g. ``knowledgeCommons``); matches a key
+            in `REMOTE_USER_DATA_API_ENDPOINTS`.
+        oauth_id: OAuth ``sub`` (`UserIdentity.id`) when linked on Profiles.
+        remote_data: Optional pre-fetched Profiles subs payload for
+            ``oauth_id``. Skips the live fetch; used by JSONL ingest replay.
+            Ignored on the existing-`UserIdentity` short-circuit when
+            ``update_existing`` is True.
+        kc_username: KC member name (required on members-only path).
+        update_existing: When True (default), existing users delegate to
+            ``do_user_data_update``. When False, return ``None``.
+        send_status_callback: Emit PROCESSED/FAILED callbacks from this task
+            and pass through to ``do_user_data_update``.
+        run_synchronously: Run ``do_user_data_update`` via ``apply`` instead
+            of ``delay`` (ingest).
+        resolve_sub_from_username: When True and ``oauth_id`` is omitted,
+            try ``GET subs/{kc_username}/`` before the members path
+            (username-list ingest only).
+        **kwargs: Forwarded on subs-fetch reschedule.
 
     Raises:
-        LocalUserNotFoundError: If the local user row is missing during
-            `update_user_from_remote` (after FAILED status callback).
+        LocalUserNotFoundError: Propagated from delegated
+            ``do_user_data_update`` when the local user row is missing.
 
     Returns:
-        The id of the matched/created local user, `None` when no
-        remote profile data was returned, or `None` when the
-        Profiles API was unreachable and the task has been rescheduled
-        for a future attempt.
+        Local user id, or ``None`` on give-up, ingest skip, or subs-fetch
+        reschedule.
     """
     with app.app_context():
-        if not oauth_id:
-            app.logger.warning("do_user_created: missing oauth_id; skipping")
-            # _send_status will skip silently when sub is empty.
-            _send_status(
-                None,
-                UserDataStatus.FAILED,
-                UserDataEvent.CREATED,
-                note="missing_oauth_id",
-            )
-            return None
+        kc_username = (kc_username or "").strip()
+        oauth_id = (oauth_id or "").strip() or None
+        service = current_remote_user_data_service
 
-        auth_method = idp
-        if idp == "knowledgeCommons":
-            kc_idps = app.config.get("KC_REMOTE_IDPS") or []
-            if kc_idps:
-                auth_method = kc_idps[0]
-
-        existing = UserIdentity.query.filter_by(
-            id=oauth_id, method=auth_method
-        ).one_or_none()
-        if existing is not None:
-            app.logger.debug(
-                "do_user_created: UserIdentity already exists for "
-                f"sub={oauth_id} method={auth_method}; delegating to "
-                "do_user_data_update"
-            )
-            # Delegated path: do_user_data_update will fire its own
-            # PROCESSED/FAILED callback once it resolves, so we don't
-            # send one from here.
-            do_user_data_update.delay(existing.id_user, idp, oauth_id)
-            return existing.id_user
-
-        if remote_data is not None:
-            profile_response = remote_data
-        else:
-            try:
-                profile_response = UserDataAPIClient.fetch_user_profile(sub_id=oauth_id)
-            except (requests.RequestException, requests.Timeout) as exc:
-                app.logger.warning(
-                    f"do_user_created: failed to fetch profile for "
-                    f"sub={oauth_id}: {exc!r}"
-                )
-                _handle_profiles_api_failure(
-                    self,
-                    exc,
-                    sub=oauth_id,
-                    event=UserDataEvent.CREATED,
-                    method=auth_method,
-                    kwargs=kwargs,
-                    reschedule_task=do_user_created,
-                    reschedule_args=(idp, oauth_id),
-                )
-                # Only reached on the long-delay reschedule branch.
+        if not update_existing and kc_username:
+            if service.find_local_user_by_kc_username(kc_username) is not None:
                 return None
 
-        if not profile_response or not getattr(profile_response, "data", None):
-            app.logger.info(
-                f"do_user_created: no profile data returned for "
-                f"sub={oauth_id}; skipping user creation"
+        if not oauth_id and kc_username and resolve_sub_from_username:
+            subs_payload = service.fetch_subs_profile_for_kc_username(kc_username)
+            if subs_payload is not None and subs_payload.data:
+                oauth_id = subs_payload.data[0].sub
+                if remote_data is None:
+                    remote_data = subs_payload
+
+        def _status(
+            status: UserDataStatus,
+            event: UserDataEvent = UserDataEvent.CREATED,
+            **send_kw,
+        ) -> None:
+            if send_status_callback:
+                _send_status(status, event, **send_kw)
+
+        def _delegate_update(
+            user_id: int,
+            *,
+            sub: str | None = None,
+            profile_data: APIResponse | None = None,
+        ) -> None:
+            _enqueue_user_data_update(
+                user_id,
+                idp,
+                sub,
+                kc_username=kc_username or None,
+                remote_data=profile_data,
+                send_status_callback=send_status_callback,
+                status_event=UserDataEvent.CREATED,
+                run_synchronously=run_synchronously,
             )
-            _send_status(
-                oauth_id,
-                UserDataStatus.FAILED,
-                UserDataEvent.CREATED,
-                method=auth_method,
-                note="no_profile_data",
+
+        reschedule_kw = {
+            **kwargs,
+            "oauth_id": oauth_id,
+            "kc_username": kc_username,
+            "update_existing": update_existing,
+            "send_status_callback": send_status_callback,
+            "run_synchronously": run_synchronously,
+            "resolve_sub_from_username": resolve_sub_from_username,
+            "status_event": UserDataEvent.CREATED,
+            **({"remote_data": remote_data} if remote_data is not None else {}),
+        }
+
+        if not kc_username and not oauth_id:
+            app.logger.warning(
+                "do_user_created: missing kc_username and oauth_id; skipping"
             )
+            _status(UserDataStatus.FAILED, note="missing_identifiers")
             return None
 
-        # Match an existing user if possible; a user may have previously
-        # logged in with a different method.
-        profile = profile_response.data[0].profile
-        account_info = AccountInfo(
-            external_id=oauth_id,
-            external_method=auth_method,
-            email=(profile.email or ""),
-            orcid=profile.orcid,
-            kc_username=(profile.username or ""),
-        )
-        user = CILogonHelpers.get_user_from_account_info(account_info)
-        if user is None:
-            try:
-                user = CILogonHelpers.create_new_user(profile_response)
-            except IntegrityError:
-                # Race-loser path: a concurrent `do_user_created` for
-                # the same sub committed the `User` row first, so the
-                # upstream `register_user` INSERT hit the unique
-                # constraint on email/username. Roll back so the
-                # SQLAlchemy session is usable again, then re-match
-                # exactly once. If the re-match still produces no
-                # user, the IntegrityError isn't a race -- it's a
-                # data inconsistency we can't safely recover from in
-                # this task, so we FAIL cleanly without looping.
-                db.session.rollback()
-                app.logger.warning(
-                    "do_user_created: IntegrityError during "
-                    "create_new_user for sub=%s; re-matching after "
-                    "rollback",
-                    oauth_id,
+        if oauth_id:
+            auth_method = idp
+            if idp == "knowledgeCommons":
+                kc_idps = app.config.get("KC_REMOTE_IDPS") or []
+                if kc_idps:
+                    auth_method = kc_idps[0]
+            reschedule_kw["callback_method"] = auth_method
+
+            existing = UserIdentity.query.filter_by(
+                id=oauth_id, method=auth_method
+            ).one_or_none()
+            if existing is not None:
+                app.logger.debug(
+                    "do_user_created: UserIdentity already exists for "
+                    f"sub={oauth_id} method={auth_method}; delegating to "
+                    "do_user_data_update"
                 )
-                user = CILogonHelpers.get_user_from_account_info(account_info)
-                if user is None:
-                    app.logger.error(
-                        "do_user_created: IntegrityError on create "
-                        "and re-match still produced no user for "
-                        "sub=%s; giving up",
+                if not update_existing:
+                    return None
+                _delegate_update(
+                    existing.id_user,
+                    sub=oauth_id,
+                    profile_data=remote_data,
+                )
+                return existing.id_user
+
+            if remote_data is not None:
+                profile_response = remote_data
+            else:
+                try:
+                    profile_response = UserDataAPIClient.fetch_user_profile(
+                        sub_id=oauth_id
+                    )
+                except (requests.RequestException, requests.Timeout) as exc:
+                    app.logger.warning(
+                        f"do_user_created: failed to fetch profile for "
+                        f"sub={oauth_id}: {exc!r}"
+                    )
+                    _handle_profiles_api_failure(
+                        self,
+                        exc,
+                        reschedule_task=do_user_created,
+                        reschedule_args=(idp,),
+                        reschedule_kwargs=reschedule_kw,
+                    )
+                    # Only reached on the long-delay reschedule branch.
+                    return None
+
+            if not profile_response or not getattr(profile_response, "data", None):
+                app.logger.info(
+                    f"do_user_created: no profile data returned for "
+                    f"sub={oauth_id}; skipping user creation"
+                )
+                _status(
+                    UserDataStatus.FAILED,
+                    sub=oauth_id,
+                    kc_username=kc_username or None,
+                    method=auth_method,
+                    note="no_profile_data",
+                )
+                return None
+
+            # Match an existing user if possible; a user may have previously
+            # logged in with a different method.
+            profile = profile_response.data[0].profile
+            account_info = AccountInfo(
+                external_id=oauth_id,
+                external_method=auth_method,
+                email=(profile.email or ""),
+                orcid=profile.orcid,
+                kc_username=(profile.username or ""),
+            )
+            user = CILogonHelpers.get_user_from_account_info(account_info)
+            if user is None:
+                try:
+                    user = CILogonHelpers.create_new_user(profile_response)
+                except IntegrityError:
+                    # Race-loser path: a concurrent `do_user_created` for
+                    # the same sub committed the `User` row first, so the
+                    # upstream `register_user` INSERT hit the unique
+                    # constraint on email/username. Roll back so the
+                    # SQLAlchemy session is usable again, then re-match
+                    # exactly once. If the re-match still produces no
+                    # user, the IntegrityError isn't a race -- it's a
+                    # data inconsistency we can't safely recover from in
+                    # this task, so we FAIL cleanly without looping.
+                    db.session.rollback()
+                    app.logger.warning(
+                        "do_user_created: IntegrityError during "
+                        "create_new_user for sub=%s; re-matching after "
+                        "rollback",
                         oauth_id,
                     )
-                    _send_status(
+                    user = CILogonHelpers.get_user_from_account_info(account_info)
+                    if user is None:
+                        app.logger.error(
+                            "do_user_created: IntegrityError on create "
+                            "and re-match still produced no user for "
+                            "sub=%s; giving up",
+                            oauth_id,
+                        )
+                        _status(
+                            UserDataStatus.FAILED,
+                            sub=oauth_id,
+                            kc_username=kc_username or None,
+                            method=auth_method,
+                            note="integrity_error_unresolved",
+                        )
+                        return None
+                except UserCreationFailed:
+                    app.logger.warning(
+                        "do_user_created task: UserCreationFailed during "
+                        "create_new_user for sub=%s",
                         oauth_id,
+                    )
+                    _status(
                         UserDataStatus.FAILED,
-                        UserDataEvent.CREATED,
+                        sub=oauth_id,
+                        kc_username=kc_username or None,
                         method=auth_method,
-                        note="integrity_error_unresolved",
+                        note="user_creation_failed",
                     )
                     return None
-            except UserCreationFailed:
+
+            if user is None:
                 app.logger.warning(
-                    "do_user_created task: UserCreationFailed during "
-                    "create_new_user for sub=%s",
-                    oauth_id,
+                    f"do_user_created: could not find or create user for "
+                    f"sub={oauth_id}"
                 )
-                _send_status(
-                    oauth_id,
+                _status(
                     UserDataStatus.FAILED,
-                    UserDataEvent.CREATED,
+                    sub=oauth_id,
+                    kc_username=kc_username or None,
                     method=auth_method,
-                    note="user_creation_failed",
+                    note="user_match_or_create_failed",
                 )
                 return None
 
-        if user is None:
-            app.logger.warning(
-                f"do_user_created: could not find or create user for sub={oauth_id}"
+            with contextlib.suppress(AlreadyLinkedError):
+                CILogonHelpers.link_user_to_oauth_identifier(
+                    user, auth_method, oauth_id
+                )
+
+            # Run the normal update path so user_profile fields and group
+            # memberships are populated from the same payload we already
+            # fetched. HTTP failures there get retry+reschedule inside
+            # `do_user_data_update`. A re-run of this task will short-circuit
+            # through the existing-identity branch and delegate again.
+            _delegate_update(
+                user.id,
+                sub=oauth_id,
+                profile_data=profile_response,
             )
-            _send_status(
-                oauth_id,
+            return user.id
+
+        # Members-only: `kc_username` with no `oauth_id`.
+        existing_user = service.find_local_user_by_kc_username(kc_username)
+        if existing_user is not None:
+            # Same delegated callback policy as the subs identity branch.
+            _delegate_update(existing_user.id)
+            return existing_user.id
+        user = service.provision_user_from_members_profile(
+            system_identity, kc_username, idp=idp
+        )
+        if user is None:
+            _status(
                 UserDataStatus.FAILED,
-                UserDataEvent.CREATED,
-                method=auth_method,
-                note="user_match_or_create_failed",
+                kc_username=kc_username,
+                note="provision_user_from_members_profile_failed",
             )
             return None
-
-        with contextlib.suppress(AlreadyLinkedError):
-            CILogonHelpers.link_user_to_oauth_identifier(user, auth_method, oauth_id)
-
-        # Run the normal update path so user_profile fields and group
-        # memberships are populated from the same payload we already
-        # fetched. HTTP failures here get the same retry+reschedule
-        # treatment. A re-run of this task will short-circuit through
-        # the existing-identity branch and run `do_user_data_update`.
-        try:
-            current_remote_user_data_service.update_user_from_remote(
-                system_identity,
-                user.id,
-                "knowledgeCommons" if idp == "knowledgeCommons" else idp,
-                oauth_id,
-                remote_data=profile_response,
-            )
-        except (requests.RequestException, requests.Timeout) as exc:
-            app.logger.warning(
-                "do_user_created: Profiles API failure during "
-                "update_user_from_remote for sub=%s: %r",
-                oauth_id,
-                exc,
-            )
-            _handle_profiles_api_failure(
-                self,
-                exc,
-                sub=oauth_id,
-                event=UserDataEvent.CREATED,
-                method=auth_method,
-                kwargs=kwargs,
-                reschedule_task=do_user_created,
-                reschedule_args=(idp, oauth_id),
-            )
-            # Only reached on the long-delay reschedule branch.
-            return user.id
-        except LocalUserNotFoundError as exc:
-            app.logger.error(
-                "do_user_created: local user missing during update_user_from_remote "
-                "(%s); user_id=%s sub=%s idp=%s",
-                exc,
-                user.id,
-                oauth_id,
-                idp,
-            )
-            _send_status(
-                oauth_id,
-                UserDataStatus.FAILED,
-                UserDataEvent.CREATED,
-                user=user,
-                method=auth_method,
-                note="LocalUserNotFoundError",
-            )
-            raise
-        except Exception as exc:
-            _send_status(
-                oauth_id,
-                UserDataStatus.FAILED,
-                UserDataEvent.CREATED,
-                user=user,
-                method=auth_method,
-                note=f"update_user_from_remote:{type(exc).__name__}",
-            )
-            raise
-
+        # Members-only success does not call `do_user_data_update`; sync Names
+        # here (subs-path success delegates to update, which syncs there).
         sync_user_to_names.delay(user.id)
-
-        _send_status(
-            oauth_id,
+        _status(
             UserDataStatus.PROCESSED,
-            UserDataEvent.CREATED,
+            kc_username=kc_username,
             user=user,
-            method=auth_method,
         )
         return user.id
 
@@ -990,58 +1126,6 @@ def _pace_ingest_rows(
     return now
 
 
-def do_ingest_user_by_kc_username(
-    kc_username: str,
-    *,
-    source: str = "knowledgeCommons",
-) -> int | None:
-    """Provision one KCWorks user from a KC username (bulk ingest helper).
-
-    1. Skip when a local user with this `identifier_kc_username` already exists.
-    2. ``GET subs/{kc_username}/`` — when Profiles returns linked subs, delegate
-       to `do_user_created` with the resolved `sub` and pre-fetched payload.
-    3. Otherwise create from ``GET members/{kc_username}/`` via
-       `provision_user_from_members_profile` (no `UserIdentity`, no status
-       callbacks).
-
-    Args:
-        kc_username: Commons member username from the ingest file.
-        source: IDP key passed to `do_user_created` on the sub path.
-
-    Returns:
-        Local user id when a row was provisioned or sub-delegation succeeded;
-        `None` when the row was skipped or remote data was insufficient.
-    """
-    service = current_remote_user_data_service
-    kc_username = (kc_username or "").strip()
-    if not kc_username:
-        app.logger.warning("do_ingest_user_by_kc_username: empty username; skipping")
-        return None
-
-    if service.find_local_user_by_kc_username(kc_username) is not None:
-        app.logger.debug(
-            "do_ingest_user_by_kc_username: local user exists for %s; skipping",
-            kc_username,
-        )
-        return None
-
-    subs_payload = service.fetch_subs_profile_for_kc_username(kc_username)
-    if subs_payload is not None and subs_payload.data:
-        oauth_id = subs_payload.data[0].sub
-        return do_user_created(source, oauth_id, remote_data=subs_payload)
-
-    user = service.provision_user_from_members_profile(
-        system_identity,
-        kc_username,
-        idp=source,
-    )
-    if user is None:
-        return None
-
-    sync_user_to_names.delay(user.id)
-    return user.id
-
-
 @shared_task(ignore_result=False)
 def do_ingest_profiles_dump(
     filepath: str,
@@ -1059,15 +1143,14 @@ def do_ingest_profiles_dump(
 
     - **JSONL** (`fmt="jsonl"`): each line is one Profiles API response
       payload (matching `APIResponse` from `...types.profiles_api`). For
-      every row we call `do_user_created` *synchronously* with
-      `remote_data=<row>` so no live Profiles API I/O is performed.
+      every row we call `do_user_created` with `remote_data=<row>`,
+      `send_status_callback=False`, and `run_synchronously=True` so no
+      live Profiles API I/O or status callbacks occur and each row's
+      update finishes before the next line is processed.
     - **Usernames** (`fmt="usernames"`): one KC username per line (CSV
-      header `username` and `#` comment lines tolerated). Each row is
-      handled by `do_ingest_user_by_kc_username`, which skips existing
-      local users, delegates to `do_user_created` when
-      ``subs/{username}/`` returns linked subs, or provisions from
-      ``members/{username}/`` when no sub exists yet (no `UserIdentity`
-      until OAuth is linked on Profiles).
+      header `username` and `#` comment lines tolerated). Each row calls
+      `do_user_created` with ingest flags (skip existing rows, no
+      callbacks, synchronous update, subs resolution from username).
 
     Both code paths run synchronously *inside this single task* so a
     long ingest is observable as one Celery entry rather than thousands
@@ -1152,13 +1235,25 @@ def do_ingest_profiles_dump(
             try:
                 if fmt == "jsonl":
                     payload = APIResponse.model_validate(row)
-                    if not payload.data:
-                        stats["skipped"] += 1
-                        continue
-                    oauth_id = payload.data[0].sub
-                    user_id = do_user_created(source, oauth_id, remote_data=payload)
+                    user_id = do_user_created(
+                        source,
+                        oauth_id=payload.data[0].sub if payload.data else None,
+                        kc_username=(
+                            payload.data[0].profile.username if payload.data else None
+                        ),
+                        remote_data=payload,
+                        send_status_callback=False,
+                        run_synchronously=True,
+                    )
                 else:
-                    user_id = do_ingest_user_by_kc_username(row, source=source)
+                    user_id = do_user_created(
+                        source,
+                        kc_username=row,
+                        resolve_sub_from_username=True,
+                        update_existing=False,
+                        send_status_callback=False,
+                        run_synchronously=True,
+                    )
             except Exception:  # noqa: BLE001 - logged, never propagated
                 stats["errors"] += 1
                 app.logger.exception(

@@ -370,21 +370,27 @@ class TestUserDataAPIClientSendUserStatusCallback:
         assert body["note"] == "unit-test"
         assert "send_user_status_callback: ok" in _caplog_messages(caplog)
 
-    def test_send_status_empty_sub_short_circuits(
+    def test_send_status_username_only_without_sub(
         self, base_app, requests_mock, caplog
     ):
-        """Assert empty `sub` yields `False`, no HTTP, and a warning log."""
-        with caplog.at_level(logging.WARNING):
+        """Assert username routes URL and body `sub` may be null."""
+        username = "kc_member_only"
+        base = base_app.config["IDMS_BASE_API_URL"]
+        post_url = f"{base}members/{username}/works/status"
+        requests_mock.post(post_url, status_code=204)
+        with caplog.at_level(logging.DEBUG):
             with base_app.app_context():
                 ok = UserDataAPIClient.send_user_status_callback(
-                    sub="",
-                    username="x",
+                    sub=None,
+                    username=username,
                     status=UserDataStatus.PROCESSED,
-                    event=UserDataEvent.CREATED,
+                    event=UserDataEvent.UPDATED,
                 )
-        assert ok is False
-        assert len(requests_mock.request_history) == 0
-        assert "send_user_status_callback: empty sub" in _caplog_messages(caplog)
+        assert ok is True
+        body = json.loads(requests_mock.last_request.body.decode())
+        assert body["username"] == username
+        assert body["sub"] is None
+        assert "send_user_status_callback: ok" in _caplog_messages(caplog)
 
     def test_send_status_invalid_status_returns_false(
         self, base_app, requests_mock, caplog

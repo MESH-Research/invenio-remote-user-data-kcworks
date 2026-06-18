@@ -32,17 +32,18 @@ def test_webhook_post_publishes_update_signal(
 ):
     """Webhook "updated" publishes to `user-data-updates` queue and emits signal."""
     oauth_sub = "oauth-sub-webhook-test"
+    kc_username = "kc_webhook_user"
     u = user_factory(
         email="webhook-signal-test@example.com",
         oauth_id=oauth_sub,
-        kc_username="kc_webhook_user",
+        kc_username=kc_username,
     )
     expected_events = [
         {
             "idp": "knowledgeCommons",
             "entity_type": "users",
             "event": "updated",
-            "oauth_id": oauth_sub,
+            "kc_username": kc_username,
             "user_id": u.user.id,
         },
     ]
@@ -70,7 +71,7 @@ def test_webhook_post_publishes_update_signal(
                 "idp": "knowledgeCommons",
                 "updates": {
                     "users": [
-                        {"id": oauth_sub, "event": "updated"},
+                        {"id": kc_username, "event": "updated"},
                     ],
                 },
             },
@@ -93,17 +94,18 @@ def test_webhook_post_publishes_create_signal(
 ):
     """Webhook "created" publishes to `user-data-updates` queue and emits signal."""
     oauth_sub = "oauth-sub-webhook-test"
+    kc_username = "kc_webhook_user"
     u = user_factory(
         email="webhook-signal-test@example.com",
         oauth_id=oauth_sub,
-        kc_username="kc_webhook_user",
+        kc_username=kc_username,
     )
     expected_events = [
         {
             "idp": "knowledgeCommons",
             "entity_type": "users",
             "event": "created",
-            "oauth_id": oauth_sub,
+            "kc_username": kc_username,
             "user_id": u.user.id,
         },
     ]
@@ -131,7 +133,7 @@ def test_webhook_post_publishes_create_signal(
                 "idp": "knowledgeCommons",
                 "updates": {
                     "users": [
-                        {"id": oauth_sub, "event": "created"},
+                        {"id": kc_username, "event": "created"},
                     ],
                 },
             },
@@ -151,7 +153,7 @@ def test_on_signal_dispatches_user_update_task(app):
         "entity_type": "users",
         "event": "updated",
         "idp": "knowledgeCommons",
-        "oauth_id": "sub-abc",
+        "kc_username": "kc_webhook_user",
         "user_id": 4242,
     }
     consume_mock = MagicMock(return_value=[event])
@@ -170,7 +172,7 @@ def test_on_signal_dispatches_user_update_task(app):
     do_update.delay.assert_called_once_with(
         4242,
         "knowledgeCommons",
-        "sub-abc",
+        kc_username="kc_webhook_user",
     )
 
 
@@ -180,7 +182,7 @@ def test_on_signal_dispatches_user_created_task(app):
         "entity_type": "users",
         "event": "created",
         "idp": "knowledgeCommons",
-        "oauth_id": "sub-new",
+        "kc_username": "newuser",
     }
     consume_mock = MagicMock(return_value=[event])
 
@@ -195,7 +197,9 @@ def test_on_signal_dispatches_user_created_task(app):
             ) as do_created:
                 on_remote_data_updated(app, events=[])
 
-    do_created.delay.assert_called_once_with("knowledgeCommons", "sub-new")
+    do_created.delay.assert_called_once_with(
+        "knowledgeCommons", kc_username="newuser"
+    )
 
 
 def test_on_remote_data_updated_dispatches_group_update_task(app):

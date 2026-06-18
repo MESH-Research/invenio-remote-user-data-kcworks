@@ -24,7 +24,7 @@ from flask import (
 )
 from flask.views import MethodView
 from flask_login import login_user
-from invenio_accounts.models import User, UserIdentity
+from invenio_accounts.models import User
 from invenio_accounts.sessions import delete_user_sessions
 from invenio_db import db
 from invenio_queues.proxies import current_queues
@@ -53,6 +53,60 @@ from .signals import remote_data_updated
 from .utils.auth import CILogonHelpers
 from .utils.broker import BrokerHelpers
 from .utils.redirect import safe_redirect_target
+
+
+def _resolve_webhook_config_idp(idp: str) -> tuple[str, str]:
+    """Map a webhook ``idp`` value to remote-data config and OAuth method keys.
+
+    The ``idp`` field in webhook payloads may be either the
+    ``REMOTE_USER_DATA_API_ENDPOINTS`` key (e.g. ``knowledgeCommons``) or any
+    alias listed in ``KC_REMOTE_IDPS`` (e.g. ``cilogon``).
+
+    Args:
+        idp: The ``idp`` string from the webhook JSON body.
+
+    Returns:
+        A ``(config_idp, auth_method)`` tuple where ``config_idp`` is the key
+        in ``REMOTE_USER_DATA_API_ENDPOINTS`` and ``auth_method`` is the
+        ``UserIdentity.method`` for OAuth subject lookups.
+
+    Raises:
+        BadRequest: If ``idp`` is not a known config key or KC alias.
+    """
+    endpoints = app.config.get("REMOTE_USER_DATA_API_ENDPOINTS", {})
+    kc_aliases = app.config.get("KC_REMOTE_IDPS", [])
+
+    if idp in endpoints:
+        auth_method = idp
+        if idp == "knowledgeCommons" and kc_aliases:
+            auth_method = kc_aliases[0]
+        return idp, auth_method
+
+    if idp in kc_aliases:
+        return "knowledgeCommons", idp
+
+    raise BadRequest(f"Unknown idp {idp!r}")
+
+
+def _resolve_user_for_webhook(
+    kc_username: str, auth_method: str
+) -> User | None:
+    """Look up a local user by KC member name from a webhook ``users`` event.
+
+    Args:
+        kc_username: The ``updates.users[].id`` value (KC username).
+        auth_method: OAuth method name from ``_resolve_webhook_config_idp``.
+
+    Returns:
+        The matching ``User``, or ``None`` if not found. Returns ``None`` when
+        multiple users match (ambiguous).
+    """
+    user = CILogonHelpers.try_get_user_by_kc_username(kc_username, auth_method)
+    if isinstance(user, list):
+        if len(user) == 1:
+            return user[0]
+        return None
+    return user
 
 
 def sso_broker_login(
@@ -255,13 +309,13 @@ class RemoteUserDataUpdateWebhook(MethodView):
     Lazy provisioning
     -----------------
 
-    We accept `created` events for users that do not yet have
-    a `UserIdentity`, and treat `updated` events for unknown users
-    as `created` so that we still provision them. (The downstream task will fetch
-    the profile and create the local user.) An `updated` signal for an unknown
-    user usually means we missed the original `created` webhook for that user, 
-    or they were registered prior to the current IDMS system setup. We just
-    log a warning to flag the gap for operators in case a genuine problem emerges.
+    We accept `created` events for users that do not yet exist locally,
+    and treat `updated` events for unknown users as `created` so that we
+    still provision them. (The downstream task will fetch the profile and
+    create the local user.) An `updated` signal for an unknown user usually
+    means we missed the original `created` webhook for that user, or they
+    were registered prior to the current IDMS system setup. We just log a
+    warning to flag the gap for operators in case a genuine problem emerges.
 
     Signal content
     --------------
@@ -269,9 +323,10 @@ class RemoteUserDataUpdateWebhook(MethodView):
     Notifications can be sent for multiple updates to multiple entities in a
     single request. The signal body must be a JSON object whose top-level keys are
 
-    :idp: The name of the remote IDP that is sending the signal. This is a
-          string that must match one of the keys in the
-          REMOTE_USER_DATA_API_ENDPOINTS configuration variable.
+    :idp: The name of the remote IDP that is sending the signal. This must
+          match a key in ``REMOTE_USER_DATA_API_ENDPOINTS`` (e.g.
+          ``knowledgeCommons``) or an alias listed in ``KC_REMOTE_IDPS``
+          (e.g. ``cilogon``).
 
     :updates: A JSON object whose top-level keys are the types of data object that
               have been updated on the remote IDP. The value of each key is an
@@ -281,13 +336,8 @@ class RemoteUserDataUpdateWebhook(MethodView):
               'event' property, whose value is the type of event that is being
               signalled (e.g., 'updated', 'created', 'deleted', etc.).
 
-              For `users` events the `id` is the OAuth `sub`
-              for the user on the remote IDP (i.e. the value stored
-              as `UserIdentity.id`). The KC member name needed for
-              the `/api/v1/members/{member_name}/works/status`
-              callback is resolved locally from the sub via
-              `UserIdentity` -> `User.user_profile['identifier_kc_username']`
-              when the callback fires.
+              For ``users`` events, ``id`` is the member's KC username (not the
+              OAuth ``sub``).
 
     For example:
 
@@ -296,8 +346,8 @@ class RemoteUserDataUpdateWebhook(MethodView):
         {
             "idp": "knowledgeCommons",
             "updates": {
-                "users": [{"id": "1234", "event": "updated"},
-                        {"id": "5678", "event": "created"}],
+                "users": [{"id": "joeuser", "event": "updated"},
+                        {"id": "janedoe", "event": "created"}],
                 "groups": [{"id": "1234", "event": "deleted"}]
             }
         }
@@ -338,13 +388,10 @@ class RemoteUserDataUpdateWebhook(MethodView):
         )
         try:
             data = request.get_json()
-            idp = data["idp"]
-            auth_method = idp
-            if idp == "knowledgeCommons":
-                # FIXME: Allow for multiple KC auth methods
-                auth_method = app.config["KC_REMOTE_IDPS"][0]
+            raw_idp = data["idp"]
+            config_idp, auth_method = _resolve_webhook_config_idp(raw_idp)
             events = []
-            idp_config = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][idp]
+            idp_config = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][config_idp]
             entity_types = idp_config["entity_types"]
             bad_entity_types = []
             bad_events = []
@@ -358,38 +405,38 @@ class RemoteUserDataUpdateWebhook(MethodView):
                     for u in data["updates"][e]:
                         if u["event"] in entity_types[e]["events"]:
                             if e == "users":
-                                user_identity = UserIdentity.query.filter_by(
-                                    id=u["id"], method=auth_method
-                                ).one_or_none()
-                                if user_identity is None:
+                                kc_username = u["id"]
+                                user = _resolve_user_for_webhook(
+                                    kc_username, auth_method
+                                )
+                                if user is None:
                                     if u["event"] != "created":
                                         self.logger.warning(
-                                            f"{idp} sent an {u['event']!r} "
-                                            f"event for unknown user (sub="
-                                            f"{u['id']!r}); converting to "
+                                            f"{raw_idp} sent an {u['event']!r} "
+                                            f"event for unknown user (KC username="
+                                            f"{kc_username!r}); converting to "
                                             "'created' for lazy provisioning"
                                         )
-                                    users.append(u["id"])
+                                    users.append(kc_username)
                                     events.append({
-                                        "idp": idp,
+                                        "idp": config_idp,
                                         "entity_type": e,
                                         "event": "created",
-                                        "oauth_id": u["id"],
-                                        "user_id": None,
+                                        "kc_username": kc_username,
                                     })
                                 else:
-                                    users.append(u["id"])
+                                    users.append(kc_username)
                                     events.append({
-                                        "idp": idp,
+                                        "idp": config_idp,
                                         "entity_type": e,
                                         "event": u["event"],
-                                        "oauth_id": user_identity.id,
-                                        "user_id": user_identity.id_user,
+                                        "kc_username": kc_username,
+                                        "user_id": user.id,
                                     })
                             elif e == "groups":
                                 groups.append(u["id"])
                                 events.append({
-                                    "idp": idp,
+                                    "idp": config_idp,
                                     "entity_type": e,
                                     "event": u["event"],
                                     "id": u["id"],
@@ -397,14 +444,16 @@ class RemoteUserDataUpdateWebhook(MethodView):
                         else:
                             bad_events.append(u)
                             self.logger.warning(
-                                f"{idp} Received update signal for unknown event: {u}"
+                                "%s received update signal for unknown event: %s",
+                                raw_idp,
+                                u,
                             )
                 else:
                     bad_entity_types.append(e)
                     self.logger.warning(
                         "%s received update signal for unknown entity "
                         "type %r (configured types: %s)",
-                        idp,
+                        raw_idp,
                         e,
                         sorted(entity_types.keys()),
                     )
@@ -424,13 +473,14 @@ class RemoteUserDataUpdateWebhook(MethodView):
                             entity_string += " and "
                         entity_string += "groups"
                     self.logger.info(
-                        f"{idp} requested updates for {entity_string} that do not exist"
+                        f"{raw_idp} requested updates for {entity_string} "
+                        "that do not exist"
                     )
                     self.logger.info(data["updates"])
                     raise NotFound("Updates attempted for unknown users or groups")
                 elif not groups and bad_groups:
                     self.logger.info(
-                        f"{idp} requested updates for groups that do not exist"
+                        f"{raw_idp} requested updates for groups that do not exist"
                     )
                     self.logger.info(data["updates"])
                     raise NotFound("Updates attempted for unknown groups")
@@ -452,7 +502,7 @@ class RemoteUserDataUpdateWebhook(MethodView):
                     }
                     self.logger.warning(
                         "%s no valid events received; summary=%s",
-                        idp,
+                        raw_idp,
                         summary,
                     )
                     raise BadRequest("No valid events received")

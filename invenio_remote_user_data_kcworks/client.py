@@ -355,7 +355,7 @@ class UserDataAPIClient:
     @staticmethod
     def send_user_status_callback(
         *,
-        sub: str,
+        sub: str | None = None,
         username: str | None,
         status: UserDataStatus,
         event: UserDataEvent,
@@ -372,23 +372,17 @@ class UserDataAPIClient:
 
             {
                 "username": "<kc_username>" | null,
-                "sub":      "<oauth sub>",
+                "sub":      "<oauth sub>"    | null,
                 "status":   "PROCESSED" | "FAILED",
                 "event":    "created"   | "updated",
                 "retry_at": "<ISO 8601 UTC timestamp>",   // optional
                 "note":     "<freeform diagnostic>"       // optional
             }
 
-        The webhook's `id` field is the OAuth `sub` (i.e. the
-        value stored as `UserIdentity.id`), not the KC member name,
-        so callers must resolve the member name locally
-        (sub -> `UserIdentity` -> `User.user_profile`) before
-        invoking this method. When the resolution fails (e.g. an
-        early failure in `do_user_created` before the local user
-        has been created) callers may pass `username=None` and the
-        callback will still fire under the `unknown` URL slot, with
-        the raw `sub` in the body so the Profiles operator can
-        correlate.
+        The KC member name routes the callback URL. The OAuth `sub` in
+        the body is optional correlation (`null` for members-only users
+        with no linked OAuth identity). When only `sub` is known the URL
+        falls back to the `unknown` member-name slot.
 
         The `event` value mirrors the `event` property carried by
         each entry in the inbound `updates.users` webhook payload, so
@@ -406,13 +400,11 @@ class UserDataAPIClient:
         Profiles outage block the underlying user-update task itself.
 
         Args:
-            sub: The OAuth `sub` from the webhook
-                (`UserIdentity.id`). Required; empty values
-                short-circuit to `False` with a warning.
-            username: The KC member name resolved from the sub, or
-                `None` when no local user is known yet. Used to
-                construct the URL (falling back to `"unknown"`) and
-                included verbatim in the body.
+            sub: The OAuth `sub` from the webhook (`UserIdentity.id`),
+                or `None` when no OAuth link exists.
+            username: The KC member name, or `None` when no local user
+                is known yet. Used to construct the URL (falling back
+                to `"unknown"`) and included verbatim in the body.
             status: `UserDataStatus` member.
                 `UserDataStatus.PROCESSED` or `UserDataStatus.FAILED`.
             event: `UserDataEvent` member, mirroring the inbound
@@ -429,13 +421,6 @@ class UserDataAPIClient:
             `True` when the callback was accepted (HTTP 2xx) on any
             attempt, `False` otherwise.
         """
-        if not sub:
-            app.logger.warning(
-                "send_user_status_callback: empty sub; skipping (status=%s event=%s)",
-                status,
-                event,
-            )
-            return False
         if not isinstance(status, UserDataStatus):
             app.logger.error(
                 "send_user_status_callback: invalid status %r "
@@ -464,12 +449,12 @@ class UserDataAPIClient:
             )
             return False
 
-        member_slug = (username or "").strip() or "unknown"
+        member_slug = username or "unknown"
         url = f"{base_api_url}members/{member_slug}/works/status"
         # `StrEnum` members serialise as their bare string value via
         # `json.dumps`, so the wire format is unchanged.
         body: dict[str, str | None] = {
-            "username": (username or None),
+            "username": username,
             "sub": sub,
             "status": status,
             "event": event,

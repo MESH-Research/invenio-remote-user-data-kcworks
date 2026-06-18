@@ -36,9 +36,7 @@ def on_user_logged_in(_, user: User) -> None:
         if user.id:
             last_timestamp = session.get("user-data-updated", {}).get(user.id)
             last_updated = arrow.get(last_timestamp) if last_timestamp else None
-            update_interval = current_app.config.get(
-                "INVENIO_REMOTE_USER_DATA_UPDATE_INTERVAL", 10
-            )
+            update_interval = current_app.config["REMOTE_USER_DATA_UPDATE_INTERVAL"]
 
             if not last_updated or last_updated < arrow.now("UTC").shift(
                 minutes=-1 * update_interval

@@ -6,8 +6,6 @@
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
-from kombu import Exchange
-
 from .permissions import (
     CustomCommunitiesPermissionPolicy,
     RemoteUserDataPermissionPolicy,
@@ -36,7 +34,18 @@ REMOTE_USER_DATA_API_ENDPOINTS = {
     }
 }
 
-REMOTE_USER_DATA_UPDATE_INTERVAL = 1  # 1 hour
+REMOTE_USER_DATA_UPDATE_INTERVAL = 1  # minutes between login-time syncs
+
+# Per-entity mutex for concurrent remote user/group update Celery tasks (Redis via invenio_cache).
+# When disabled, update tasks run without waiting for a lock.
+REMOTE_USER_DATA_UPDATE_LOCK_ENABLED = True
+# TTL (seconds) for the Redis lock key; should exceed typical update duration.
+REMOTE_USER_DATA_UPDATE_LOCK_TIMEOUT = 120
+# Retries when acquire returns status "waiting" (another update in progress).
+REMOTE_USER_DATA_UPDATE_LOCK_MAX_RETRIES = 10
+# Progressive backoff between retries: initial_backoff + (attempt * backoff_step).
+REMOTE_USER_DATA_UPDATE_LOCK_INITIAL_BACKOFF = 1.0
+REMOTE_USER_DATA_UPDATE_LOCK_BACKOFF_STEP = 1.0
 
 COMMUNITIES_PERMISSION_POLICY = CustomCommunitiesPermissionPolicy
 

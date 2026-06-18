@@ -197,7 +197,7 @@ REMOTE_USER_DATA_ENTITY_TYPES
 REMOTE_USER_DATA_UPDATE_INTERVAL
 
     The period (in minutes) between background calls to the remote API to
-    update user data during a logged-in session. Default is 60 minutes.
+    update user data during a logged-in session. Default is 1 minute.
 
 Environment variables
 ~~~~~~~~~~~~~~~~~~~~~

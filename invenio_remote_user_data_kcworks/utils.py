@@ -937,12 +937,8 @@ class BrokerHelpers:
 
             app.logger.debug(f"updating user from remote API")
             try:
-                current_remote_user_data_service.update_user_from_remote(
-                    system_identity,
-                    user.id,
-                    "knowledgeCommons",
-                    sub,
-                    remote_date=profile_response,
+                self._sync_user_data_after_broker_login(
+                    user, sub, profile_response
                 )
             except Exception as exc:
                 app.logger.warning(
@@ -957,6 +953,45 @@ class BrokerHelpers:
             raise UserDataRequestFailed
 
         return user, final_redirect
+
+    def _sync_user_data_after_broker_login(
+        self,
+        user: User,
+        sub: str,
+        profile_response: APIResponse | Profile | None,
+    ) -> None:
+        """Apply remote profile data after broker login without blocking on the lock.
+
+        When the per-user update mutex is free, sync runs inline so the first
+        post-login page sees fresh data. If another worker holds the lock, enqueue
+        ``do_user_data_update`` and return immediately so login is not delayed.
+        """
+        from .tasks import (
+            USER_DATA_UPDATE_LOCK_SUFFIX,
+            UserUpdateLock,
+            do_user_data_update,
+        )
+
+        def _run_sync() -> None:
+            current_remote_user_data_service.update_user_from_remote(
+                system_identity,
+                user.id,
+                "knowledgeCommons",
+                sub,
+                remote_data=profile_response,
+            )
+
+        if not app.config["REMOTE_USER_DATA_UPDATE_LOCK_ENABLED"]:
+            _run_sync()
+            return
+
+        lock = UserUpdateLock(USER_DATA_UPDATE_LOCK_SUFFIX)
+        lock.acquire(user.id)
+        if lock.status == "held":
+            with lock:
+                _run_sync()
+        else:
+            do_user_data_update.delay(user.id, "knowledgeCommons", remote_id=sub)
 
 
 def update_nested_dict(original: dict, update: dict) -> dict[str, Any]:

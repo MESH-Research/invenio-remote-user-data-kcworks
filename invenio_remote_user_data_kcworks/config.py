@@ -28,6 +28,7 @@ REMOTE_USER_DATA_API_ENDPOINTS = {
             "token_env_variable_label": "COMMONS_API_TOKEN",
         },
         "entity_types": {
+            "associations": {"events": ["associated"]},
             "users": {"events": ["created", "updated", "deleted"]},
             "groups": {"events": ["created", "updated", "deleted"]},
         },

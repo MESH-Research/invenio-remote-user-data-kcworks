@@ -47,7 +47,7 @@ from .errors import (
     UserDataRequestFailed,
     UserDataRequestTimeout,
 )
-from .tasks import do_group_data_update, do_user_data_update
+from .tasks import do_group_data_update, do_user_associated, do_user_data_update
 from .utils import BrokerHelpers, CILogonHelpers, safe_redirect_target
 
 
@@ -257,6 +257,34 @@ def sso_broker_callback() -> Response:
         raise e
 
 
+def _normalize_webhook_payload(data: dict) -> dict:
+    """Normalize webhook JSON so entity updates are always under ``updates``.
+
+    Some senders use a top-level ``associations`` object with a nested
+    ``associations`` array instead of ``updates.associations``.
+
+    Args:
+        data: Raw webhook JSON body.
+
+    Returns:
+        Payload with an ``updates`` key suitable for the webhook handler.
+    """
+    if "updates" in data:
+        return data
+
+    if "associations" not in data:
+        return data
+
+    associations = data["associations"]
+    if isinstance(associations, dict):
+        associations = associations.get("associations", [])
+
+    return {
+        **data,
+        "updates": {"associations": associations},
+    }
+
+
 def _enqueue_update_tasks(events):
     """Enqueue Celery tasks on the appropriate queue for each update type."""
 
@@ -285,6 +313,17 @@ def _enqueue_update_tasks(events):
                 "Received webhook signal to delete group %s. Group role deletion from remote "
                 "signal is not yet implemented.",
                 event["id"],
+            )
+        elif (
+            event["entity_type"] == "associations"
+            and event["event"] == "associated"
+        ):
+            do_user_associated.delay(  # noqa: F841
+                event["user_id"],
+                event["idp"],
+                oauth_id=event["oauth_id"],
+                auth_method=event["auth_method"],
+                kc_username=event.get("kc_username"),
             )
         else:
             app.logger.error(
@@ -412,7 +451,7 @@ class RemoteUserDataUpdateWebhook(MethodView):
         )
 
         try:
-            data = request.get_json()
+            data = _normalize_webhook_payload(request.get_json())
             raw_idp = data["idp"]
             config_idp, auth_method = _resolve_webhook_config_idp(raw_idp)
             events = []
@@ -424,6 +463,8 @@ class RemoteUserDataUpdateWebhook(MethodView):
             bad_users = []
             groups = []
             bad_groups = []
+            associations = []
+            bad_associations = []
 
             for e in data["updates"].keys():
                 if e in entity_types.keys():
@@ -463,6 +504,29 @@ class RemoteUserDataUpdateWebhook(MethodView):
                                     "event": u["event"],
                                     "id": u["id"],
                                 })
+                            elif e == "associations":
+                                kc_username = u["kc_id"]
+                                oauth_id = u["id"]
+                                user = _resolve_user_for_webhook(
+                                    kc_username, auth_method
+                                )
+                                if user is None:
+                                    bad_associations.append(kc_username)
+                                    self.logger.debug(
+                                        f"Received association signal from {raw_idp} "
+                                        f"for unknown user: KC username {kc_username!r}"
+                                    )
+                                else:
+                                    associations.append(kc_username)
+                                    events.append({
+                                        "idp": config_idp,
+                                        "entity_type": e,
+                                        "event": u["event"],
+                                        "kc_username": kc_username,
+                                        "oauth_id": oauth_id,
+                                        "auth_method": auth_method,
+                                        "user_id": user.id,
+                                    })
                         else:
                             bad_events.append(u)
                             self.logger.warning(
@@ -478,7 +542,11 @@ class RemoteUserDataUpdateWebhook(MethodView):
             if len(events) > 0:
                 _enqueue_update_tasks(events)
             else:
-                if not users and bad_users or not groups and bad_groups:
+                if (
+                    (not users and bad_users)
+                    or (not groups and bad_groups)
+                    or (not associations and bad_associations)
+                ):
                     entity_string = ""
                     if not users and bad_users:
                         entity_string += "users"
@@ -486,12 +554,18 @@ class RemoteUserDataUpdateWebhook(MethodView):
                         if entity_string:
                             entity_string += " and "
                         entity_string += "groups"
+                    if not associations and bad_associations:
+                        if entity_string:
+                            entity_string += " and "
+                        entity_string += "associations"
                     self.logger.info(
                         f"{raw_idp} requested updates for {entity_string} "
                         "that do not exist"
                     )
                     self.logger.info(data["updates"])
-                    raise NotFound("Updates attempted for unknown users or groups")
+                    raise NotFound(
+                        "Updates attempted for unknown users, groups, or associations"
+                    )
                 elif not groups and bad_groups:
                     self.logger.info(
                         f"{raw_idp} requested updates for groups that do not exist"

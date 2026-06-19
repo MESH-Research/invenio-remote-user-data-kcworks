@@ -342,7 +342,22 @@ test_config["SSO_SAML_IDPS"] = {
             "name": "urn:oid:2.5.4.42",  # "givenName"
             "surname": "urn:oid:2.5.4.4",  # "sn"
             "external_id": (
-cntoken_env_variable_label": "COMMONS_API_TOKEN",
+                "urn:oid:2.16.840.1.113730.3.1.3"
+            ),  # "employeeNumber"
+        },
+        "auto_confirm": True,
+    }
+}
+
+test_config["REMOTE_USER_DATA_API_ENDPOINTS"] = {
+    "knowledgeCommons": {
+        "users": {
+            "remote_endpoint": (
+                "https://hcommons-dev.org/wp-json/commons/v1/users/"
+            ),
+            "remote_identifier": "id",
+            "remote_method": "GET",
+            "token_env_variable_label": "COMMONS_API_TOKEN",
         },
         "groups": {
             "remote_endpoint": (
@@ -353,6 +368,7 @@ cntoken_env_variable_label": "COMMONS_API_TOKEN",
             "token_env_variable_label": "COMMONS_API_TOKEN",
         },
         "entity_types": {
+            "associations": {"events": ["associated"]},
             "users": {"events": ["created", "updated", "deleted"]},
             "groups": {"events": ["created", "updated", "deleted"]},
         },

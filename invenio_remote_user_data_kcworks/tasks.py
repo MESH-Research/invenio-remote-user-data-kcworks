@@ -17,13 +17,16 @@ from typing import Any, Literal
 from celery import shared_task
 from flask import current_app as app
 from invenio_access.permissions import system_identity
-from invenio_accounts.models import UserIdentity
+from invenio_accounts.models import User, UserIdentity
 from invenio_cache.proxies import current_cache as cache
-from .proxies import (
-    current_remote_user_data_service,
-    current_remote_group_service,
-)
+from invenio_db import db
+
 from .errors import NoIDPFoundError
+from .proxies import (
+    current_remote_group_service,
+    current_remote_user_data_service,
+)
+from .utils import CILogonHelpers
 
 USER_DATA_UPDATE_LOCK_SUFFIX = "user-data-updating"
 GROUP_DATA_UPDATE_LOCK_SUFFIX = "group-data-updating"
@@ -208,6 +211,88 @@ def do_user_data_update(
             return json.loads(encoded)
         else:
             raise NoIDPFoundError(f"No IDP found for user {user_id}")
+
+
+@shared_task(ignore_result=True)
+@with_update_task_lock(
+    lock_id_resolver=lambda user_id, *args, **kwargs: int(user_id),
+    key_suffix=USER_DATA_UPDATE_LOCK_SUFFIX,
+)
+def do_user_associated(
+    user_id: int,
+    idp: str,
+    oauth_id: str,
+    auth_method: str,
+    kc_username: str | None = None,
+    **kwargs,
+) -> dict[str, Any]:
+    """Link a remote OAuth identity to a KC user and sync profile data.
+
+    Args:
+        user_id: The local ID of the user to update.
+        idp: The remote service configuration key (e.g. ``knowledgeCommons``).
+        oauth_id: The OAuth/CILogon subject identifier to associate.
+        auth_method: The ``UserIdentity.method`` value (e.g. ``cilogon``).
+        kc_username: KC member name for Profiles API lookup.
+        **kwargs: Reserved for future Celery options.
+
+    Returns:
+        Plain dict summarizing the association and user update run.
+    """
+    with app.app_context():
+        user = db.session.get(User, user_id)
+        if user is None:
+            return {
+                "user_id": user_id,
+                "status": "error",
+                "reason": "User not found",
+            }
+
+        existing_identity = UserIdentity.query.filter_by(
+            method=auth_method, id=oauth_id
+        ).first()
+        if existing_identity is not None and existing_identity.id_user != user_id:
+            app.logger.error(
+                "Cannot associate oauth_id=%r with user_id=%s; already linked to "
+                "user_id=%s",
+                oauth_id,
+                user_id,
+                existing_identity.id_user,
+            )
+            return {
+                "user_id": user_id,
+                "oauth_id": oauth_id,
+                "status": "error",
+                "reason": "OAuth identity already linked to another user",
+            }
+
+        CILogonHelpers.link_user_to_oauth_identifier(user, auth_method, oauth_id)
+
+        service = current_remote_user_data_service
+        user, updated_data, groups, groups_changes = service.update_user_from_remote(
+            system_identity,
+            user_id,
+            idp,
+            remote_id=oauth_id,
+            kc_username=kc_username,
+        )
+        summary: dict[str, Any] = {
+            "user_id": user_id,
+            "idp": idp,
+            "auth_method": auth_method,
+            "remote_id": oauth_id,
+            "kc_username": kc_username,
+            "completed_user_id": user.id if user is not None else None,
+            "groups": list(groups),
+            "group_changes": dict(groups_changes)
+            if isinstance(groups_changes, dict)
+            else {},
+            "status": "associated",
+        }
+        if isinstance(updated_data, dict):
+            summary["user_field_changes"] = updated_data
+        encoded = json.dumps(summary, default=str)
+        return json.loads(encoded)
 
 
 @shared_task(ignore_result=False)

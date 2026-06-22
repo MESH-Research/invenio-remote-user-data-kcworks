@@ -31,7 +31,6 @@ dependencies = [
   "invenio-app-rdm<14",
   "invenio-communities",
   "invenio-group-collections-kcworks",
-  "invenio-queues",
   "invenio-search",
   "invenio-utilities-tuw",
   "jellyfish",                         # Phonetic encoding (Metaphone) for Names dedup sweep
@@ -62,7 +61,6 @@ entry-points."invenio_base.apps".invenio_remote_user_data_kcworks = "invenio_rem
 entry-points."invenio_base.blueprints".invenio_remote_user_data_kcworks_sso = "invenio_remote_user_data_kcworks.blueprints:create_sso_blueprint"
 entry-points."invenio_base.finalize_app".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:finalize_app"
 entry-points."invenio_celery.tasks".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.tasks"
-entry-points."invenio_queues.queues".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.queues:declare_queues"
 
 [dependency-groups]
 dev = ["bumpver>=2025.1131", "pytest-timeout>=2.4"]

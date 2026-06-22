@@ -43,7 +43,6 @@ from invenio_app.factory import create_api as _create_app
 from invenio_communities.communities.services.components import (
     CommunityAccessComponent as BaseCommunityAccessComponent,
 )
-from invenio_queues import current_queues
 from invenio_rdm_records.services.communities.components import (
     CommunityAccessComponent as RDMCommunityAccessComponent,
 )
@@ -440,14 +439,12 @@ def app(
 
     Use in conjunction with the `running_app` fixture for a complete
     app + db data set. This fixture sets up the basic services (db,
-    search, template loader, queues) once per module; `running_app` is
+    search, template loader) once per module; `running_app` is
     function-scoped and resets per-test data.
 
     Yields:
         Flask: The Flask application instance.
     """
-    with app.app_context():
-        current_queues.declare()
     template_loader(app)
     register_idms_static_api_token_before_request(app)
     yield app
@@ -482,20 +479,3 @@ def create_app(instance_path, entry_points):
 
 
 # --- Package-specific fixtures (genuinely unique to user-data) -------------
-
-
-@pytest.fixture()
-def event_queues(app):
-    """Declare and tear down the user-data update message queues.
-
-    The package writes Profiles webhook events onto a Kombu exchange
-    declared via `REMOTE_USER_DATA_MQ_EXCHANGE` (see
-    `invenio_remote_user_data_kcworks/config.py`). Tests that exercise
-    that path need the queues to exist and be empty.
-    """
-    current_queues.delete()
-    try:
-        current_queues.declare()
-        yield
-    finally:
-        current_queues.delete()

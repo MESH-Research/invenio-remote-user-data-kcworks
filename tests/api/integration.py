@@ -8,7 +8,6 @@
 
 import json
 import time
-from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -35,12 +34,14 @@ def test_user_data_webhook_full_sync_workflow(
     db,
     user_factory,
     client,
+    requests_mock,
     headers,
     search_clear,
     celery_worker,
     idms_static_api_auth,
+    user_data_to_remote_data,
 ):
-    """Webhook POST → queue/signal → Celery → mocked Profiles API → DB updates."""
+    """Webhook POST → Celery → members Profiles API → DB updates."""
     app = running_app.app
 
     profile_data = user_data_set["user1"]
@@ -50,16 +51,30 @@ def test_user_data_webhook_full_sync_workflow(
         oauth_src="cilogon",
         oauth_id=profile_data["oauth_id"],
         kc_username=profile_data["kc_username"],
-        new_remote_data=profile_data,
+        new_remote_data={},
     )
     user_id = u.user.id
 
-    # ensure we have a clear start
-    assert u.user.user_profile == {"identifier_kc_username": "user1"}
     for mock_adapter in u.mock_adapter_subs, u.mock_adapter_members:
         assert mock_adapter is not None
         assert not mock_adapter.called
         assert mock_adapter.call_count == 0
+
+    base_url = app.config.get("IDMS_BASE_API_URL")
+    mock_remote_data_subs, mock_remote_data_members, _ = user_data_to_remote_data(
+        kc_username=profile_data["kc_username"],
+        email=profile_data["email"],
+        user_data=profile_data,
+        oauth_id=profile_data["oauth_id"],
+    )
+    mock_adapter_members = requests_mock.get(
+        f"{base_url}members/{profile_data['kc_username']}/",
+        json=mock_remote_data_members,
+    )
+    mock_adapter_subs = requests_mock.get(
+        f"{base_url}subs/?sub={profile_data['oauth_id']}",
+        json=mock_remote_data_subs,
+    )
 
     # ensure webhook is receiving
     with app.app_context():
@@ -72,10 +87,8 @@ def test_user_data_webhook_full_sync_workflow(
         "message": "Webhook receiver is active",
         "status": 200,
     }
-    assert not u.mock_adapter_subs.called
-    assert u.mock_adapter_subs.call_count == 0
-    assert not u.mock_adapter_members.called
-    assert u.mock_adapter_members.call_count == 0
+    assert not mock_adapter_members.called
+    assert not mock_adapter_subs.called
 
     with patch("invenio_accounts.utils.current_user"):
         with app.app_context():
@@ -89,7 +102,7 @@ def test_user_data_webhook_full_sync_workflow(
                 "updates": {
                     "users": [
                         {
-                            "id": profile_data["oauth_id"],
+                            "id": profile_data["kc_username"],
                             "event": "updated",
                         },
                     ],
@@ -105,16 +118,16 @@ def test_user_data_webhook_full_sync_workflow(
         "updates": {
             "users": [
                 {
-                    "id": profile_data["oauth_id"],
+                    "id": profile_data["kc_username"],
                     "event": "updated",
                 },
             ],
         },
     }
 
-    assert u.mock_adapter_subs.called
-    assert u.mock_adapter_subs.call_count == 1
-    assert not u.mock_adapter_members.called
+    assert mock_adapter_members.called
+    assert mock_adapter_members.call_count == 1
+    assert not mock_adapter_subs.called
 
     # Celery task updates the user in another db session;
     # expire the test session's cached user so get_user_by_email
@@ -171,11 +184,10 @@ def test_user_data_sync_on_login_workflow(
 
     Asserted behaviour:
 
-    1. **Login triggers exactly one subs fetch.** Backdating
-       `user.updated` past `INVENIO_REMOTE_USER_DATA_UPDATE_INTERVAL`
-       and then calling `login_user` causes `do_user_data_update` to be
-       enqueued and the subs endpoint to be hit once; the members
-       endpoint stays untouched on this path.
+    1. **Login triggers exactly one subs fetch.** Calling `login_user`
+       enqueues `do_user_data_update` when the session has no recent
+       `user-data-updated` timestamp for this user; the subs endpoint
+       is hit once and the members endpoint stays untouched on this path.
     2. **Email is propagated.** A remote-side email change overwrites the
        stale local `User.email`.
     3. **SQL username is propagated.** A remote-side `kc_username`
@@ -257,12 +269,6 @@ def test_user_data_sync_on_login_workflow(
     # The rename task scans the records index; make our two new
     # writes immediately visible to that scan.
     current_search_client.indices.refresh(index="*rdmrecords*")
-
-    # `on_user_logged_in` only enqueues `do_user_data_update` when `user.updated`
-    # is older than `INVENIO_REMOTE_USER_DATA_UPDATE_INTERVAL` (default 30s).
-    with app.app_context():
-        u.user.updated = datetime.now(UTC) - timedelta(seconds=120)
-        db.session.commit()
 
     for mock_adapter in u.mock_adapter_subs, u.mock_adapter_members:
         assert not mock_adapter.called
@@ -373,14 +379,6 @@ def test_group_roles_sync_on_login_logout(
     grouper.add_user_to_group(group_name="admin", user=myuser1)
 
     db.session.refresh(myuser1)
-
-    # Role commits refresh `user.updated`; backdate before login for interval gate.
-    with app.app_context():
-        u1_fixture.user.updated = datetime.now(UTC) - timedelta(seconds=120)
-        db.session.commit()
-        app.logger.debug(f"In test set updated to {myuser1.updated}")
-    u = current_accounts.datastore.get_user_by_id(myuser1.id)
-    app.logger.debug(f"in test set updated to {u.updated}")
 
     for mock_adapter in u1_fixture.mock_adapter_subs, u1_fixture.mock_adapter_members:
         assert not mock_adapter.called

@@ -10,8 +10,6 @@
 
 from enum import StrEnum
 
-from kombu import Exchange
-
 from .permissions import (
     CustomCommunitiesPermissionPolicy,
     RemoteUserDataPermissionPolicy,
@@ -66,12 +64,11 @@ class UserDataEvent(StrEnum):
     `updates.users` webhook payload, so the Profiles side can
     correlate the status callback with the original signal it sent.
 
-    Only the two values KCWorks itself can report on are modelled
-    here; `deleted` is intentionally absent because KCWorks does
-    not act on `users.deleted` webhook events (see the API
-    documentation for the rationale) and therefore never sends a
-    status callback for one. The webhook view continues to accept
-    `deleted` as a valid wire-format string.
+    `deleted` is intentionally absent because KCWorks does not act on
+    `users.deleted` webhook events (see the API documentation for the
+    rationale) and therefore never sends a status callback for one. The
+    webhook view continues to accept `deleted` as a valid wire-format
+    string.
 
     IMPORTANT: changing these values is a wire-protocol change and
     must be coordinated with the Profiles side.
@@ -79,6 +76,7 @@ class UserDataEvent(StrEnum):
 
     CREATED = "created"
     UPDATED = "updated"
+    ASSOCIATED = "associated"
 
 
 REMOTE_USER_DATA_API_TIMEOUT = 5
@@ -98,6 +96,7 @@ REMOTE_USER_DATA_API_ENDPOINTS = {
             "token_env_variable_label": "COMMONS_API_TOKEN",
         },
         "entity_types": {
+            "associations": {"events": ["associated"]},
             "users": {"events": ["created", "updated", "deleted"]},
             "groups": {"events": ["created", "updated", "deleted"]},
         },
@@ -106,10 +105,27 @@ REMOTE_USER_DATA_API_ENDPOINTS = {
 
 REMOTE_USER_DATA_UPDATE_INTERVAL = 30  # 30 seconds
 
+# Concurrent update task locking
+# ------------------------------
+# Per-entity mutex for concurrent remote user/group update Celery tasks
+# (Redis via invenio_cache). When false, update tasks run without
+# waiting for a lock.
+REMOTE_USER_DATA_UPDATE_LOCK_ENABLED = True
+# TTL in seconds for the Redis lock key; should exceed typical update
+# duration.
+REMOTE_USER_DATA_UPDATE_LOCK_TIMEOUT = 120
+# Retries when acquire returns status "waiting" (another update in
+# progress).
+REMOTE_USER_DATA_UPDATE_LOCK_MAX_RETRIES = 10
+# Initial delay in seconds before the first lock retry.
+REMOTE_USER_DATA_UPDATE_LOCK_INITIAL_BACKOFF = 1.0
+# Seconds added to the backoff delay on each subsequent retry
+# (initial_backoff + attempt * backoff_step).
+REMOTE_USER_DATA_UPDATE_LOCK_BACKOFF_STEP = 1.0
+
+# Long-delay reschedule for do_user_created and do_user_data_update after
+# Celery's bounded retries are exhausted.
 REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY = 3600
-"""Long-delay reschedule for the `do_user_created` and
-  `do_user_data_update` tasks after Celery's retries
-   fail."""
 
 # Names vocabulary sync
 # ----------------------
@@ -119,48 +135,42 @@ REMOTE_USER_DATA_USER_CREATED_RESCHEDULE_DELAY = 3600
 # exposed as Flask config values: changing them is a data-migration
 # concern, not a deployment knob.
 
-#: When true, the periodic dedupe sweep will automatically merge a
-#: `kcworks-cited` Names record into a matching `kcworks-user`
-#: record when the two share the same ORCID iD. When false, candidate
-#: pairs are only written to the dedupe report for human review.
+# When true, the periodic dedupe sweep will automatically merge a
+# kcworks-cited Names record into a matching kcworks-user record when the
+# two share the same ORCID iD. When false, candidate pairs are only
+# written to the dedupe report for human review.
 REMOTE_USER_DATA_NAMES_AUTO_MERGE_ON_ORCID = True
 
-#: Filesystem path where the periodic dedupe sweep writes its report of
-#: candidate duplicate Names records that require human review. `None`
-#: disables report writing.
+# Filesystem path where the periodic dedupe sweep writes its report of
+# candidate duplicate Names records that require human review. None
+# disables report writing.
 REMOTE_USER_DATA_NAMES_DEDUPE_REPORT_PATH = None
 
 # ORCID Public API integration
 # ----------------------------
-#: When true, the deposit form's creatibutor picker fans out to the
-#: backend ORCID proxy in parallel with the local Names search.
+# When true, the deposit form's creatibutor picker fans out to the
+# backend ORCID proxy in parallel with the local Names search.
 REMOTE_USER_DATA_ORCID_PROXY_ENABLED = False
 
-#: Use the ORCID sandbox (`sandbox.orcid.org`) instead of the production
-#: ORCID API. Useful for local development.
+# Use the ORCID sandbox (sandbox.orcid.org) instead of the production
+# ORCID API. Useful for local development.
 REMOTE_USER_DATA_ORCID_USE_SANDBOX = False
 
-#: Environment variable name from which the ORCID Public API client id is
-#: read at runtime.
+# Environment variable name from which the ORCID Public API client id is
+# read at runtime.
 REMOTE_USER_DATA_ORCID_CLIENT_ID_ENV_VAR = "ORCID_PUBLIC_CLIENT_ID"
 
-#: Environment variable name from which the ORCID Public API client
-#: secret is read at runtime.
+# Environment variable name from which the ORCID Public API client
+# secret is read at runtime.
 REMOTE_USER_DATA_ORCID_CLIENT_SECRET_ENV_VAR = "ORCID_PUBLIC_CLIENT_SECRET"
 
-#: Soft daily quota (number of ORCID API calls) tracked by the rate
-#: limiter to avoid blowing through the Public API free tier.
+# Soft daily quota (number of ORCID API calls) tracked by the rate
+# limiter to avoid blowing through the Public API free tier.
 REMOTE_USER_DATA_ORCID_DAILY_QUOTA = 90_000
 
-#: Sustained per-second request budget for ORCID API calls. The Public
-#: API tier allows roughly 12 req/s; we leave headroom by default.
+# Sustained per-second request budget for ORCID API calls. The Public
+# API tier allows roughly 12 req/s; we leave headroom by default.
 REMOTE_USER_DATA_ORCID_REQUESTS_PER_SECOND = 8
-
-REMOTE_USER_DATA_MQ_EXCHANGE = Exchange(
-    "user-data-updates",
-    type="direct",
-    delivery_mode="transient",  # in-memory queue
-)
 
 COMMUNITIES_PERMISSION_POLICY = CustomCommunitiesPermissionPolicy
 

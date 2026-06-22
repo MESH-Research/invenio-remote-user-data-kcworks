@@ -5,14 +5,17 @@
 # and/or modify it under the terms of the MIT License; see
 # LICENSE file for more details.
 
-"""Celery task to update user data from remote API."""
+"""Celery tasks to update user and group data from remote API."""
 
 import contextlib
+import functools
 import json
 import time
+import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from itertools import islice
-from typing import Any
+from typing import Any, Literal
 
 import requests
 from celery import shared_task
@@ -22,6 +25,7 @@ from invenio_access.permissions import system_identity
 from invenio_accounts.errors import AlreadyLinkedError
 from invenio_accounts.models import User, UserIdentity
 from invenio_accounts.proxies import current_datastore as datastore
+from invenio_cache.proxies import current_cache as cache
 from invenio_db import db
 from sqlalchemy.exc import IntegrityError
 
@@ -37,6 +41,160 @@ from .proxies import (
 from .types.auth import AccountInfo
 from .types.profiles_api import APIResponse
 from .utils.auth import CILogonHelpers, UserIdentifierHelpers
+
+USER_DATA_UPDATE_LOCK_SUFFIX = "user-data-updating"
+USER_DATA_CREATED_LOCK_SUFFIX = "user-created-updating"
+GROUP_DATA_UPDATE_LOCK_SUFFIX = "group-data-updating"
+
+
+def update_lock_backoff_seconds(attempt: int) -> float:
+    """Seconds to sleep before lock retry attempt ``attempt`` (0-based).
+
+    Uses progressive backoff: ``initial_backoff + (attempt * backoff_step)``.
+
+    Returns:
+        Delay in seconds before the next lock acquire attempt.
+    """
+    return app.config["REMOTE_USER_DATA_UPDATE_LOCK_INITIAL_BACKOFF"] + (
+        attempt * app.config["REMOTE_USER_DATA_UPDATE_LOCK_BACKOFF_STEP"]
+    )
+
+
+class UpdateLockNotHeld(Exception):
+    """Raised when entering a lock context without ``held`` status."""
+
+
+class UserUpdateLock:
+    """Per-entity mutex lock backed by Redis (``invenio_cache``)."""
+
+    def __init__(self, key_suffix: str) -> None:
+        """Initialize a lock scoped to keys ending with ``key_suffix``."""
+        self.token: str | None = None
+        self.key: str | None = None
+        self.status: Literal["waiting", "held"] | None = None
+        self.key_suffix = key_suffix
+
+    def _format_key(self, lock_id: str | int) -> str:
+        return f"{str(lock_id)}:{self.key_suffix}"
+
+    def _normalize_token(self, value: str | bytes) -> str:
+        return value.decode() if isinstance(value, bytes) else value
+
+    def acquire(self, lock_id: str | int) -> None:
+        """Try to acquire the lock for ``lock_id``.
+
+        Sets ``status`` to ``held`` on success or ``waiting`` if another holder
+        owns the key.
+        """
+        self.key = self._format_key(lock_id)
+        token = str(uuid.uuid4())
+        lock_timeout = app.config["REMOTE_USER_DATA_UPDATE_LOCK_TIMEOUT"]
+        if cache.add(self.key, token, timeout=lock_timeout):
+            self.token = token
+            self.status = "held"
+        else:
+            self.token = None
+            self.status = "waiting"
+
+    def release(self) -> None:
+        """Release the lock if this holder still owns it."""
+        if not self.key or not self.token:
+            return
+        current = cache.get(self.key)
+        if current is None:
+            return
+        if self._normalize_token(current) == self.token:
+            cache.delete(self.key)
+        else:
+            app.logger.error(
+                f"Could not release update task lock {self.key}. Token did not match."
+            )
+
+    def __enter__(self) -> "UserUpdateLock":
+        """Return self when the lock was acquired.
+
+        Raises:
+            UpdateLockNotHeld: If ``acquire`` did not set ``status`` to ``held``.
+        """
+        if self.status != "held":
+            raise UpdateLockNotHeld(f"Cannot acquire lock with status {self.status!r}")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        """Release the lock and do not suppress task exceptions.
+
+        Returns:
+            Always ``False`` so exceptions propagate from the guarded block.
+        """
+        self.release()
+        return False
+
+
+def with_update_task_lock(lock_id_resolver: Callable, key_suffix: str):
+    """Decorator that acquires a per-entity update lock before running a task.
+
+    Returns:
+        A wrapper that retries with backoff when the lock is held elsewhere.
+    """
+
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            with app.app_context():
+                attempt = 0
+                lock = UserUpdateLock(key_suffix)
+                lock_id = lock_id_resolver(*args, **kwargs)
+                fallback_payload = {
+                    "lock_id": str(lock_id),
+                    "key_suffix": key_suffix,
+                }
+
+                if app.config["REMOTE_USER_DATA_UPDATE_LOCK_ENABLED"]:
+                    for _ in range(
+                        app.config["REMOTE_USER_DATA_UPDATE_LOCK_MAX_RETRIES"]
+                    ):
+                        current_backoff = update_lock_backoff_seconds(attempt)
+                        lock.acquire(lock_id)
+                        try:
+                            with lock:
+                                return func(*args, **kwargs)
+                        except UpdateLockNotHeld:
+                            time.sleep(current_backoff)
+                            attempt += 1
+                            continue
+
+                    return {
+                        **fallback_payload,
+                        "status": "timeout",
+                        "reason": "Max retries reached before lock could be acquired",
+                    }
+                return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+def _user_created_lock_id(_self, _idp: str, *args, **kwargs) -> str:
+    """Resolve the per-entity lock key for ``do_user_created``.
+
+    Uses ``kc_username`` (members webhook path) or ``oauth_id`` (subs path).
+
+    Returns:
+        The lock id string.
+
+    Raises:
+        ValueError: If neither ``kc_username`` nor ``oauth_id`` is present.
+    """
+    kc_username = (kwargs.get("kc_username") or "").strip()
+    if kc_username:
+        return kc_username
+    oauth_id = (kwargs.get("oauth_id") or "").strip()
+    if oauth_id:
+        return oauth_id
+    raise ValueError(
+        "do_user_created lock requires kc_username or oauth_id"
+    )
 
 
 def _retry_at_iso(seconds_from_now: int) -> str:
@@ -285,6 +443,10 @@ def _handle_profiles_api_failure(
     bind=True,
     ignore_result=True,
     max_retries=5,
+)
+@with_update_task_lock(
+    lock_id_resolver=lambda self, user_id, *args, **kwargs: int(user_id),
+    key_suffix=USER_DATA_UPDATE_LOCK_SUFFIX,
 )
 def do_user_data_update(
     self,
@@ -537,7 +699,172 @@ def _enqueue_user_data_update(
         do_user_data_update.delay(user_id, idp, remote_id, **update_kwargs)
 
 
+@shared_task(ignore_result=True)
+@with_update_task_lock(
+    lock_id_resolver=lambda user_id, *args, **kwargs: int(user_id),
+    key_suffix=USER_DATA_UPDATE_LOCK_SUFFIX,
+)
+def do_user_associated(
+    user_id: int,
+    idp: str,
+    oauth_id: str,
+    auth_method: str,
+    kc_username: str | None = None,
+    send_status_callback: bool = True,
+    **kwargs,
+) -> dict[str, Any]:
+    """Link a remote OAuth identity to a KC user and sync profile data.
+
+    Triggered by ``associations`` / ``associated`` webhook events when Profiles
+    links a CILogon ``sub`` to an existing KC member account.
+
+    When ``send_status_callback`` is True (default), the task sends
+    PROCESSED/FAILED callbacks to Profiles with ``event=associated``,
+    mirroring ``do_user_data_update``.
+
+    Args:
+        user_id: The local ID of the user to update.
+        idp: The remote service configuration key (e.g. ``knowledgeCommons``).
+        oauth_id: The OAuth/CILogon subject identifier to associate.
+        auth_method: The ``UserIdentity.method`` value (e.g. ``cilogon``).
+        kc_username: KC member name for Profiles API lookup.
+        send_status_callback: Send PROCESSED/FAILED callbacks to Profiles.
+        **kwargs: Reserved for future Celery options.
+
+    Returns:
+        Plain dict summarizing the association and user update run.
+
+    Raises:
+        LocalUserNotFoundError: If the local user row is missing during sync.
+        requests.RequestException: On transient Profiles API HTTP failures.
+        requests.Timeout: On Profiles API request timeout.
+    """
+    status_event = UserDataEvent.ASSOCIATED
+
+    with app.app_context():
+
+        def _status(
+            status: UserDataStatus,
+            *,
+            user: User | None = None,
+            **send_kw,
+        ) -> None:
+            if send_status_callback:
+                _send_status(
+                    status,
+                    status_event,
+                    kc_username=kc_username,
+                    sub=oauth_id,
+                    user=user,
+                    method=auth_method,
+                    **send_kw,
+                )
+
+        user = db.session.get(User, user_id)
+        if user is None:
+            app.logger.error(
+                "do_user_associated: local user missing; user_id=%s oauth_id=%s",
+                user_id,
+                oauth_id,
+            )
+            _status(UserDataStatus.FAILED, note="user_not_found")
+            return {
+                "user_id": user_id,
+                "status": "error",
+                "reason": "User not found",
+            }
+
+        existing_identity = UserIdentity.query.filter_by(
+            method=auth_method, id=oauth_id
+        ).first()
+        if existing_identity is not None and existing_identity.id_user != user_id:
+            app.logger.error(
+                "Cannot associate oauth_id=%r with user_id=%s; already linked to "
+                "user_id=%s",
+                oauth_id,
+                user_id,
+                existing_identity.id_user,
+            )
+            _status(
+                UserDataStatus.FAILED,
+                user=user,
+                note="oauth_identity_linked_to_other_user",
+            )
+            return {
+                "user_id": user_id,
+                "oauth_id": oauth_id,
+                "status": "error",
+                "reason": "OAuth identity already linked to another user",
+            }
+
+        CILogonHelpers.link_user_to_oauth_identifier(user, auth_method, oauth_id)
+
+        service = current_remote_user_data_service
+        try:
+            user, updated_data, groups, groups_changes = (
+                service.update_user_from_remote(
+                    system_identity,
+                    user_id,
+                    idp,
+                    remote_id=oauth_id,
+                    kc_username=kc_username,
+                )
+            )
+        except (requests.RequestException, requests.Timeout) as exc:
+            app.logger.warning(
+                "do_user_associated: Profiles API failure for user_id=%s sub=%s: %r",
+                user_id,
+                oauth_id,
+                exc,
+            )
+            _status(
+                UserDataStatus.FAILED,
+                user=user,
+                note=f"profiles_api:{type(exc).__name__}",
+            )
+            raise
+        except LocalUserNotFoundError as exc:
+            app.logger.error(
+                "do_user_associated: local user missing (%s); user_id=%s sub=%s",
+                exc,
+                user_id,
+                oauth_id,
+            )
+            _status(UserDataStatus.FAILED, user=user, note="LocalUserNotFoundError")
+            raise
+        except Exception as exc:
+            _status(UserDataStatus.FAILED, user=user, note=type(exc).__name__)
+            raise
+
+        if user is not None:
+            sync_user_to_names.delay(user.id)
+
+        _status(UserDataStatus.PROCESSED, user=user)
+
+        summary: dict[str, Any] = {
+            "user_id": user_id,
+            "idp": idp,
+            "auth_method": auth_method,
+            "remote_id": oauth_id,
+            "kc_username": kc_username,
+            "completed_user_id": user.id if user is not None else None,
+            "groups": list(groups),
+            "group_changes": dict(groups_changes)
+            if isinstance(groups_changes, dict)
+            else {},
+            "status": "associated",
+        }
+        if isinstance(updated_data, dict):
+            summary["user_field_changes"] = updated_data
+        encoded = json.dumps(summary, default=str)
+        return json.loads(encoded)
+
+
 @shared_task(ignore_result=False)
+@with_update_task_lock(
+    lock_id_resolver=lambda idp, remote_id, *args, **kwargs: f"{idp}:{remote_id}",
+    key_suffix=GROUP_DATA_UPDATE_LOCK_SUFFIX,
+)
 def do_group_data_update(idp, remote_id, **kwargs):
     """Perform a group metadata update.
 
@@ -572,6 +899,10 @@ def do_find_names_duplicates(
     bind=True,
     ignore_result=False,
     max_retries=5,
+)
+@with_update_task_lock(
+    lock_id_resolver=_user_created_lock_id,
+    key_suffix=USER_DATA_CREATED_LOCK_SUFFIX,
 )
 def do_user_created(
     self,

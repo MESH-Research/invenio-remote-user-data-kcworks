@@ -374,7 +374,7 @@ class UserDataAPIClient:
                 "username": "<kc_username>" | null,
                 "sub":      "<oauth sub>"    | null,
                 "status":   "PROCESSED" | "FAILED",
-                "event":    "created"   | "updated",
+                "event":    "created"   | "updated" | "associated",
                 "retry_at": "<ISO 8601 UTC timestamp>",   // optional
                 "note":     "<freeform diagnostic>"       // optional
             }

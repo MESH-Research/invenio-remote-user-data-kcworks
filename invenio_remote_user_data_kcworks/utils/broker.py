@@ -35,10 +35,16 @@ from ..errors import (
     UserDataRequestTimeout,
 )
 from ..proxies import current_remote_user_data_service
-from ..tasks import sync_user_to_names
+from ..tasks import (
+    USER_DATA_UPDATE_LOCK_SUFFIX,
+    UserUpdateLock,
+    do_user_data_update,
+    sync_user_to_names,
+)
 from ..types.broker_payload import BrokerDecodedToken
 from ..types.profiles_api import APIResponse
 from .auth import CILogonHelpers
+from .login_sync import record_login_sync_timestamp
 
 
 def extract_bearer_token(header_string: str) -> str:
@@ -286,6 +292,60 @@ class BrokerHelpers:
         except (TypeError, ValueError) as e:
             raise BrokerExpiryValueError from e
 
+    def _sync_user_data_after_broker_login(
+        self,
+        user: User,
+        sub: str,
+        profile_response: APIResponse | None,
+    ) -> None:
+        """Apply remote profile data after broker login without blocking on the lock.
+
+        When the per-user update mutex is free, sync runs inline so the first
+        post-login page sees fresh data. If another worker holds the lock, enqueue
+        ``do_user_data_update`` and return immediately so login is not delayed.
+        """
+        def _run_sync() -> None:
+            current_remote_user_data_service.update_user_from_remote(
+                system_identity,
+                user.id,
+                "knowledgeCommons",
+                sub,
+                remote_data=profile_response,
+            )
+            sync_user_to_names.delay(user.id)
+
+        def _try_inline_sync() -> bool:
+            try:
+                _run_sync()
+            except Exception as exc:
+                app.logger.warning(
+                    "Login-time user-data update failed for sub=%s: %r; "
+                    "login proceeds.",
+                    sub,
+                    exc,
+                )
+                return False
+            record_login_sync_timestamp(user.id)
+            return True
+
+        if not app.config["REMOTE_USER_DATA_UPDATE_LOCK_ENABLED"]:
+            _try_inline_sync()
+            return
+
+        lock = UserUpdateLock(USER_DATA_UPDATE_LOCK_SUFFIX)
+        lock.acquire(user.id)
+        if lock.status == "held":
+            with lock:
+                _try_inline_sync()
+        else:
+            do_user_data_update.delay(
+                user.id,
+                "knowledgeCommons",
+                remote_id=sub,
+                send_status_callback=False,
+            )
+            record_login_sync_timestamp(user.id)
+
     def process_broker_payload(self, raw_token: str) -> tuple[User | None, str | None]:
         """Extract user identity, find/create th KCWorks user, and update their data.
 
@@ -354,23 +414,7 @@ class BrokerHelpers:
             with contextlib.suppress(AlreadyLinkedError):
                 CILogonHelpers.link_user_to_oauth_identifier(user, "cilogon", sub)
 
-            try:
-                current_remote_user_data_service.update_user_from_remote(
-                    system_identity,
-                    user.id,
-                    "knowledgeCommons",
-                    sub,
-                    remote_data=profile_response,
-                )
-            except Exception as exc:
-                app.logger.warning(
-                    "Login-time user-data update failed for sub=%s: %r; "
-                    "login proceeds.",
-                    sub,
-                    exc,
-                )
-            else:
-                sync_user_to_names.delay(user.id)
+            self._sync_user_data_after_broker_login(user, sub, profile_response)
         else:
             if profile_fetch_error == "timeout":
                 raise UserDataRequestTimeout

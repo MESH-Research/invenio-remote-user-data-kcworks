@@ -27,13 +27,11 @@ from flask_login import login_user
 from invenio_accounts.models import User
 from invenio_accounts.sessions import delete_user_sessions
 from invenio_db import db
-from invenio_queues.proxies import current_queues
 from werkzeug.exceptions import (
     BadRequest,
     MethodNotAllowed,
     NotFound,
 )
-from werkzeug.local import LocalProxy
 
 from invenio_remote_user_data_kcworks.proxies import (
     current_remote_user_data_service,
@@ -49,7 +47,12 @@ from .errors import (
     UserDataRequestFailed,
     UserDataRequestTimeout,
 )
-from .signals import remote_data_updated
+from .tasks import (
+    do_group_data_update,
+    do_user_associated,
+    do_user_created,
+    do_user_data_update,
+)
 from .utils.auth import CILogonHelpers
 from .utils.broker import BrokerHelpers
 from .utils.redirect import safe_redirect_target
@@ -260,6 +263,81 @@ def sso_broker_callback() -> Response:
         raise e
 
 
+def _normalize_webhook_payload(data: dict) -> dict:
+    """Normalize webhook JSON so entity updates are always under ``updates``.
+
+    Some senders use a top-level ``associations`` object with a nested
+    ``associations`` array instead of ``updates.associations``.
+
+    Args:
+        data: Raw webhook JSON body.
+
+    Returns:
+        Payload with an ``updates`` key suitable for the webhook handler.
+    """
+    if "updates" in data:
+        return data
+
+    if "associations" not in data:
+        return data
+
+    associations = data["associations"]
+    if isinstance(associations, dict):
+        associations = associations.get("associations", [])
+
+    return {
+        **data,
+        "updates": {"associations": associations},
+    }
+
+
+def _enqueue_update_tasks(events: list[dict]) -> None:
+    """Enqueue Celery tasks for each accepted webhook update event."""
+    for event in events:
+        entity_type = event.get("entity_type")
+        evt = event.get("event")
+
+        if entity_type == "users" and evt == "updated":
+            try:
+                do_user_data_update.delay(  # noqa
+                    event["user_id"],
+                    event["idp"],
+                    kc_username=event.get("kc_username"),
+                )
+            except AssertionError:
+                app.logger.info(
+                    "Cannot update: user %s does not exist in Invenio.",
+                    event.get("kc_username"),
+                )
+        elif entity_type == "users" and evt == "created":
+            do_user_created.delay(  # noqa
+                event["idp"],
+                kc_username=event.get("kc_username"),
+            )
+        elif entity_type == "groups" and evt in ("created", "updated"):
+            do_group_data_update.delay(event["idp"], event["id"])  # noqa
+        elif entity_type == "groups" and evt == "deleted":
+            app.logger.error(
+                "Received webhook signal to delete group %s. Group role deletion "
+                "from remote signal is not yet implemented.",
+                event.get("id"),
+            )
+        elif entity_type == "associations" and evt == "associated":
+            do_user_associated.delay(  # noqa
+                event["user_id"],
+                event["idp"],
+                oauth_id=event["oauth_id"],
+                auth_method=event["auth_method"],
+                kc_username=event.get("kc_username"),
+            )
+        else:
+            app.logger.error(
+                "Received webhook signal for unexpected event: %s, %s",
+                entity_type,
+                evt,
+            )
+
+
 class RemoteUserDataUpdateWebhook(MethodView):
     """View class for the user/group data update webhook receiver.
 
@@ -387,7 +465,7 @@ class RemoteUserDataUpdateWebhook(MethodView):
             g.identity, "trigger_update"
         )
         try:
-            data = request.get_json()
+            data = _normalize_webhook_payload(request.get_json())
             raw_idp = data["idp"]
             config_idp, auth_method = _resolve_webhook_config_idp(raw_idp)
             events = []
@@ -399,6 +477,8 @@ class RemoteUserDataUpdateWebhook(MethodView):
             bad_users = []
             groups = []
             bad_groups = []
+            associations = []
+            bad_associations = []
 
             for e in data["updates"].keys():
                 if e in entity_types.keys():
@@ -441,6 +521,31 @@ class RemoteUserDataUpdateWebhook(MethodView):
                                     "event": u["event"],
                                     "id": u["id"],
                                 })
+                            elif e == "associations":
+                                kc_username = u["kc_id"]
+                                oauth_id = u["id"]
+                                user = _resolve_user_for_webhook(
+                                    kc_username, auth_method
+                                )
+                                if user is None:
+                                    bad_associations.append(kc_username)
+                                    self.logger.debug(
+                                        "Received association signal from %s "
+                                        "for unknown user: KC username %r",
+                                        raw_idp,
+                                        kc_username,
+                                    )
+                                else:
+                                    associations.append(kc_username)
+                                    events.append({
+                                        "idp": config_idp,
+                                        "entity_type": e,
+                                        "event": u["event"],
+                                        "kc_username": kc_username,
+                                        "oauth_id": oauth_id,
+                                        "auth_method": auth_method,
+                                        "user_id": user.id,
+                                    })
                         else:
                             bad_events.append(u)
                             self.logger.warning(
@@ -459,12 +564,13 @@ class RemoteUserDataUpdateWebhook(MethodView):
                     )
 
             if len(events) > 0:
-                current_queues.queues["user-data-updates"].publish(events)
-                remote_data_updated.send(
-                    cast(LocalProxy, app)._get_current_object(), events=events
-                )
+                _enqueue_update_tasks(events)
             else:
-                if not users and bad_users or not groups and bad_groups:
+                if (
+                    (not users and bad_users)
+                    or (not groups and bad_groups)
+                    or (not associations and bad_associations)
+                ):
                     entity_string = ""
                     if not users and bad_users:
                         entity_string += "users"
@@ -472,12 +578,19 @@ class RemoteUserDataUpdateWebhook(MethodView):
                         if entity_string:
                             entity_string += " and "
                         entity_string += "groups"
+                    if not associations and bad_associations:
+                        if entity_string:
+                            entity_string += " and "
+                        entity_string += "associations"
                     self.logger.info(
-                        f"{raw_idp} requested updates for {entity_string} "
-                        "that do not exist"
+                        "%s requested updates for %s that do not exist",
+                        raw_idp,
+                        entity_string,
                     )
                     self.logger.info(data["updates"])
-                    raise NotFound("Updates attempted for unknown users or groups")
+                    raise NotFound(
+                        "Updates attempted for unknown users, groups, or associations"
+                    )
                 elif not groups and bad_groups:
                     self.logger.info(
                         f"{raw_idp} requested updates for groups that do not exist"

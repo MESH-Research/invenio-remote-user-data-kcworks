@@ -7,15 +7,12 @@
 
 """Main extension class for invenio-remote-user-data-kcworks."""
 
-import datetime
 import os
 import re
 
-import arrow
 from flask import Response, current_app, request
 from flask_login import current_user, user_logged_in, user_logged_out
 from invenio_accounts.models import User
-from invenio_queues.proxies import current_queues
 
 from . import config
 from .proxies import current_remote_user_data_service
@@ -23,13 +20,9 @@ from .services.config import RemoteGroupDataServiceConfig, RemoteUserDataService
 from .services.names_sync import NamesSyncService
 from .services.record_username_sync import RecordKcUsernameSyncService
 from .services.service import RemoteGroupDataService, RemoteUserDataService
-from .signals import remote_data_updated
-from .tasks import (
-    do_group_data_update,
-    do_user_created,
-    do_user_data_update,
-)
+from .tasks import do_user_data_update
 from .utils.broker import BrokerHelpers
+from .utils.login_sync import login_sync_is_due, record_login_sync_timestamp
 from .views import sso_broker_login
 
 
@@ -46,67 +39,13 @@ def on_user_logged_out(_, user: User) -> None:
 def on_user_logged_in(_, user: User) -> None:
     """Update user data from remote server when current user is changed."""
     with current_app.app_context():
-        update_interval = current_app.config.get(
-            "INVENIO_REMOTE_USER_DATA_UPDATE_INTERVAL", 30
-        )
-        if user.id and (
-            arrow.utcnow() - arrow.get(user.updated)
-            > datetime.timedelta(seconds=update_interval)
-        ):
-            do_user_data_update.delay(user.id, send_status_callback=False)  # noqa
-
-
-def on_remote_data_updated(_, events: list) -> None:
-    """Drain the user-data-updates queue and dispatch by entity type.
-
-    Single consumer for the `remote_data_updated` signal: drains
-    `current_queues.queues["user-data-updates"]` once per signal
-    firing and routes each event to the appropriate Celery task
-    based on `entity_type` + `event`.
-
-    Replaces the per-service `__init__` handlers that previously
-    each drained the same queue, racing each other and silently
-    skipping events whose `entity_type` didn't match. Living in
-    `ext.py` keeps signal-subscription wiring out of the service
-    classes themselves.
-
-    Unhandled event types (e.g. `groups` + `deleted`, which is
-    not yet implemented) are logged at warning level and skipped so
-    a single unrecognised event can't abort queue draining for the
-    rest of the batch.
-
-    Args:
-        _: The Flask app sender (positional arg required by Blinker;
-            unused).
-        events: Forwarded by `RemoteUserDataUpdateWebhook` for
-            logging/diagnostic context; the authoritative list of
-            events to process is read from the queue itself.
-    """
-    for event in current_queues.queues["user-data-updates"].consume():
-        entity_type = event.get("entity_type")
-        evt = event.get("event")
-
-        if entity_type == "users" and evt == "updated":
-            do_user_data_update.delay(  # noqa
-                event["user_id"],
-                event["idp"],
-                kc_username=event.get("kc_username"),
-            )
-        elif entity_type == "users" and evt == "created":
-            do_user_created.delay(  # noqa
-                event["idp"],
-                kc_username=event.get("kc_username"),
-            )
-        elif entity_type == "groups" and evt in ("created", "updated"):
-            do_group_data_update.delay(event["idp"], event["id"])  # noqa
-        else:
-            current_app.logger.warning(
-                "on_remote_data_updated: unhandled event "
-                "(entity_type=%r, event=%r); skipping. Full event=%r",
-                entity_type,
-                evt,
-                event,
-            )
+        if user.id:
+            update_interval = current_app.config["REMOTE_USER_DATA_UPDATE_INTERVAL"]
+            if login_sync_is_due(user.id, update_interval):
+                record_login_sync_timestamp(user.id)
+                do_user_data_update.delay(
+                    user.id, send_status_callback=False
+                )  # noqa
 
 
 class InvenioRemoteUserData:
@@ -168,7 +107,6 @@ class InvenioRemoteUserData:
         """
         user_logged_in.connect(on_user_logged_in, app)
         user_logged_out.connect(on_user_logged_out, app)
-        remote_data_updated.connect(on_remote_data_updated, app)
 
         @app.before_request
         def _sso_silent_login_check() -> Response | None:

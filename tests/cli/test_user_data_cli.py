@@ -60,8 +60,10 @@ def test_sync_now_inline_resolves_each_arg_and_calls_task(runner):
     fake_resolve = MagicMock(side_effect=[101, 202])
     fake_sync = MagicMock(side_effect=[True, False])
 
-    with patch.object(names_cli_mod, "_resolve_user_id_from_arg", fake_resolve), \
-         patch.object(names_cli_mod, "sync_user_to_names", fake_sync):
+    with (
+        patch.object(names_cli_mod, "_resolve_user_id_from_arg", fake_resolve),
+        patch.object(names_cli_mod, "sync_user_to_names", fake_sync),
+    ):
         result = runner.invoke(cli, ["names", "sync-now", "11", "22"])
 
     assert result.exit_code == 0, result.output
@@ -75,8 +77,10 @@ def test_sync_now_unresolved_arg_is_skipped_not_raised(runner):
     """An id that doesn't resolve to a local user is reported and skipped."""
     fake_sync = MagicMock(return_value=True)
 
-    with patch.object(names_cli_mod, "_resolve_user_id_from_arg", return_value=None), \
-         patch.object(names_cli_mod, "sync_user_to_names", fake_sync):
+    with (
+        patch.object(names_cli_mod, "_resolve_user_id_from_arg", return_value=None),
+        patch.object(names_cli_mod, "sync_user_to_names", fake_sync),
+    ):
         result = runner.invoke(cli, ["names", "sync-now", "ghost"])
 
     assert result.exit_code == 0, result.output
@@ -89,11 +93,11 @@ def test_sync_now_background_dispatches_celery_task(runner):
     fake_sync = MagicMock()
     fake_sync.delay.return_value = MagicMock(id="task-aaa")
 
-    with patch.object(names_cli_mod, "_resolve_user_id_from_arg", return_value=42), \
-         patch.object(names_cli_mod, "sync_user_to_names", fake_sync):
-        result = runner.invoke(
-            cli, ["names", "sync-now", "--background", "irrelevant"]
-        )
+    with (
+        patch.object(names_cli_mod, "_resolve_user_id_from_arg", return_value=42),
+        patch.object(names_cli_mod, "sync_user_to_names", fake_sync),
+    ):
+        result = runner.invoke(cli, ["names", "sync-now", "--background", "irrelevant"])
 
     assert result.exit_code == 0, result.output
     assert "task-aaa" in result.output
@@ -193,7 +197,8 @@ def test_ingest_inline_runs_task_synchronously(runner, tmp_path):
         fmt="auto",
         source="knowledgeCommons",
         limit=None,
-        rate_per_second=2,
+        offset=1,
+        rate_per_second=2.0,
     )
     assert "rows_seen=1" in result.output
 
@@ -227,8 +232,9 @@ def test_ingest_background_dispatches_celery_task(runner, tmp_path):
         str(p),
         fmt="jsonl",
         source="knowledgeCommons",
+        offset=1,
         limit=None,
-        rate_per_second=2,
+        rate_per_second=2.0,
     )
     fake_task.assert_not_called()
 
@@ -261,6 +267,7 @@ def test_ingest_limit_and_rate_per_second_forwarded_inline(runner, tmp_path):
         fmt="auto",
         source="knowledgeCommons",
         limit=25,
+        offset=1,
         rate_per_second=0.5,
     )
 
@@ -295,7 +302,8 @@ def test_ingest_limit_and_rate_per_second_forwarded_background(runner, tmp_path)
         fmt="auto",
         source="knowledgeCommons",
         limit=10,
-        rate_per_second=0,
+        offset=1,
+        rate_per_second=0.0,
     )
     fake_task.assert_not_called()
 
@@ -344,8 +352,11 @@ def test_show_falls_back_to_orcid_resolve_when_read_misses(runner):
         "hits": {
             "hits": [
                 {"id": "user-1", "name": "User One", "tags": ["kcworks-user"]},
-                {"id": "0000-0001-2345-6789", "name": "Cited One",
-                 "tags": ["kcworks-cited"]},
+                {
+                    "id": "0000-0001-2345-6789",
+                    "name": "Cited One",
+                    "tags": ["kcworks-cited"],
+                },
             ]
         }
     }
@@ -413,14 +424,22 @@ def test_list_duplicates_prints_one_line_per_pair(runner):
         {
             "score": 0.95,
             "score_method": "family_exact+given_fuzzy",
-            "a_uuid": "uuid-a", "a_pid": "kc|jdoe", "a_name": "Doe, John",
-            "b_uuid": "uuid-b", "b_pid": "0000-0001-x", "b_name": "Doe, Jonathan",
+            "a_uuid": "uuid-a",
+            "a_pid": "kc|jdoe",
+            "a_name": "Doe, John",
+            "b_uuid": "uuid-b",
+            "b_pid": "0000-0001-x",
+            "b_name": "Doe, Jonathan",
         },
         {
             "score": 0.80,
             "score_method": "family_phonetic+given_fuzzy",
-            "a_uuid": "uuid-c", "a_pid": "kc|mlin", "a_name": "Lin, Mei",
-            "b_uuid": "uuid-d", "b_pid": "kc|mlin2", "b_name": "Lin, May",
+            "a_uuid": "uuid-c",
+            "a_pid": "kc|mlin",
+            "a_name": "Lin, Mei",
+            "b_uuid": "uuid-d",
+            "b_pid": "kc|mlin2",
+            "b_name": "Lin, May",
         },
     ]
 
@@ -430,12 +449,12 @@ def test_list_duplicates_prints_one_line_per_pair(runner):
     assert result.exit_code == 0, result.output
     assert "2 marked duplicate pair(s):" in result.output
     assert (
-        'score=0.95 method=family_exact+given_fuzzy  '
+        "score=0.95 method=family_exact+given_fuzzy  "
         'kc|jdoe (uuid-a) "Doe, John"  <->  '
         '0000-0001-x (uuid-b) "Doe, Jonathan"'
     ) in result.output
     assert (
-        'score=0.8 method=family_phonetic+given_fuzzy  '
+        "score=0.8 method=family_phonetic+given_fuzzy  "
         'kc|mlin (uuid-c) "Lin, Mei"  <->  '
         'kc|mlin2 (uuid-d) "Lin, May"'
     ) in result.output

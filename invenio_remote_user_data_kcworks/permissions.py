@@ -33,6 +33,9 @@ from invenio_users_resources.services.generators import (
 class CustomCommunitiesPermissionPolicy(CommunityPermissionPolicy):
     """Communities permission policy of Datasafe."""
 
+    can_set_theme = [CommunityOwners(), SystemProcess()]
+    can_delete_theme = can_set_theme
+
     can_members_add = [
         CommunityManagersForRole(),
         AllowedMemberTypes("user", "group"),

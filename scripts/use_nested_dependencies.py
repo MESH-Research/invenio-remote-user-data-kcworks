@@ -25,12 +25,21 @@ except ImportError:
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 PYPROJECT_TOML = PROJECT_ROOT / "pyproject.toml"
-PEER_GROUP_COLLECTIONS = PROJECT_ROOT / ".." / "invenio-group-collections-kcworks"
+PEERS = {
+    "invenio-group-collections-kcworks": PROJECT_ROOT
+    / ".."
+    / "invenio-group-collections-kcworks",
+    "invenio-rdm-records": PROJECT_ROOT / ".." / "invenio-rdm-records",
+}
 
 GIT_SOURCES = {
     "invenio-group-collections-kcworks": {
         "git": "https://github.com/MESH-Research/invenio-group-collections-kcworks.git",
         "branch": "main",
+    },
+    "invenio-rdm-records": {
+        "git": "https://github.com/MESH-Research/invenio-rdm-records.git",
+        "branch": "local-working",
     },
 }
 
@@ -41,9 +50,10 @@ def main() -> None:
         sys.exit(1)
 
     peers_missing = []
-    if not PEER_GROUP_COLLECTIONS.resolve().is_dir():
-        print(f"Peer directory not found at {PEER_GROUP_COLLECTIONS}, will use GitHub source")
-        peers_missing.append("invenio-group-collections-kcworks")
+    for name, path in PEERS.items():
+        if not path.resolve().is_dir():
+            print(f"Peer directory not found at {path}, will use GitHub source")
+            peers_missing.append(name)
 
     if not peers_missing:
         print("Peer directories found, keeping local paths in pyproject.toml")

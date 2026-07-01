@@ -75,6 +75,7 @@ package-data.invenio_remote_user_data_kcworks = [
 
 [tool.uv]
 sources.invenio-group-collections-kcworks = { path = "../invenio-group-collections-kcworks", editable = true }
+sources.invenio-rdm-records = { path = "../invenio-rdm-records", editable = true }
 
 [tool.ruff]
 target-version = "py312"
@@ -260,5 +261,6 @@ plugins.jedi.extra_paths = [
   "../../..",                             # kcworks (site/)
   "../invenio-communities",
   "../invenio-group-collections-kcworks",
+  "../invenio-rdm-records",
   "../invenio-stats-dashboard",
 ]

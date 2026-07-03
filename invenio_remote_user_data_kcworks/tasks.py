@@ -1566,6 +1566,9 @@ def do_ingest_profiles_dump(
             try:
                 if fmt == "jsonl":
                     payload = APIResponse.model_validate(row)
+                    if not payload.data:
+                        stats["skipped"] += 1
+                        continue
                     user_id = do_user_created(
                         source,
                         oauth_id=payload.data[0].sub if payload.data else None,

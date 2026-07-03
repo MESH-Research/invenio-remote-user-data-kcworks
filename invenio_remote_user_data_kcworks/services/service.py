@@ -360,8 +360,6 @@ class RemoteUserDataService(Service):
         Returns:
             A four-tuple of `(user, user_field_changes, groups, group_changes)`.
         """
-        self.logger.debug(f"final remote data profile: {pformat(profile)}")
-
         group_changes = CILogonHelpers.calculate_group_changes(profile, user)
         user_changes, new_data = CILogonHelpers.calculate_user_changes(profile, user)
 
@@ -547,6 +545,17 @@ class RemoteUserDataService(Service):
                 )
             elif remote_id:
                 remote_data = UserDataAPIClient.fetch_user_profile(sub_id=remote_id)
+                if isinstance(remote_data, APIResponse) and (
+                    not remote_data.data or len(remote_data.data) == 0
+                ):
+                    stored_kc_username = (user.user_profile or {}).get(
+                        "identifier_kc_username"
+                    )
+                    if stored_kc_username:
+                        remote_data = UserDataAPIClient.fetch_user_profile(
+                            kc_username=stored_kc_username,
+                            use_sub_endpoint=False,
+                        )
             elif remote_data is None:
                 self.logger.error(
                     "update_user_from_remote: no kc_username or remote_id for "
@@ -566,14 +575,11 @@ class RemoteUserDataService(Service):
             )
             return user, None, [], {}
 
-        if remote_data is not None and (
-            hasattr(remote_data, "data")
-            and (not remote_data.data or len(remote_data.data) == 0)
+        if (
+            isinstance(remote_data, APIResponse)
+            and hasattr(remote_data, "meta")
+            and not remote_data.meta.authorized
         ):
-            fallback_username = kc_username or (user.user_profile or {}).get(
-                "identifier_kc_username"
-            )
-        elif hasattr(remote_data, "meta") and not remote_data.meta.authorized:
             self.logger.error("Problem with static bearer key for user data update.")
             return user, remote_data, [], {}
 

@@ -318,9 +318,9 @@ def test_user_data_sync_on_login_workflow(
     published_after = current_rdm_records_service.read(
         system_identity, published_record_id
     ).to_dict()
-    published_identifiers = (
-        published_after["metadata"]["creators"][0]["person_or_org"]["identifiers"]
-    )
+    published_identifiers = published_after["metadata"]["creators"][0]["person_or_org"][
+        "identifiers"
+    ]
     assert any(
         ident["scheme"] == "kc_username" and ident["identifier"] == new_kc_username
         for ident in published_identifiers
@@ -329,9 +329,9 @@ def test_user_data_sync_on_login_workflow(
     draft_after = current_rdm_records_service.read_draft(
         system_identity, draft_record_id
     ).to_dict()
-    draft_identifiers = (
-        draft_after["metadata"]["creators"][0]["person_or_org"]["identifiers"]
-    )
+    draft_identifiers = draft_after["metadata"]["creators"][0]["person_or_org"][
+        "identifiers"
+    ]
     assert any(
         ident["scheme"] == "kc_username" and ident["identifier"] == new_kc_username
         for ident in draft_identifiers
@@ -353,8 +353,6 @@ def test_group_roles_sync_on_login_logout(
     group principals on the request identity and a second user without remote
     mock subscriptions.
     """
-    app = running_app.app
-
     new_data_payload = user_data_set["user1"]
     expected_remote_groups = [
         f"knowledgeCommons---{group['id']}|{group['role']}"

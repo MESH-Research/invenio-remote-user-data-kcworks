@@ -13,20 +13,15 @@ These tests aim to be as lightweight as possible and so *do not* pull in the sea
 index fixture. A full live workflow test is included in the UI integration test module.
 """
 
+import logging
 import os
 import secrets
 import time
 from unittest.mock import MagicMock
 
-import pytest
 from invenio_accounts.models import UserIdentity
 from invenio_accounts.proxies import current_datastore
 
-from invenio_remote_user_data_kcworks.errors import (
-    BrokerNonceValidationError,
-    BrokerPayloadExpiredError,
-    BrokerTokenDecryptionError,
-)
 from invenio_remote_user_data_kcworks.utils.broker import SecureParamEncoder
 from tests.fixtures.idms import IDMS_SUBS_RESPONSE_SUB
 from tests.fixtures.names import SAMPLE_NAME_RESULT
@@ -351,7 +346,9 @@ def test_return_handler_existing_not_associated(
     assert mock_names_task.delay.call_count == 1
 
 
-def test_return_handler_expired_token(base_app, db, client, requests_mock, monkeypatch):
+def test_return_handler_expired_token(
+    base_app, db, client, requests_mock, monkeypatch, caplog
+):
     """Test that the sso return handler rejects expired tokens.
 
     Should redirect to a 401 error page.
@@ -386,16 +383,16 @@ def test_return_handler_expired_token(base_app, db, client, requests_mock, monke
         base_app.config.get("SSO_BROKER_VERIFY_NONCE_URL"), json={"valid": True}
     )
 
-    # NOTE: In production this error is handled by a registered error handler
-    # in kcworks.ext
-    with pytest.raises(BrokerPayloadExpiredError):
-        client.get(
-            "/sso/broker-callback/",
-            query_string={
-                "broker_token": mock_broker_token,
-                "final_redirect": mock_final_redirect,
-            },
-        )
+    response = client.get(
+        "/sso/broker-callback/",
+        query_string={
+            "broker_token": mock_broker_token,
+            "final_redirect": mock_final_redirect,
+        },
+    )
+    assert response.status_code == 401
+    # BrokerPayloadExpiredError is not logged because it's routine,
+    # expected behaviour.
 
     # nonce validation did not happen
     assert not nonce_api_adapter.called
@@ -409,7 +406,9 @@ def test_return_handler_expired_token(base_app, db, client, requests_mock, monke
     assert not current_datastore.get_user_by_email(token_payload["userinfo"]["email"])
 
 
-def test_return_handler_invalid_nonce(base_app, db, client, monkeypatch, requests_mock):
+def test_return_handler_invalid_nonce(
+    base_app, db, client, monkeypatch, requests_mock, caplog
+):
     """Test that the return handler rejects expired nonces.
 
     Should redirect to a 401 error page.
@@ -444,16 +443,19 @@ def test_return_handler_invalid_nonce(base_app, db, client, monkeypatch, request
         base_app.config.get("SSO_BROKER_VERIFY_NONCE_URL"), json={"valid": False}
     )
 
-    # NOTE: Again, this is caught by an error handler registered in production
+    # NOTE: Again, this is caught by an error handler registered in ui app
     # by kcworks.ext
-    with pytest.raises(BrokerNonceValidationError):
-        client.get(
+    with caplog.at_level(logging.ERROR):
+        response = client.get(
             "/sso/broker-callback/",
             query_string={
                 "broker_token": mock_broker_token,
                 "final_redirect": mock_final_redirect,
             },
         )
+        assert response.status_code == 401
+        # logged BrokerNonceValidationError
+        assert "Nonce validation request failed" in caplog.text
 
     # nonce validation did happen
     assert nonce_api_adapter.called
@@ -468,7 +470,7 @@ def test_return_handler_invalid_nonce(base_app, db, client, monkeypatch, request
 
 
 def test_return_handler_malformed_token(
-    base_app, db, client, requests_mock, monkeypatch
+    base_app, db, client, requests_mock, monkeypatch, caplog
 ):
     """Test that the return handler handles a malformed token.
 
@@ -488,14 +490,17 @@ def test_return_handler_malformed_token(
         json=IDMS_SUBS_RESPONSE_SUB,
     )
 
-    with pytest.raises(BrokerTokenDecryptionError):
-        client.get(
+    with caplog.at_level(logging.ERROR):
+        response = client.get(
             "/sso/broker-callback/",
             query_string={
                 "broker_token": "not-a-valid-encrypted-broker-token",
                 "final_redirect": mock_final_redirect,
             },
         )
+        assert response.status_code == 401
+        # logged BrokerTokenDecryptionError
+        assert "Failed to decrypt broker_token" in caplog.text
 
     assert not nonce_api_adapter.called
     assert not user_api_adapter.called

@@ -35,8 +35,15 @@ from tests.fixtures.idms import (
 )
 
 
-def _ingest_username_row(kc_username: str, *, source: str = "knowledgeCommons"):
-    """Username-list ingest: same kwargs as `do_ingest_profiles_dump` usernames path."""
+def _ingest_username_row(
+    kc_username: str, *, source: str = "knowledgeCommons"
+) -> int | None:
+    """Username-list ingest: same kwargs as `do_ingest_profiles_dump` usernames path.
+
+    Returns:
+        int | None: The id of the created user if creation was successful,
+          otherwise None.
+    """
     return do_user_created(
         source,
         kc_username=kc_username,

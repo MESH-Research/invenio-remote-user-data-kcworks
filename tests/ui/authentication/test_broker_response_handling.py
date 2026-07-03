@@ -19,33 +19,34 @@ These tests aim to be as lightweight as possible and so *do not* pull in the sea
 index fixture. A full live workflow test is included in the UI integration test module.
 """
 
+import logging
 import os
 import secrets
 import time
 
-import pytest
 from invenio_accounts.proxies import current_datastore
 
-from invenio_remote_user_data_kcworks.errors import (
-    BrokerTokenMissingError,
-)
 from invenio_remote_user_data_kcworks.utils.broker import SecureParamEncoder
 from tests.fixtures.idms import IDMS_SUBS_RESPONSE_SUB
 
 
-def test_broker_callback_missing_token(base_app, client):
-    """When no broker_token or no_session raises BrokerTokenMissingError.
+def test_broker_callback_missing_token(base_app, client, caplog):
+    """When no broker_token or no_session raises BrokerTokenMissingError causing 401.
 
     Covers the first branch of _sso_broker_callback; outer view re-raises for
-    app-level handlers.
+    app-level handlers which generate the 401 UNAUTHORIZED response.
     """
     final = f"{base_app.config['SITE_UI_URL']}/search"
 
-    with pytest.raises(BrokerTokenMissingError):
-        client.get(
+    with caplog.at_level(logging.ERROR):
+        response = client.get(
             "/sso/broker-callback/",
             query_string={"final_redirect": final},
         )
+        assert response.status_code == 401
+
+        # ensure the BrokerTokenMissingError was logged
+        assert "called without broker_token" in caplog.text
 
 
 def test_broker_callback_no_sso_session(base_app, client):

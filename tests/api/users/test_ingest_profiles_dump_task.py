@@ -56,7 +56,7 @@ def _profiles_row(sub: str, *, email: str = "x@example.org") -> dict[str, Any]:
 
 
 def test_jsonl_with_auto_sniff_replays_each_row_with_remote_data(base_app, tmp_path):
-    """Each JSONL line becomes a `do_user_created(..., kc_username=..., remote_data=...)` call.
+    """Each JSONL line becomes a `do_user_created()` call.
 
     The task should sniff format = jsonl from the leading `{`, validate
     each row through `APIResponse`, extract `data[0].sub` as the
@@ -111,8 +111,12 @@ def test_jsonl_row_with_empty_data_is_skipped(base_app, tmp_path):
     """Rows whose `data` array is empty are counted as `skipped`, not `errors`."""
     p = tmp_path / "dump.jsonl"
     p.write_text(
-        json.dumps({"data": [], "meta": {"authorized": True},
-                    "next": None, "previous": None})
+        json.dumps({
+            "data": [],
+            "meta": {"authorized": True},
+            "next": None,
+            "previous": None,
+        })
         + "\n"
         + json.dumps(_profiles_row("sub-aaa"))
         + "\n"
@@ -151,14 +155,7 @@ def test_usernames_dump_delegates_parsed_lines_to_do_user_created(base_app, tmp_
     - maps non-`None` mock return values into `processed` stats.
     """
     p = tmp_path / "users.csv"
-    p.write_text(
-        "username\n"
-        "# this is a comment\n"
-        "alice\n"
-        "\n"
-        "bob\n"
-        "carol\n"
-    )
+    p.write_text("username\n# this is a comment\nalice\n\nbob\ncarol\n")
 
     fake = MagicMock(side_effect=[1, 2, 3])
     with (
@@ -229,9 +226,7 @@ def test_per_row_failures_are_counted_not_raised(base_app, tmp_path, caplog):
         "errors": 1,
     }
     assert fake.call_count == 3
-    assert any(
-        "line 2 failed" in record.getMessage() for record in caplog.records
-    )
+    assert any("line 2 failed" in record.getMessage() for record in caplog.records)
 
 
 def test_error_log_uses_absolute_line_number_with_offset(base_app, tmp_path, caplog):
@@ -259,9 +254,7 @@ def test_error_log_uses_absolute_line_number_with_offset(base_app, tmp_path, cap
         "errors": 1,
     }
     assert fake.call_count == 2
-    assert any(
-        "line 3 failed" in record.getMessage() for record in caplog.records
-    )
+    assert any("line 3 failed" in record.getMessage() for record in caplog.records)
 
 
 def test_do_user_created_returning_none_is_counted_as_skipped(base_app, tmp_path):

@@ -8,18 +8,30 @@
 """Tests for CILogon association webhook handling and background tasks."""
 
 import json
+import re
 from unittest.mock import patch
 
 from flask import url_for
 from invenio_accounts.models import UserIdentity
 from invenio_accounts.proxies import current_accounts
 
-from invenio_remote_user_data_kcworks.client import UserDataAPIClient
 from invenio_remote_user_data_kcworks.config import UserDataEvent, UserDataStatus
 from invenio_remote_user_data_kcworks.tasks import do_user_associated
 from invenio_remote_user_data_kcworks.views import _normalize_webhook_payload
 from tests.fixtures.association import ASSOCIATION_OAUTH_ID, association_webhook_payload
 from tests.fixtures.users import user_data_set
+
+
+def _mock_profiles_works_status_post(requests_mock, base_url: str):
+    """Stub Profiles ``POST …/members/{username}/works/status`` callbacks.
+
+    Returns:
+        The ``requests_mock`` adapter for the status POST endpoint.
+    """
+    return requests_mock.post(
+        re.compile(rf"^{re.escape(base_url)}members/.+/works/status$"),
+        status_code=204,
+    )
 
 
 def test_normalize_webhook_payload_associations():
@@ -59,10 +71,11 @@ def test_do_user_associated_links_identity_and_syncs(
         f"{base_url}members/{profile_data['kc_username']}/",
         json=members_payload,
     )
+    _mock_profiles_works_status_post(requests_mock, base_url)
 
     u = user_factory(
         email=profile_data["email"],
-        kc_username=profile_data["kc_username"],
+        kc_username=None,
         oauth_src=None,
         oauth_id=None,
         new_remote_data={},
@@ -90,6 +103,7 @@ def test_do_user_associated_links_identity_and_syncs(
     ).one()
     assert identity.id_user == user_id
 
+    db.session.expire(u.user)
     synced = current_accounts.datastore.get_user_by_id(user_id)
     assert synced.user_profile.get("full_name") == profile_data["name"]
     assert (
@@ -97,9 +111,7 @@ def test_do_user_associated_links_identity_and_syncs(
     )
 
 
-@patch.object(UserDataAPIClient, "send_user_status_callback", return_value=True)
 def test_do_user_associated_sends_processed_callback(
-    mock_send_status,
     running_app,
     db,
     user_factory,
@@ -121,6 +133,7 @@ def test_do_user_associated_sends_processed_callback(
         f"{base_url}members/{profile_data['kc_username']}/",
         json=members_payload,
     )
+    status_mock = _mock_profiles_works_status_post(requests_mock, base_url)
 
     u = user_factory(
         email=profile_data["email"],
@@ -140,22 +153,25 @@ def test_do_user_associated_sends_processed_callback(
     )
 
     assert result["status"] == "associated"
-    mock_send_status.assert_called_once()
-    assert mock_send_status.call_args.kwargs["status"] == UserDataStatus.PROCESSED
-    assert mock_send_status.call_args.kwargs["event"] == UserDataEvent.ASSOCIATED
-    assert mock_send_status.call_args.kwargs["sub"] == ASSOCIATION_OAUTH_ID
-    assert mock_send_status.call_args.kwargs["username"] == profile_data["kc_username"]
+    assert status_mock.called
+    body = status_mock.last_request.json()
+    assert body["status"] == UserDataStatus.PROCESSED
+    assert body["event"] == UserDataEvent.ASSOCIATED
+    assert body["sub"] == ASSOCIATION_OAUTH_ID
+    assert body["username"] == profile_data["kc_username"]
 
 
-@patch.object(UserDataAPIClient, "send_user_status_callback", return_value=True)
 def test_do_user_associated_sends_failed_callback_when_oauth_linked_elsewhere(
-    mock_send_status,
     running_app,
     db,
     user_factory,
+    requests_mock,
     search_clear,
 ):
     """Association conflict notifies Profiles with FAILED and event=associated."""
+    base_url = running_app.app.config["IDMS_BASE_API_URL"]
+    status_mock = _mock_profiles_works_status_post(requests_mock, base_url)
+
     owner_data = user_data_set["user1"]
     other_data = user_data_set["user2"]
 
@@ -186,21 +202,22 @@ def test_do_user_associated_sends_failed_callback_when_oauth_linked_elsewhere(
     )
 
     assert result["status"] == "error"
-    mock_send_status.assert_called_once()
-    assert mock_send_status.call_args.kwargs["status"] == UserDataStatus.FAILED
-    assert mock_send_status.call_args.kwargs["event"] == UserDataEvent.ASSOCIATED
-    assert "oauth_identity_linked_to_other_user" in (
-        mock_send_status.call_args.kwargs.get("note") or ""
-    )
+    assert status_mock.called
+    body = status_mock.last_request.json()
+    assert body["status"] == UserDataStatus.FAILED
+    assert body["event"] == UserDataEvent.ASSOCIATED
+    assert "oauth_identity_linked_to_other_user" in (body.get("note") or "")
 
 
-@patch.object(UserDataAPIClient, "send_user_status_callback", return_value=True)
 def test_do_user_associated_sends_failed_callback_when_user_missing(
-    mock_send_status,
     running_app,
     db,
+    requests_mock,
 ):
     """Missing local user notifies Profiles with FAILED before returning."""
+    base_url = running_app.app.config["IDMS_BASE_API_URL"]
+    status_mock = _mock_profiles_works_status_post(requests_mock, base_url)
+
     result = do_user_associated(
         999_999,
         "knowledgeCommons",
@@ -210,10 +227,11 @@ def test_do_user_associated_sends_failed_callback_when_user_missing(
     )
 
     assert result["status"] == "error"
-    mock_send_status.assert_called_once()
-    assert mock_send_status.call_args.kwargs["status"] == UserDataStatus.FAILED
-    assert mock_send_status.call_args.kwargs["event"] == UserDataEvent.ASSOCIATED
-    assert mock_send_status.call_args.kwargs["note"] == "user_not_found"
+    assert status_mock.called
+    body = status_mock.last_request.json()
+    assert body["status"] == UserDataStatus.FAILED
+    assert body["event"] == UserDataEvent.ASSOCIATED
+    assert body["note"] == "user_not_found"
 
 
 def test_do_user_associated_is_idempotent_when_already_linked(
@@ -238,6 +256,7 @@ def test_do_user_associated_is_idempotent_when_already_linked(
         f"{base_url}members/{profile_data['kc_username']}/",
         json=members_payload,
     )
+    _mock_profiles_works_status_post(requests_mock, base_url)
 
     u = user_factory(
         email=profile_data["email"],
@@ -267,9 +286,16 @@ def test_do_user_associated_is_idempotent_when_already_linked(
 
 
 def test_do_user_associated_rejects_oauth_id_linked_to_other_user(
-    running_app, db, user_factory, search_clear
+    running_app,
+    db,
+    user_factory,
+    requests_mock,
+    search_clear,
 ):
     """Association fails when the OAuth id already belongs to another user."""
+    base_url = running_app.app.config["IDMS_BASE_API_URL"]
+    _mock_profiles_works_status_post(requests_mock, base_url)
+
     owner_data = user_data_set["user1"]
     other_data = user_data_set["user2"]
 
@@ -382,6 +408,7 @@ def test_user_association_sync_on_webhook(
         f"{base_url}members/{profile_data['kc_username']}/",
         json=mock_remote_data_members,
     )
+    _mock_profiles_works_status_post(requests_mock, base_url)
 
     with patch("invenio_accounts.utils.current_user"):
         with app.app_context():
@@ -410,6 +437,8 @@ def test_user_association_sync_on_webhook(
     }
     assert mock_adapter_members.called
     assert mock_adapter_members.call_count == 1
+
+    db.session.expire(u.user)
 
     user = current_accounts.datastore.get_user_by_id(user_id)
     cilogon_identity = UserIdentity.query.filter_by(

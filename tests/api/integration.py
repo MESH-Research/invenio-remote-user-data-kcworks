@@ -211,7 +211,6 @@ def test_user_data_sync_on_login_workflow(
        place with `update_draft` (no auto-publish), keeping the same
        draft id.
     """
-    app = running_app.app
     # Mock additional user data from the remote service
     # api response
     new_data_payload = user_data_set["user1"]

@@ -115,18 +115,14 @@ class RecordKcUsernameSyncService(Service):
             `kc_username` identifier.
         """
         metadata = source.get("metadata") or {}
-        return any(
-            [
-                identifier.get("scheme") == "kc_username"
-                and identifier.get("identifier") == username
-                for field in ("creators", "contributors")
-                for entry in metadata.get(field) or []
-                for identifier in (
-                    entry.get("person_or_org") or {}
-                ).get("identifiers")
-                or []
-            ]
-        )
+        return any([
+            identifier.get("scheme") == "kc_username"
+            and identifier.get("identifier") == username
+            for field in ("creators", "contributors")
+            for entry in metadata.get(field) or []
+            for identifier in (entry.get("person_or_org") or {}).get("identifiers")
+            or []
+        ])
 
     def _scan_ids(
         self,
@@ -176,6 +172,51 @@ class RecordKcUsernameSyncService(Service):
     # ------------------------------------------------------------------
     # Public entry points
     # ------------------------------------------------------------------
+
+    def find_record_ids_for_kc_username(
+        self,
+        old_username: str,
+        *,
+        identity: Identity | None = None,
+    ) -> dict[str, list[str]]:
+        """List record IDs whose metadata cites `old_username` as kc_username.
+
+        Scans published records and drafts separately, using the same
+        OpenSearch filter and post-filter as `rewrite()`.
+
+
+        NOTE:
+            Currently only used for the CLI dry-run count of records that
+            would be affected.
+
+        Args:
+            old_username: The KC username to match in creator/contributor
+                `kc_username` identifiers.
+            identity: Optional Invenio identity. Defaults to
+                `system_identity`.
+
+        Returns:
+            Dict with `published` and `drafts` keys, each a list of record
+            UUID strings. Empty lists when `old_username` is blank or when
+            a scan phase fails.
+        """
+        identity = identity or system_identity
+        result: dict[str, list[str]] = {"published": [], "drafts": []}
+        if not old_username:
+            return result
+        for drafts, phase in ((False, "published"), (True, "drafts")):
+            try:
+                result[phase] = list(
+                    self._scan_ids(identity, old_username, drafts=drafts)
+                )
+            except Exception:  # noqa: BLE001 - logged, never propagated
+                self.logger.exception(
+                    "find_record_ids_for_kc_username: %s scan for "
+                    "old kc_username=%s failed",
+                    phase,
+                    old_username,
+                )
+        return result
 
     def rewrite(
         self,
@@ -229,13 +270,10 @@ class RecordKcUsernameSyncService(Service):
             return stats
 
         try:
-            record_ids = list(
-                self._scan_ids(identity, old_username, drafts=drafts)
-            )
+            record_ids = list(self._scan_ids(identity, old_username, drafts=drafts))
         except Exception:  # noqa: BLE001 - logged, never propagated
             self.logger.exception(
-                "rewrite[%s]: scan for old kc_username=%s failed; "
-                "skipping pass",
+                "rewrite[%s]: scan for old kc_username=%s failed; skipping pass",
                 phase,
                 old_username,
             )
@@ -269,17 +307,14 @@ class RecordKcUsernameSyncService(Service):
                     )
                     continue
                 draft_data["metadata"] = metadata
-                current_rdm_records_service.update_draft(
-                    identity, draft.id, draft_data
-                )
+                current_rdm_records_service.update_draft(identity, draft.id, draft_data)
                 if not drafts:
                     current_rdm_records_service.publish(identity, draft.id)
                 stats["updated"] += 1
             except Exception:  # noqa: BLE001 - logged, never propagated
                 stats["failed"] += 1
                 self.logger.exception(
-                    "rewrite[%s]: failed to rewrite kc_username on %s "
-                    "(old=%s, new=%s)",
+                    "rewrite[%s]: failed to rewrite kc_username on %s (old=%s, new=%s)",
                     phase,
                     record_id,
                     old_username,

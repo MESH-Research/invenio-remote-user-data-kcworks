@@ -55,6 +55,80 @@ def test_sync_now_requires_at_least_one_id(runner):
     assert "Provide at least one user id" in result.output
 
 
+def test_sync_all_inline_calls_bulk_task_synchronously(runner):
+    """`--all` runs the bulk orchestrator inline and prints stats."""
+    fake_task = MagicMock(
+        return_value={
+            "users_scanned": 10,
+            "eligible": 8,
+            "upserted": 7,
+            "no_data": 1,
+            "skipped_no_kc_username": 2,
+            "skipped_has_names": 0,
+            "errors": 0,
+        }
+    )
+    with patch.object(names_cli_mod, "do_sync_all_users_to_names", fake_task):
+        result = runner.invoke(
+            cli,
+            ["names", "sync-now", "--all", "--missing-only", "--limit", "8"],
+        )
+
+    assert result.exit_code == 0, result.output
+    fake_task.assert_called_once_with(
+        limit=8, dry_run=False, missing_only=True
+    )
+    assert fake_task.delay.call_count == 0
+    assert "users_scanned=10" in result.output
+    assert "upserted=7" in result.output
+
+
+def test_sync_all_dry_run_flag_is_forwarded(runner):
+    """`--all --dry-run` propagates to the bulk task call."""
+    fake_task = MagicMock(
+        return_value={
+            "users_scanned": 5,
+            "eligible": 3,
+            "upserted": 0,
+            "no_data": 0,
+            "skipped_no_kc_username": 2,
+            "skipped_has_names": 0,
+            "errors": 0,
+        }
+    )
+    with patch.object(names_cli_mod, "do_sync_all_users_to_names", fake_task):
+        result = runner.invoke(cli, ["names", "sync-now", "--all", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    fake_task.assert_called_once_with(
+        limit=None, dry_run=True, missing_only=False
+    )
+    assert "upserted=0" in result.output
+
+
+def test_sync_all_background_dispatches_single_celery_task(runner):
+    """`--all --background` queues one orchestrator task."""
+    fake_task = MagicMock()
+    fake_task.delay.return_value = MagicMock(id="task-sync-all")
+
+    with patch.object(names_cli_mod, "do_sync_all_users_to_names", fake_task):
+        result = runner.invoke(cli, ["names", "sync-now", "--all", "--background"])
+
+    assert result.exit_code == 0, result.output
+    assert "task-sync-all" in result.output
+    fake_task.delay.assert_called_once_with(
+        limit=None, dry_run=False, missing_only=False
+    )
+    fake_task.assert_not_called()
+
+
+def test_sync_all_cannot_combine_with_positional_ids(runner):
+    """`--all` plus positional IDS is rejected."""
+    result = runner.invoke(cli, ["names", "sync-now", "--all", "123"])
+    assert result.exit_code != 0
+    assert "Cannot combine --all with positional IDS" in result.output
+
+
 def test_sync_now_inline_resolves_each_arg_and_calls_task(runner):
     """Each positional id is resolved and synced inline (no Celery delay)."""
     fake_resolve = MagicMock(side_effect=[101, 202])

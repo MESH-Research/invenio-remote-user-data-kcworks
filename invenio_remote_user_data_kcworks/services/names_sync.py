@@ -55,7 +55,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
 from itertools import combinations
 from typing import Any, Literal, cast
@@ -64,14 +64,16 @@ import jellyfish
 from flask_principal import Identity
 from invenio_access.permissions import system_identity
 from invenio_accounts.models import User
+from invenio_accounts.proxies import current_accounts
 from invenio_pidstore.errors import PIDAlreadyExists, PIDDoesNotExistError
 from invenio_rdm_records.proxies import current_rdm_records_service
 from invenio_records_resources.proxies import current_service_registry
 from invenio_records_resources.services import Service
 from invenio_search.engine import dsl
+from invenio_users_resources.proxies import current_users_service
 from sqlalchemy.exc import NoResultFound
 
-from ..config import KCNamesTag
+from ..config import KCNamesTag, NamesUserSyncClassification
 from ..types.names import (
     NameAffiliationDict,
     NameIdentifierDict,
@@ -998,6 +1000,142 @@ class NamesSyncService(Service):
                         "upsert_cited_orcid_name failed for ORCID %s",
                         payload.get("id"),
                     )
+        return stats
+
+    def classify_user_for_names_sync(
+        self,
+        user: User,
+        *,
+        missing_only: bool = False,
+        identity: Identity | None = None,
+    ) -> NamesUserSyncClassification:
+        """Classify whether a local user should be mirrored into Names.
+
+        Args:
+            user: The local Invenio `User` to inspect.
+            missing_only: When `True`, users who already have a Names
+                record at PID=`identifier_kc_username` are classified as
+                `NamesUserSyncClassification.HAS_NAMES`.
+            identity: Optional Invenio identity for Names reads.
+                Defaults to `system_identity`.
+
+        Returns:
+            A `NamesUserSyncClassification` value describing whether the
+            user should be synced, lacks a KC username, or already has a
+            Names PID (when `missing_only` is set).
+        """
+        identity = identity or system_identity
+        profile = dict(user.user_profile or {})
+        kc_username = profile.get("identifier_kc_username") or ""
+        if not kc_username:
+            return NamesUserSyncClassification.NO_KC_USERNAME
+        if missing_only and self._read_existing(identity, kc_username) is not None:
+            return NamesUserSyncClassification.HAS_NAMES
+        return NamesUserSyncClassification.ELIGIBLE
+
+    def _iter_local_users(self, *, identity: Identity | None = None) -> Iterator[User]:
+        """Yield each local `User` from the users service scan.
+
+        Args:
+            identity: Optional Invenio identity for `scan()`. Defaults to
+                `system_identity`.
+
+        Yields:
+            Local Invenio `User` rows resolved from scan hits.
+        """
+        identity = identity or system_identity
+        for hit in current_users_service.scan(identity=identity).hits:
+            user = current_accounts.datastore.get_user_by_id(hit.id)
+            if user is not None:
+                yield user
+
+    def sync_all_users_from_profiles(
+        self,
+        *,
+        limit: int | None = None,
+        dry_run: bool = False,
+        missing_only: bool = False,
+        identity: Identity | None = None,
+    ) -> dict[str, int]:
+        """Mirror local KC users into Names from their current profiles.
+
+        Walks every local user via `current_users_service.scan()` and
+        calls `upsert_name_for_user` for each eligible user.
+
+        Args:
+            limit: Maximum number of eligible users to consider for sync.
+                `None` processes every eligible user in the scan.
+            dry_run: When `True`, classify users and update stats without
+                calling `upsert_name_for_user`.
+            missing_only: When `True`, skip users who already have a Names
+                record at PID=`identifier_kc_username`.
+            identity: Optional Invenio identity for Names reads and upserts.
+                Defaults to `system_identity`.
+
+        Returns:
+            A stats dict with keys:
+
+            - `users_scanned`: total local users visited.
+            - `eligible`: users that would be (or were) upserted.
+            - `upserted`: `upsert_name_for_user` calls that returned a
+              record.
+            - `no_data`: `upsert_name_for_user` calls that returned
+              `None`.
+            - `skipped_no_kc_username`: users without
+              `identifier_kc_username`.
+            - `skipped_has_names`: users skipped because a Names PID
+              already exists (`missing_only` only).
+            - `errors`: upsert calls that raised (logged, not propagated).
+        """
+        identity = identity or system_identity
+        stats = {
+            "users_scanned": 0,
+            "eligible": 0,
+            "upserted": 0,
+            "no_data": 0,
+            "skipped_no_kc_username": 0,
+            "skipped_has_names": 0,
+            "errors": 0,
+        }
+        eligible_processed = 0
+
+        for user in self._iter_local_users(identity=identity):
+            stats["users_scanned"] += 1
+
+            classification = self.classify_user_for_names_sync(
+                user,
+                missing_only=missing_only,
+                identity=identity,
+            )
+            if classification == NamesUserSyncClassification.NO_KC_USERNAME:
+                stats["skipped_no_kc_username"] += 1
+                continue
+            if classification == NamesUserSyncClassification.HAS_NAMES:
+                stats["skipped_has_names"] += 1
+                continue
+
+            if limit is not None and eligible_processed >= limit:
+                break
+
+            stats["eligible"] += 1
+            eligible_processed += 1
+
+            if dry_run:
+                continue
+
+            try:
+                result = self.upsert_name_for_user(user, identity=identity)
+                if result is not None:
+                    stats["upserted"] += 1
+                else:
+                    stats["no_data"] += 1
+            except Exception:  # noqa: BLE001 - logged, never propagated
+                stats["errors"] += 1
+                self.logger.exception(
+                    "sync_all_users_from_profiles: upsert failed for user_id=%s",
+                    user.id,
+                )
+
         return stats
 
     def _find_user_record_by_orcid(

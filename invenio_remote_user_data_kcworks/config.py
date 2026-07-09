@@ -55,6 +55,19 @@ class KCNamesTag(StrEnum):
     CITED = "kcworks-cited"
 
 
+class NamesUserSyncClassification(StrEnum):
+    """Outcomes when classifying a local user for Names bulk sync.
+
+    Returned by `NamesSyncService.classify_user_for_names_sync` and
+    consumed by `sync_all_users_from_profiles` to decide whether to call
+    `upsert_name_for_user` for each scanned user.
+    """
+
+    ELIGIBLE = "eligible"
+    NO_KC_USERNAME = "no_kc_username"
+    HAS_NAMES = "has_names"
+
+
 class UserDataEvent(StrEnum):
     """Event values for the Profiles works/status callback.
 

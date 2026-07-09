@@ -12,10 +12,11 @@ Single top-level group `user-data` (registered via the
 
 * `users` — bulk user provisioning / re-pull from Profiles
   (`update`, `ingest-profiles-dump`).
-* `names` — Names vocabulary maintenance: per-user re-sync
-  (`sync-now`), bulk backfill from published RDM records
-  (`backfill-cited-from-records`), record inspection (`show`),
-  ORCID-based auto-merge (`merge-orcid-duplicates`), and the
+* `names` — Names vocabulary maintenance: per-user or bulk re-sync
+  (`sync-now`, including `--all` for local-user backfill), bulk backfill
+  from published RDM records (`backfill-cited-from-records`), record
+  inspection (`show`), ORCID-based auto-merge (`merge-orcid-duplicates`),
+  and the
   duplicate-review workflow (`find-duplicates`, `list-duplicates`,
   `dismiss-duplicate`, `undismiss-duplicate`,
   `list-dismissed-duplicates`).

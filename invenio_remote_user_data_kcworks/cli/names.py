@@ -38,6 +38,7 @@ from ..proxies import (
 from ..tasks import (
     do_backfill_cited_from_records,
     do_find_names_duplicates,
+    do_sync_all_users_to_names,
     sync_user_to_names,
 )
 
@@ -114,6 +115,37 @@ def _resolve_user_id_from_arg(
     default=False,
     help="Queue each upsert as a Celery task instead of running inline.",
 )
+@click.option(
+    "--all",
+    "sync_all",
+    is_flag=True,
+    default=False,
+    help=(
+        "Scan every local user and mirror eligible accounts into Names. "
+        "Cannot be combined with positional IDS."
+    ),
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Maximum number of eligible users to sync (with --all). Default: all.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Count eligible users without calling sync (with --all).",
+)
+@click.option(
+    "--missing-only",
+    is_flag=True,
+    default=False,
+    help=(
+        "With --all, skip users who already have a Names record at their "
+        "KC username PID."
+    ),
+)
 @with_appcontext
 def sync_now_cmd(
     ids: tuple[str, ...],
@@ -121,6 +153,10 @@ def sync_now_cmd(
     by_email: bool,
     by_username: bool,
     background: bool,
+    sync_all: bool,
+    limit: int | None,
+    dry_run: bool,
+    missing_only: bool,
 ):
     """Re-derive each user's Names record from current local profile data.
 
@@ -128,11 +164,47 @@ def sync_now_cmd(
     `--by-email` / `--by-username` to resolve in the same way as
     `user-data users update`. No remote Profiles API I/O is performed.
 
+    With `--all`, every local user with `identifier_kc_username` is
+    considered. Use `--missing-only` to backfill only accounts that do
+    not yet have a Names PID. `--dry-run` reports counts without writing.
+
     Raises:
-        click.UsageError: When no IDS are supplied.
+        click.UsageError: When neither positional IDS nor `--all` is
+            supplied, or when both are supplied.
     """
-    if not ids:
-        raise click.UsageError("Provide at least one user id (or use --by-* flags).")
+    if sync_all and ids:
+        raise click.UsageError("Cannot combine --all with positional IDS.")
+    if not sync_all and not ids:
+        raise click.UsageError(
+            "Provide at least one user id (or use --by-* flags), or pass --all."
+        )
+
+    if sync_all:
+        if background:
+            async_result = do_sync_all_users_to_names.delay(
+                limit=limit,
+                dry_run=dry_run,
+                missing_only=missing_only,
+            )
+            click.echo(f"Queued bulk names sync task: {async_result.id}")
+            return
+        stats = do_sync_all_users_to_names(
+            limit=limit,
+            dry_run=dry_run,
+            missing_only=missing_only,
+        )
+        click.echo(
+            "Done. "
+            f"users_scanned={stats['users_scanned']}  "
+            f"eligible={stats['eligible']}  "
+            f"upserted={stats['upserted']}  "
+            f"no_data={stats['no_data']}  "
+            f"skipped_no_kc_username={stats['skipped_no_kc_username']}  "
+            f"skipped_has_names={stats['skipped_has_names']}  "
+            f"errors={stats['errors']}"
+        )
+        return
+
     sources = ["cilogon", source]
     for arg in ids:
         user_id = _resolve_user_id_from_arg(

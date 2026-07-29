@@ -205,18 +205,19 @@ class CILogonHelpers:
             account_info.kc_username,
             account_info.external_method,
         )
-        # kc_username check can return a list of Users,
-        # in which case we log an error and continue.
+        # kc_username check can return a list of Users.
+        # A single match is definitive; multiple matches are ambiguous so we
+        # fall through to email rather than picking arbitrarily.
         if isinstance(user, User):
             app.logger.debug("User found by KC username")
             return user
-        elif isinstance(user, list):
+        if isinstance(user, list):
             if len(user) == 1:
-                user = user[0]
-            else:
-                app.logger.error(
-                    f"Multiple users found with KC username {account_info.kc_username}"
-                )
+                app.logger.debug("User found by KC username")
+                return user[0]
+            app.logger.error(
+                f"Multiple users found with KC username {account_info.kc_username}"
+            )
 
         # Try email lookup
         app.logger.debug(pformat(account_info.model_dump()))

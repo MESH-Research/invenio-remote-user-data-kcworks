@@ -19,6 +19,8 @@ upsert.
 
 from typing import Any
 
+from ..config import KCNamesTag
+
 
 def build_orcid_payload(
     bare_orcid: str,
@@ -29,7 +31,15 @@ def build_orcid_payload(
 
     The resulting dict's `id` is the bare ORCID (used as PID), and its
     contents are derived entirely from data already in the source record
-    (no API I/O).
+    (no API I/O). Shape mirrors `NamesSyncService.build_name_payload_from_orcid`
+    for CITED stubs: `kcworks-cited` tag, `internal_id=None`, and `props`
+    carrying `display_name`, optional `name_parts`, and family dedup tokens
+    so creatibutor-sourced entries participate in the same dedup indexing
+    as ORCID-API and USER payloads.
+
+    `NameSchema.update_name` rewrites `name` to `"family, given"` whenever
+    both parts are present, so any richer form from `person_or_org["name"]`
+    is preserved in `props["display_name"]`.
 
     Args:
         bare_orcid: The bare ORCID iD (e.g. `"0000-0001-2345-6789"`).
@@ -41,19 +51,43 @@ def build_orcid_payload(
         A dict shaped like `NamesRecordDict`, suitable to pass to
         `NamesSyncService.upsert_cited_orcid_name`.
     """
+    # Lazy import: `names_sync` imports this module at load time.
+    from ..services.names_sync import NamesSyncService
+
     family = person_or_org.get("family_name", "").strip()
     given = person_or_org.get("given_name", "").strip()
     full_name = person_or_org.get("name", "").strip()
     display_name = full_name or ", ".join(p for p in (family, given) if p) or bare_orcid
     affiliation_names = [a.get("name", "").strip() for a in affiliations]
-    return {
+
+    props: dict[str, Any] = {"display_name": display_name}
+    if given and family:
+        props["name_parts"] = {"first": given, "last": family}
+    family_token = NamesSyncService._normalize_family_token(family)
+    if family_token:
+        props["family_token"] = family_token
+    part_tokens, phonetic_tokens = NamesSyncService._compute_family_dedup_tokens(
+        family
+    )
+    if part_tokens:
+        props["family_part_tokens"] = part_tokens
+    if phonetic_tokens:
+        props["family_phonetic_tokens"] = phonetic_tokens
+
+    payload: dict[str, Any] = {
         "id": bare_orcid,
-        "given_name": given,
-        "family_name": family,
+        "internal_id": None,
+        "tags": [KCNamesTag.CITED],
         "name": display_name,
         "identifiers": [{"scheme": "orcid", "identifier": bare_orcid}],
         "affiliations": [{"name": n} for n in affiliation_names if n],
+        "props": props,
     }
+    if given:
+        payload["given_name"] = given
+    if family:
+        payload["family_name"] = family
+    return payload
 
 
 def collect_orcid_payloads(metadata: dict[str, Any]) -> list[dict[str, Any]]:

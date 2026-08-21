@@ -24,6 +24,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from flask import Flask
 
+from invenio_remote_user_data_kcworks.config import KCNamesTag
 from invenio_remote_user_data_kcworks.services.components import (
     cited_names_component as mod,
 )
@@ -162,6 +163,8 @@ class TestBuildPayload:
         )
         assert payload == {
             "id": "0000-0002-1825-0097",
+            "internal_id": None,
+            "tags": [KCNamesTag.CITED],
             "given_name": "Marie",
             "family_name": "Curie",
             "name": "Curie, Marie",
@@ -170,6 +173,13 @@ class TestBuildPayload:
                 {"name": "University of Paris"},
                 {"name": "Sorbonne"},
             ],
+            "props": {
+                "display_name": "Curie, Marie",
+                "name_parts": {"first": "Marie", "last": "Curie"},
+                "family_token": "curie",
+                "family_part_tokens": ["curie"],
+                "family_phonetic_tokens": ["KR"],
+            },
         }
 
     def test_prefers_existing_full_name_over_composed_form(self):
@@ -184,6 +194,14 @@ class TestBuildPayload:
             [],
         )
         assert payload["name"] == "Jan van der Berg"
+        assert payload["props"]["display_name"] == "Jan van der Berg"
+        assert payload["tags"] == [KCNamesTag.CITED]
+        assert payload["props"]["family_part_tokens"] == [
+            "van der berg",
+            "van",
+            "der",
+            "berg",
+        ]
 
     def test_missing_given_name_falls_back_to_family_only(self):
         """Display name is family-only when no given name is present."""
@@ -193,6 +211,9 @@ class TestBuildPayload:
             [],
         )
         assert payload["name"] == "Plato"
+        assert payload["props"]["display_name"] == "Plato"
+        assert "name_parts" not in payload["props"]
+        assert "given_name" not in payload
 
     def test_missing_both_names_falls_back_to_orcid(self):
         """Display name falls back to the bare ORCID when no name is present."""
@@ -202,6 +223,10 @@ class TestBuildPayload:
             [],
         )
         assert payload["name"] == "0000-0002-1111-0000"
+        assert payload["props"] == {"display_name": "0000-0002-1111-0000"}
+        assert payload["tags"] == [KCNamesTag.CITED]
+        assert "given_name" not in payload
+        assert "family_name" not in payload
 
     def test_blank_affiliation_names_filtered_out(self):
         """Affiliations with empty/missing names are dropped from the payload."""
@@ -211,6 +236,7 @@ class TestBuildPayload:
             [{"name": ""}, {"name": "  "}, {"name": "MIT"}, {"id": "x"}],
         )
         assert payload["affiliations"] == [{"name": "MIT"}]
+        assert payload["props"]["family_phonetic_tokens"] == ["T"]
 
 
 class TestCollectOrcidPayloads:

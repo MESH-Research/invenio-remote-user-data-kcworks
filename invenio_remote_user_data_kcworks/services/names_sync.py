@@ -43,7 +43,8 @@ Key design points
   affiliations, filling in missing names and props) and then deletes
   the cited Names record. This dedup path runs both as a side effect
   of `NamesSyncService.upsert_name_for_user()` and as part of the
-  periodic `KCWorksNamesSyncJob` deduplication sweep.
+  scheduled `merge_names_orcid_duplicates` / `find_names_duplicates`
+  invenio-jobs (see `invenio_remote_user_data_kcworks.jobs`).
 
 All operations on the service operate with `system_identity` by
 default; callers that already hold an identity should pass it

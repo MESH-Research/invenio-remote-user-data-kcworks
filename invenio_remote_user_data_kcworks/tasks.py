@@ -893,6 +893,25 @@ def do_find_names_duplicates(
         return result
 
 
+@shared_task(ignore_result=False)
+def do_merge_orcid_duplicates(limit: int = 1000) -> dict[str, int]:
+    """Auto-merge Names records that share an ORCID iD.
+
+    Thin Celery wrapper around
+    `NamesSyncService.merge_orcid_duplicates`. Used by the
+    `merge_names_orcid_duplicates` invenio-jobs job and the
+    `user-data names merge-orcid-duplicates` CLI.
+
+    Args:
+        limit: Maximum number of ORCID-collision buckets to process.
+
+    Returns:
+        The stats dict from `NamesSyncService.merge_orcid_duplicates`.
+    """
+    with app.app_context():
+        return current_names_sync_service.merge_orcid_duplicates(limit=limit)
+
+
 @shared_task(
     bind=True,
     ignore_result=False,

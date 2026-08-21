@@ -61,6 +61,9 @@ entry-points."invenio_base.apps".invenio_remote_user_data_kcworks = "invenio_rem
 entry-points."invenio_base.blueprints".invenio_remote_user_data_kcworks_sso = "invenio_remote_user_data_kcworks.blueprints:create_sso_blueprint"
 entry-points."invenio_base.finalize_app".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:finalize_app"
 entry-points."invenio_celery.tasks".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.tasks"
+entry-points."invenio_jobs.jobs".sync_names_missing_users = "invenio_remote_user_data_kcworks.jobs:SyncNamesMissingUsersJob"
+entry-points."invenio_jobs.jobs".merge_names_orcid_duplicates = "invenio_remote_user_data_kcworks.jobs:MergeNamesOrcidDuplicatesJob"
+entry-points."invenio_jobs.jobs".find_names_duplicates = "invenio_remote_user_data_kcworks.jobs:FindNamesDuplicatesJob"
 
 [dependency-groups]
 dev = ["bumpver>=2025.1131", "pytest-timeout>=2.4"]

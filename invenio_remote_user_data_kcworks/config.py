@@ -53,6 +53,7 @@ class KCNamesTag(StrEnum):
 
     USER = "kcworks-user"
     CITED = "kcworks-cited"
+    MERGED = "merged-kcworks-cited"
 
 
 class NamesUserSyncClassification(StrEnum):

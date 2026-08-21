@@ -135,7 +135,11 @@ def _resolve_user_id_from_arg(
     "--dry-run",
     is_flag=True,
     default=False,
-    help="Count eligible users without calling sync (with --all).",
+    help=(
+        "Display the Names items that would be indexed/updated without actually "
+        "writing. With --all, this only counts affected users; with positional IDS, "
+        "it prints each would-be Names payload."
+    ),
 )
 @click.option(
     "--missing-only",
@@ -166,7 +170,8 @@ def sync_now_cmd(
 
     With `--all`, every local user with `identifier_kc_username` is
     considered. Use `--missing-only` to backfill only accounts that do
-    not yet have a Names PID. `--dry-run` reports counts without writing.
+    not yet have a Names PID. `--dry-run` skips writes; for positional
+    IDs it pretty-prints each would-be Names payload.
 
     Raises:
         click.UsageError: When neither positional IDS nor `--all` is
@@ -214,11 +219,16 @@ def sync_now_cmd(
             click.echo(f"  - {arg}: no matching user; skipped")
             continue
         if background:
-            async_result = sync_user_to_names.delay(user_id)
+            async_result = sync_user_to_names.delay(user_id, dry_run)
             click.echo(f"  - {arg} -> user_id={user_id}: queued ({async_result.id})")
             continue
-        ok = sync_user_to_names(user_id)
-        click.echo(f"  - {arg} -> user_id={user_id}: {'ok' if ok else 'no data'}")
+        result = sync_user_to_names(user_id, dry_run)
+        status = "ok" if result else "no data"
+        if dry_run and result:
+            status = "dry-run"
+        click.echo(f"  - {arg} -> user_id={user_id}: {status}")
+        if result:
+            pprint(result)
 
 
 @names_cli.command(name="backfill-cited-from-records")

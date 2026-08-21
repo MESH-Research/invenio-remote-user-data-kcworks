@@ -739,6 +739,7 @@ class NamesSyncService(Service):
         self,
         user: User,
         *,
+        dry_run: bool = False,
         identity: Identity | None = None,
     ) -> dict[str, Any] | None:
         """Create or update the Names vocabulary record for a user.
@@ -756,6 +757,8 @@ class NamesSyncService(Service):
 
         Args:
             user: The local Invenio `User` to mirror.
+            dry_run: Boolean flag to decide whether changes should
+                actually be indexed or only reported as available.
             identity: Optional Invenio identity to use for service
                 calls. Defaults to `system_identity`.
 
@@ -784,8 +787,12 @@ class NamesSyncService(Service):
 
         existing = self._read_existing(identity, pid)
         self.logger.debug(f"existing user is {existing}")
-        item = None
-        if existing is not None:
+        # `item` is either a service `RecordItem` (write path) or a plain
+        # payload/`merged` dict (dry-run). Normalize only at return time.
+        item: Any = None
+        if dry_run:
+            item = payload
+        elif existing is not None:
             item = service.update(identity, pid, payload)
             self.logger.debug(
                 "upsert_name_for_user: updated Names record %s for user %s",
@@ -822,16 +829,25 @@ class NamesSyncService(Service):
         profile = dict(user.user_profile or {})
         orcid = profile.get("identifier_orcid") or ""
         if orcid and item is not None:
+            # RecordItem.__getitem__ reads from dumped `.data`; dicts
+            # are mutated directly. Either way we pass a dict into merge.
+            item_dict = item if isinstance(item, dict) else item.to_dict()
+            item_dict.setdefault("tags", []).append(KCNamesTag.MERGED)
             self.logger.debug("Handling orcid for name sync")
             try:
                 merged = self.merge_cited_orcid_into_kc(
-                    cast(NamesRecordDict, item.to_dict()), identity=identity
+                    cast(NamesRecordDict, item_dict),
+                    identity=identity,
+                    dry_run=dry_run,
                 )
                 self.logger.debug(f"merged is {merged}")
                 if merged is not None:
-                    # Re-read so the returned dict reflects the merged
-                    # state.
-                    item = service.read(identity, pid)
+                    if dry_run:
+                        item = merged
+                    else:
+                        # Re-read so the returned dict reflects the merged
+                        # state on disk.
+                        item = service.read(identity, pid)
             except NoResultFound:
                 pass  # Just means that there was no existing record to merge
             except Exception:
@@ -844,7 +860,9 @@ class NamesSyncService(Service):
                     exc_info=True,
                 )
 
-        return item.to_dict() if item is not None else None
+        if item is None:
+            return None
+        return item if isinstance(item, dict) else item.to_dict()
 
     def upsert_cited_orcid_name(
         self,
@@ -1183,6 +1201,7 @@ class NamesSyncService(Service):
         cited_data: NamesRecordDict | None = None,
         *,
         identity: Identity | None = None,
+        dry_run: bool = False,
     ) -> NamesRecordDict | None:
         """Merge ORCID-derived data into a KC-user Names record.
 
@@ -1217,6 +1236,9 @@ class NamesSyncService(Service):
                 PID=ORCID and require the `kcworks-cited` tag.
             identity: Optional Invenio identity. Defaults to
                 `system_identity`.
+            dry_run: When `True`, compute and return the merged
+                payload without updating the KC record or deleting
+                the cited stub.
 
         Returns:
             The merged KC record dict on success, or `None` when there
@@ -1258,38 +1280,45 @@ class NamesSyncService(Service):
 
         merged_payload = self._merge_orcid_data_into_kc(kc_record, cited_data)
 
-        try:
-            item = service.update(identity, kc_record["id"], merged_payload)
-        except Exception:
-            self.logger.warning(
-                "merge_cited_orcid_into_kc: failed to update kc record %s "
-                "with merged ORCID data",
-                kc_record.get("id"),
-                exc_info=True,
-            )
-            return None
+        if not dry_run:
+            try:
+                item = service.update(identity, kc_record["id"], merged_payload)
+            except Exception:
+                self.logger.warning(
+                    "merge_cited_orcid_into_kc: failed to update kc record %s "
+                    "with merged ORCID data",
+                    kc_record.get("id"),
+                    exc_info=True,
+                )
+                return None
 
-        # Clean up any cited stub at PID=orcid_id.
-        try:
-            service.delete(identity, orcid)
-        except PIDDoesNotExistError:
-            pass
-        except Exception:
-            self.logger.warning(
-                "merge_cited_orcid_into_kc: kc record %s was updated but "
-                "deletion of cited stub at %s failed; the next dedupe "
-                "sweep will retry",
-                kc_record.get("id"),
+            # Clean up any cited stub at PID=orcid_id.
+            try:
+                service.delete(identity, orcid)
+            except PIDDoesNotExistError:
+                pass
+            except Exception:
+                self.logger.warning(
+                    "merge_cited_orcid_into_kc: kc record %s was updated but "
+                    "deletion of cited stub at %s failed; the next dedupe "
+                    "sweep will retry",
+                    kc_record.get("id"),
+                    orcid,
+                    exc_info=True,
+                )
+
+            self.logger.info(
+                "merge_cited_orcid_into_kc: merged ORCID data for %s into %s",
                 orcid,
-                exc_info=True,
+                kc_record.get("id"),
             )
-
-        self.logger.info(
-            "merge_cited_orcid_into_kc: merged ORCID data for %s into %s",
-            orcid,
-            kc_record.get("id"),
-        )
-        return cast(NamesRecordDict, item.to_dict()) if item is not None else None
+            return cast(NamesRecordDict, item.to_dict()) if item is not None else None
+        else:
+            return (
+                cast(NamesRecordDict, merged_payload)
+                if merged_payload is not None
+                else None
+            )
 
     @staticmethod
     def _identifier_key(ident: Mapping[str, Any]) -> tuple[str, str]:

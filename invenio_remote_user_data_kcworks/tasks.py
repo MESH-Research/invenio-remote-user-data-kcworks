@@ -192,9 +192,7 @@ def _user_created_lock_id(_self, _idp: str, *args, **kwargs) -> str:
     oauth_id = (kwargs.get("oauth_id") or "").strip()
     if oauth_id:
         return oauth_id
-    raise ValueError(
-        "do_user_created lock requires kc_username or oauth_id"
-    )
+    raise ValueError("do_user_created lock requires kc_username or oauth_id")
 
 
 def _retry_at_iso(seconds_from_now: int) -> str:
@@ -1176,8 +1174,7 @@ def do_user_created(
 
             if user is None:
                 app.logger.warning(
-                    f"do_user_created: could not find or create user for "
-                    f"sub={oauth_id}"
+                    f"do_user_created: could not find or create user for sub={oauth_id}"
                 )
                 _status(
                     UserDataStatus.FAILED,
@@ -1338,7 +1335,7 @@ def rewrite_records_for_kc_username_change(
 
 
 @shared_task(ignore_result=True)
-def sync_user_to_names(user_id: int) -> bool:
+def sync_user_to_names(user_id: int, dry_run: bool = False) -> dict | None:
     """Mirror a single local user into the Names vocabulary.
 
     Thin Celery wrapper around
@@ -1348,11 +1345,15 @@ def sync_user_to_names(user_id: int) -> bool:
 
     Args:
         user_id: The local Invenio user id to mirror.
+        dry_run: When `True`, compute the would-be Names payload
+            (including any ORCID cited-stub merge) without writing.
+            Defaults to `False` so existing `.delay(user_id)` call
+            sites stay valid.
 
     Returns:
-        `True` when a Names record was upserted (or already up to
-        date), `False` when the user was missing or did not have
-        enough profile data to be mirrored.
+        The Names record dict from `upsert_name_for_user` (including
+        dry-run would-be payloads), or `None` when the user was
+        missing or did not have enough profile data to be mirrored.
     """
     with app.app_context():
         app.logger.debug(f"syncing user to names: {user_id}")
@@ -1361,10 +1362,10 @@ def sync_user_to_names(user_id: int) -> bool:
             app.logger.warning(
                 f"sync_user_to_names: user {user_id} not found; skipping"
             )
-            return False
-        result = current_names_sync_service.upsert_name_for_user(user)
+            return None
+        result = current_names_sync_service.upsert_name_for_user(user, dry_run=dry_run)
         app.logger.debug(f"result of name sync is {result}")
-        return result is not None
+        return result
 
 
 @shared_task(ignore_result=False)

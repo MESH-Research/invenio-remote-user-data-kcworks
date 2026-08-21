@@ -143,8 +143,25 @@ def test_sync_now_inline_resolves_each_arg_and_calls_task(runner):
     assert result.exit_code == 0, result.output
     assert "11 -> user_id=101: ok" in result.output
     assert "22 -> user_id=202: no data" in result.output
-    assert fake_sync.call_args_list == [((101,),), ((202,),)]
+    assert fake_sync.call_args_list == [((101, False),), ((202, False),)]
     assert fake_sync.delay.call_count == 0
+
+
+def test_sync_now_dry_run_pretty_prints_payload(runner):
+    """Inline `--dry-run` prints the would-be Names payload."""
+    fake_resolve = MagicMock(return_value=101)
+    fake_sync = MagicMock(return_value={"id": "alice", "tags": ["kcworks-user"]})
+
+    with (
+        patch.object(names_cli_mod, "_resolve_user_id_from_arg", fake_resolve),
+        patch.object(names_cli_mod, "sync_user_to_names", fake_sync),
+    ):
+        result = runner.invoke(cli, ["names", "sync-now", "--dry-run", "11"])
+
+    assert result.exit_code == 0, result.output
+    assert "11 -> user_id=101: dry-run" in result.output
+    assert "'id': 'alice'" in result.output
+    fake_sync.assert_called_once_with(101, True)
 
 
 def test_sync_now_unresolved_arg_is_skipped_not_raised(runner):
@@ -175,7 +192,7 @@ def test_sync_now_background_dispatches_celery_task(runner):
 
     assert result.exit_code == 0, result.output
     assert "task-aaa" in result.output
-    fake_sync.delay.assert_called_once_with(42)
+    fake_sync.delay.assert_called_once_with(42, False)
 
 
 # ---------------------------------------------------------------------------

@@ -1045,7 +1045,7 @@ class NamesSyncService(Service):
         """
         identity = identity or system_identity
         for hit in current_users_service.scan(identity=identity).hits:
-            user = current_accounts.datastore.get_user_by_id(hit.id)
+            user = current_accounts.datastore.get_user_by_id(hit["id"])
             if user is not None:
                 yield user
 
@@ -1346,9 +1346,9 @@ class NamesSyncService(Service):
         Returns:
             A merged update payload addressed by `kc_record["id"]`.
         """
-        internal_id = kc_record.get("internal_id") or kc_record.get(
-            "props", {}
-        ).get("kcworks_user_id")
+        internal_id = kc_record.get("internal_id") or kc_record.get("props", {}).get(
+            "kcworks_user_id"
+        )
         merged = cast(
             NamesRecordDict,
             {

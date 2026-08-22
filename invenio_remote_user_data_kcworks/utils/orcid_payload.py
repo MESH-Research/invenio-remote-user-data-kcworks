@@ -37,6 +37,10 @@ def build_orcid_payload(
     so creatibutor-sourced entries participate in the same dedup indexing
     as ORCID-API and USER payloads.
 
+    When `person_or_org.identifiers` includes a `kc_username` entry, that
+    identifier is copied onto the payload alongside ORCID so later upsert
+    lookup can resolve an existing USER Names record by KC username.
+
     `NameSchema.update_name` rewrites `name` to `"family, given"` whenever
     both parts are present, so any richer form from `person_or_org["name"]`
     is preserved in `props["display_name"]`.
@@ -74,12 +78,26 @@ def build_orcid_payload(
     if phonetic_tokens:
         props["family_phonetic_tokens"] = phonetic_tokens
 
+    identifiers: list[dict[str, str]] = [
+        {"scheme": "orcid", "identifier": bare_orcid},
+    ]
+    kc_username = next(
+        (
+            i["identifier"].strip()
+            for i in person_or_org.get("identifiers", [])
+            if i.get("scheme") == "kc_username" and (i.get("identifier") or "").strip()
+        ),
+        "",
+    )
+    if kc_username:
+        identifiers.append({"scheme": "kc_username", "identifier": kc_username})
+
     payload: dict[str, Any] = {
         "id": bare_orcid,
         "internal_id": None,
         "tags": [KCNamesTag.CITED],
         "name": display_name,
-        "identifiers": [{"scheme": "orcid", "identifier": bare_orcid}],
+        "identifiers": identifiers,
         "affiliations": [{"name": n} for n in affiliation_names if n],
         "props": props,
     }

@@ -238,6 +238,41 @@ class TestBuildPayload:
         assert payload["affiliations"] == [{"name": "MIT"}]
         assert payload["props"]["family_phonetic_tokens"] == ["T"]
 
+    def test_copies_kc_username_identifier_when_present(self):
+        """A `kc_username` on `person_or_org` is copied into payload identifiers."""
+        payload = _build_payload(
+            "0000-0002-1825-0097",
+            {
+                "family_name": "Curie",
+                "given_name": "Marie",
+                "identifiers": [
+                    {"scheme": "orcid", "identifier": "0000-0002-1825-0097"},
+                    {"scheme": "kc_username", "identifier": "mcurie"},
+                ],
+            },
+            [],
+        )
+        assert payload["identifiers"] == [
+            {"scheme": "orcid", "identifier": "0000-0002-1825-0097"},
+            {"scheme": "kc_username", "identifier": "mcurie"},
+        ]
+
+    def test_omits_blank_kc_username_identifier(self):
+        """Blank `kc_username` values are not copied onto the payload."""
+        payload = _build_payload(
+            "0000-0002-1825-0097",
+            {
+                "family_name": "Curie",
+                "identifiers": [
+                    {"scheme": "kc_username", "identifier": "  "},
+                ],
+            },
+            [],
+        )
+        assert payload["identifiers"] == [
+            {"scheme": "orcid", "identifier": "0000-0002-1825-0097"},
+        ]
+
 
 class TestCollectOrcidPayloads:
     """Walk creators+contributors; emit one payload per ORCID-bearing person."""

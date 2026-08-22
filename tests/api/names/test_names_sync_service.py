@@ -299,3 +299,131 @@ class TestUpsertNameForUser:
         assert out["recovered"] is True
         names.create.assert_called_once()
         names.update.assert_called_once()
+
+
+@pytest.mark.usefixtures("base_app")
+class TestUpsertCitedOrcidName:
+    """Tests for `NamesSyncService.upsert_cited_orcid_name` lookup order."""
+
+    def test_merges_when_user_found_by_orcid(
+        self, base_app, service: NamesSyncService, monkeypatch: pytest.MonkeyPatch
+    ):
+        """ORCID resolve hitting a USER record merges; create is skipped."""
+        user = {
+            "id": "mcurie",
+            "tags": [KCNamesTag.USER],
+            "identifiers": [
+                {"scheme": "orcid", "identifier": "0000-0002-1825-0097"},
+            ],
+        }
+        calls: list[tuple[str, str]] = []
+
+        def find(value: str, scheme: str, *, identity=None):
+            calls.append((scheme, value))
+            if scheme == "orcid" and value == "0000-0002-1825-0097":
+                return user
+            return None
+
+        merge = MagicMock(return_value={"id": "mcurie", "merged": True})
+        names = MagicMock()
+        monkeypatch.setattr(service, "_find_user_record_by_identifier", find)
+        monkeypatch.setattr(service, "merge_cited_orcid_into_kc", merge)
+        monkeypatch.setattr(
+            NamesSyncService,
+            "names_service",
+            PropertyMock(return_value=names),
+        )
+
+        payload = {
+            "id": "0000-0002-1825-0097",
+            "identifiers": [
+                {"scheme": "orcid", "identifier": "0000-0002-1825-0097"},
+                {"scheme": "kc_username", "identifier": "mcurie"},
+            ],
+        }
+        with base_app.app_context():
+            out = service.upsert_cited_orcid_name(payload)
+
+        assert out == {"id": "mcurie", "merged": True}
+        assert calls == [("orcid", "0000-0002-1825-0097")]
+        merge.assert_called_once()
+        names.create.assert_not_called()
+
+    def test_merges_when_user_found_only_by_kc_username(
+        self, base_app, service: NamesSyncService, monkeypatch: pytest.MonkeyPatch
+    ):
+        """ORCID miss + kc_username hit merges into the USER record."""
+        user = {
+            "id": "mcurie",
+            "tags": [KCNamesTag.USER],
+            "identifiers": [{"scheme": "kc_username", "identifier": "mcurie"}],
+        }
+        calls: list[tuple[str, str]] = []
+
+        def find(value: str, scheme: str, *, identity=None):
+            calls.append((scheme, value))
+            if scheme == "kc_username" and value == "mcurie":
+                return user
+            return None
+
+        merge = MagicMock(return_value={"id": "mcurie", "merged": True})
+        names = MagicMock()
+        monkeypatch.setattr(service, "_find_user_record_by_identifier", find)
+        monkeypatch.setattr(service, "merge_cited_orcid_into_kc", merge)
+        monkeypatch.setattr(
+            NamesSyncService,
+            "names_service",
+            PropertyMock(return_value=names),
+        )
+
+        payload = {
+            "id": "0000-0002-1825-0097",
+            "identifiers": [
+                {"scheme": "orcid", "identifier": "0000-0002-1825-0097"},
+                {"scheme": "kc_username", "identifier": "mcurie"},
+            ],
+        }
+        with base_app.app_context():
+            out = service.upsert_cited_orcid_name(payload)
+
+        assert out == {"id": "mcurie", "merged": True}
+        assert calls == [
+            ("orcid", "0000-0002-1825-0097"),
+            ("kc_username", "mcurie"),
+        ]
+        merge.assert_called_once()
+        names.create.assert_not_called()
+
+    def test_creates_when_no_user_match(
+        self, base_app, service: NamesSyncService, monkeypatch: pytest.MonkeyPatch
+    ):
+        """No USER by ORCID or kc_username creates a CITED stub."""
+        monkeypatch.setattr(
+            service,
+            "_find_user_record_by_identifier",
+            lambda *a, **k: None,
+        )
+        names = MagicMock()
+        item = MagicMock()
+        item.to_dict.return_value = {"id": "0000-0002-1825-0097", "created": True}
+        names.create.return_value = item
+        monkeypatch.setattr(
+            NamesSyncService,
+            "names_service",
+            PropertyMock(return_value=names),
+        )
+
+        payload = {
+            "id": "0000-0002-1825-0097",
+            "identifiers": [
+                {"scheme": "orcid", "identifier": "0000-0002-1825-0097"},
+                {"scheme": "kc_username", "identifier": "mcurie"},
+            ],
+            "props": {},
+        }
+        with base_app.app_context():
+            out = service.upsert_cited_orcid_name(payload, source="creatibutor")
+
+        assert out == {"id": "0000-0002-1825-0097", "created": True}
+        names.create.assert_called_once()
+        assert payload["props"]["source"] == "creatibutor"

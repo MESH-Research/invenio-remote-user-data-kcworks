@@ -884,11 +884,11 @@ class NamesSyncService(Service):
 
         Behavior:
 
-        - If a `kcworks-user` Names record already carries this ORCID
-          in its `identifiers`, hand `payload` off to
-          `merge_cited_orcid_into_kc`, which gap-fills the KC-user
-          record (KC values win for scalar names and `props`;
-          `identifiers` and `affiliations` are unioned) and
+        - If a `kcworks-user` Names record already matches this ORCID
+          or a `kc_username` listed on `payload["identifiers"]`, hand
+          `payload` off to `merge_cited_orcid_into_kc`, which gap-fills
+          the KC-user record (KC values win for scalar names and
+          `props`; `identifiers` and `affiliations` are unioned) and
           best-effort deletes any leftover cited stub at PID=orcid.
           This function never overwrites scalar fields a KC user has
           set on their profile.
@@ -927,7 +927,23 @@ class NamesSyncService(Service):
         service = self.names_service
         identity = identity or system_identity
 
-        user_record = self._find_user_record_by_orcid(orcid, identity=identity)
+        user_record = self._find_user_record_by_identifier(
+            orcid, "orcid", identity=identity
+        )
+        if user_record is None:
+            kc_username = next(
+                (
+                    (i.get("identifier") or "").strip()
+                    for i in payload.get("identifiers", [])
+                    if (i.get("scheme") or "").lower() == "kc_username"
+                    and (i.get("identifier") or "").strip()
+                ),
+                "",
+            )
+            if kc_username:
+                user_record = self._find_user_record_by_identifier(
+                    kc_username, "kc_username", identity=identity
+                )
         if user_record is not None:
             return cast(
                 "dict[str, Any] | None",
@@ -1157,23 +1173,26 @@ class NamesSyncService(Service):
 
         return stats
 
-    def _find_user_record_by_orcid(
+    def _find_user_record_by_identifier(
         self,
-        orcid: str,
+        value: str,
+        scheme: str,
         *,
         identity: Identity | None = None,
     ) -> NamesRecordDict | None:
-        """Resolve `orcid` and return the USER-tagged hit, if any.
+        """Resolve `value` under `scheme` and return the USER-tagged hit, if any.
 
-        Uses `resolve(..., many=True)` because both a USER record (at
-        PID=kc_username) and a CITED record (at PID=orcid_id) may carry
-        the same ORCID identifier in their `identifiers` list during a
-        consolidation window. The single-result form's order is
+        Uses `resolve(..., many=True)` because more than one Names record
+        may carry the same identifier during a consolidation window (e.g.
+        a USER at PID=kc_username and a CITED stub at PID=orcid both
+        listing the same ORCID). The single-result form's order is
         OpenSearch-defined and would silently pick either.
 
         Args:
-            orcid: The bare ORCID iD (canonical
-                `0000-0000-0000-000X` form).
+            value: The identifier value to resolve (bare ORCID, KC
+                username, etc.).
+            scheme: The identifier scheme (e.g. `"orcid"`,
+                `"kc_username"`).
             identity: Optional Invenio identity. Defaults to
                 `system_identity`.
 
@@ -1182,9 +1201,13 @@ class NamesSyncService(Service):
             USER hit is among the matches (or if there are no matches
             at all).
         """
+        if not value or not scheme:
+            return None
         identity = identity or system_identity
         try:
-            resolved = self.names_service.resolve(identity, orcid, "orcid", many=True)
+            resolved = self.names_service.resolve(
+                identity, value, scheme, many=True
+            )
         except PIDDoesNotExistError:
             return None
         hits = cast(
@@ -1230,8 +1253,9 @@ class NamesSyncService(Service):
 
         Args:
             kc_record: The KC-user Names record dict to merge into
-                (must carry `id` and an `orcid`-scheme entry in
-                `identifiers`).
+                (must carry `id`). ORCID may come from `kc_record`
+                identifiers or, when `cited_data` is supplied, from
+                the cited payload.
             cited_data: Optional pre-supplied cited-side data in
                 Names-payload shape. When `None`, read from the DB at
                 PID=ORCID and require the `kcworks-cited` tag.
@@ -1243,8 +1267,8 @@ class NamesSyncService(Service):
 
         Returns:
             The merged KC record dict on success, or `None` when there
-            was nothing to do (no ORCID on `kc_record`, auto-merge
-            disabled, no DB-resident record at PID=orcid when
+            was nothing to do (no ORCID on `kc_record` or `cited_data`,
+            auto-merge disabled, no DB-resident record at PID=orcid when
             `cited_data` was omitted, the DB-resident candidate was
             itself `kcworks-user`-tagged, or the KC update failed).
         """
@@ -1261,6 +1285,17 @@ class NamesSyncService(Service):
             ),
             "",
         )
+        # USER found by kc_username may not carry ORCID yet; take it from
+        # the cited payload so merge can attach ORCID and delete the stub.
+        if not orcid and cited_data is not None:
+            orcid = next(
+                (
+                    i.get("identifier", "")
+                    for i in cited_data.get("identifiers", [])
+                    if (i.get("scheme", "").lower() == "orcid")
+                ),
+                "",
+            ) or (cited_data.get("id") or "")
         if not orcid:
             return None
 

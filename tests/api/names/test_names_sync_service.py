@@ -427,3 +427,128 @@ class TestUpsertCitedOrcidName:
         assert out == {"id": "0000-0002-1825-0097", "created": True}
         names.create.assert_called_once()
         assert payload["props"]["source"] == "creatibutor"
+
+    def test_refresh_merges_incoming_over_existing_stub(
+        self, base_app, service: NamesSyncService, monkeypatch: pytest.MonkeyPatch
+    ):
+        """PIDAlreadyExists refreshes via incoming-wins merge, not wholesale replace."""
+        monkeypatch.setattr(
+            service,
+            "_find_user_record_by_identifier",
+            lambda *a, **k: None,
+        )
+        existing = {
+            "id": "0000-0002-1825-0097",
+            "tags": [KCNamesTag.CITED],
+            "name": "Curie, Marie",
+            "given_name": "Marie",
+            "family_name": "Curie",
+            "identifiers": [
+                {"scheme": "orcid", "identifier": "0000-0002-1825-0097"},
+            ],
+            "affiliations": [{"name": "Old Lab"}],
+            "props": {
+                "display_name": "Curie, Marie",
+                "family_token": "curie",
+                "source": "backfill",
+            },
+        }
+        names = MagicMock()
+        names.create.side_effect = PIDAlreadyExists("orcid", "0000-0002-1825-0097")
+        read_item = MagicMock()
+        read_item.to_dict.return_value = existing
+        names.read.return_value = read_item
+        updated = MagicMock()
+        updated.to_dict.return_value = {"id": "0000-0002-1825-0097", "updated": True}
+        names.update.return_value = updated
+        monkeypatch.setattr(
+            NamesSyncService,
+            "names_service",
+            PropertyMock(return_value=names),
+        )
+
+        payload = {
+            "id": "0000-0002-1825-0097",
+            "tags": [KCNamesTag.CITED],
+            "name": "Skłodowska-Curie, Marie",
+            "given_name": "Marie",
+            "family_name": "Skłodowska-Curie",
+            "identifiers": [
+                {"scheme": "orcid", "identifier": "0000-0002-1825-0097"},
+                {"scheme": "kc_username", "identifier": "mcurie"},
+            ],
+            "affiliations": [{"name": "Sorbonne"}],
+            "props": {"display_name": "Marie Skłodowska-Curie"},
+        }
+        with base_app.app_context():
+            out = service.upsert_cited_orcid_name(payload, source="creatibutor")
+
+        assert out == {"id": "0000-0002-1825-0097", "updated": True}
+        names.update.assert_called_once()
+        _identity, pid, merged = names.update.call_args[0]
+        assert pid == "0000-0002-1825-0097"
+        assert merged["name"] == "Skłodowska-Curie, Marie"
+        assert merged["family_name"] == "Skłodowska-Curie"
+        assert merged["props"]["display_name"] == "Marie Skłodowska-Curie"
+        # Existing fills gaps incoming did not set.
+        assert merged["props"]["family_token"] == "curie"
+        assert merged["props"]["source"] == "creatibutor"
+        schemes = {i["scheme"]: i["identifier"] for i in merged["identifiers"]}
+        assert schemes["kc_username"] == "mcurie"
+        assert {"name": "Sorbonne"} in merged["affiliations"]
+        assert {"name": "Old Lab"} in merged["affiliations"]
+
+
+class TestMergeCitedStubRefresh:
+    """Unit tests for `_merge_cited_stub_refresh` merge policy."""
+
+    def test_incoming_scalars_overwrite_existing(self, service: NamesSyncService):
+        """Non-empty incoming name fields replace existing ones."""
+        existing = {
+            "id": "0000-0002-1825-0097",
+            "tags": [KCNamesTag.CITED],
+            "name": "Old, Name",
+            "given_name": "Old",
+            "family_name": "Name",
+            "identifiers": [],
+            "affiliations": [],
+            "props": {},
+        }
+        incoming = {
+            "id": "0000-0002-1825-0097",
+            "tags": [KCNamesTag.CITED],
+            "name": "New, Name",
+            "given_name": "New",
+            "family_name": "Name",
+            "identifiers": [],
+            "affiliations": [],
+            "props": {"source": "creatibutor"},
+        }
+        merged = service._merge_cited_stub_refresh(existing, incoming)
+        assert merged["name"] == "New, Name"
+        assert merged["given_name"] == "New"
+
+    def test_existing_fills_missing_incoming_scalars(self, service: NamesSyncService):
+        """Empty incoming scalars keep the existing values."""
+        existing = {
+            "id": "0000-0002-1825-0097",
+            "name": "Curie, Marie",
+            "given_name": "Marie",
+            "family_name": "Curie",
+            "identifiers": [],
+            "affiliations": [],
+            "props": {"family_token": "curie"},
+        }
+        incoming = {
+            "id": "0000-0002-1825-0097",
+            "identifiers": [],
+            "affiliations": [],
+            "props": {"source": "creatibutor"},
+        }
+        merged = service._merge_cited_stub_refresh(existing, incoming)
+        assert merged["name"] == "Curie, Marie"
+        assert merged["given_name"] == "Marie"
+        assert merged["family_name"] == "Curie"
+        assert merged["props"]["family_token"] == "curie"
+        assert merged["props"]["source"] == "creatibutor"
+        assert merged["tags"] == [KCNamesTag.CITED]

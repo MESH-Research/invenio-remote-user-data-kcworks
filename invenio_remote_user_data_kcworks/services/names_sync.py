@@ -896,8 +896,10 @@ class NamesSyncService(Service):
           `kcworks-cited` record from `payload` there.
         - Otherwise (a `kcworks-cited` record, or an untagged
           harvester-origin record from the upstream
-          `OrcidTransformer`, already sits at PID=orcid), wholesale
-          refresh it with `payload`.
+          `OrcidTransformer`, already sits at PID=orcid), refresh it
+          by merging: incoming citation values overwrite where set;
+          existing values only fill gaps in the incoming payload.
+          Identifiers and affiliations are unioned.
 
         Args:
             payload: A `NamesRecordDict` whose `id` is the bare ORCID
@@ -955,7 +957,14 @@ class NamesSyncService(Service):
         try:
             item = service.create(identity, payload)
         except PIDAlreadyExists:
-            item = service.update(identity, orcid, payload)
+            try:
+                existing = cast(
+                    NamesRecordDict, service.read(identity, orcid).to_dict()
+                )
+            except PIDDoesNotExistError:
+                return None
+            merged = self._merge_cited_stub_refresh(existing, payload)
+            item = service.update(identity, orcid, merged)
         return item.to_dict() if item is not None else None
 
     def backfill_cited_orcid_from_records(
@@ -1447,6 +1456,62 @@ class NamesSyncService(Service):
                 merged[field] = kc_value
             elif orcid_value:
                 merged[field] = orcid_value
+        return merged
+
+    def _merge_cited_stub_refresh(
+        self,
+        existing: NamesRecordDict,
+        incoming: NamesRecordDict,
+    ) -> NamesRecordDict:
+        """Merge an incoming cited payload onto an existing ORCID-PID stub.
+
+        Used when `upsert_cited_orcid_name` hits `PIDAlreadyExists` for the
+        ORCID PID. Incoming citation values win wherever they are set;
+        existing values only fill gaps. Identifiers and affiliations are
+        unioned (incoming first). Tags default to `kcworks-cited` when
+        neither side supplies any.
+
+        Args:
+            existing: The Names record currently at PID=orcid.
+            incoming: The creatibutor/backfill payload being upserted
+                (already carries `props["source"]`).
+
+        Returns:
+            An update payload addressed by the existing record's `id`.
+        """
+        incoming_tags = list(incoming.get("tags") or [])
+        existing_tags = list(existing.get("tags") or [])
+        tags = incoming_tags or existing_tags or [KCNamesTag.CITED]
+
+        merged = cast(
+            NamesRecordDict,
+            {
+                "id": existing.get("id") or incoming.get("id") or "",
+                "internal_id": incoming.get("internal_id", existing.get("internal_id")),
+                "tags": tags,
+                "identifiers": union_dicts_by_key(
+                    incoming.get("identifiers", []),
+                    existing.get("identifiers", []),
+                    key=self._identifier_key,
+                ),
+                "affiliations": union_dicts_by_key(
+                    incoming.get("affiliations", []),
+                    existing.get("affiliations", []),
+                    key=self._affiliation_key,
+                ),
+                "props": merge_dicts_first_wins(
+                    incoming.get("props", {}),
+                    existing.get("props", {}),
+                ),
+            },
+        )
+        for field in ("name", "given_name", "family_name"):
+            incoming_value = incoming.get(field) or ""
+            existing_value = existing.get(field) or ""
+            if incoming_value:
+                merged[field] = incoming_value
+            elif existing_value:
+                merged[field] = existing_value
         return merged
 
     # ------------------------------------------------------------------

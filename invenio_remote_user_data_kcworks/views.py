@@ -17,6 +17,7 @@ from flask import (
     jsonify,
     redirect,
     request,
+    session,
     url_for,
 )
 from flask import (
@@ -91,9 +92,7 @@ def _resolve_webhook_config_idp(idp: str) -> tuple[str, str]:
     raise BadRequest(f"Unknown idp {idp!r}")
 
 
-def _resolve_user_for_webhook(
-    kc_username: str, auth_method: str
-) -> User | None:
+def _resolve_user_for_webhook(kc_username: str, auth_method: str) -> User | None:
     """Look up a local user by KC member name from a webhook ``users`` event.
 
     Args:
@@ -165,6 +164,24 @@ def sso_broker_login(
     return cast(Response, redirect(f"{broker_url}?{query}"))
 
 
+def _clear_stale_flashed_messages() -> None:
+    """Clear any stale flashed "log in" messages left over from previous requests.
+
+    If I visit a login-restricted page without a current login session, the flashed
+    login message is set in the session flash messages. But it's not popped and
+    displayed because I'm immediately redirected to the Profiles broker for login.
+    When the broker returns successfully, and I come back to the same restricted
+    page logged in, the stale flashed message (which was never popped for display)
+    is shown. This is very confusing UX. So we clear those stale flashed messages
+    here.
+    """
+    session["_flashes"] = [
+        (k, v)
+        for k, v in session.get("_flashes", [])
+        if v != app.login_manager.login_message
+    ]
+
+
 def _sso_broker_callback() -> Response:
     """Handle broker callback after explicit login or silent login.
 
@@ -200,6 +217,7 @@ def _sso_broker_callback() -> Response:
                 app.logger.error("Could not find or create user from broker payload")
                 raise BrokerPayloadProcessingError
 
+            _clear_stale_flashed_messages()
             login_user(user)
         except UserDataRequestTimeout as e:
             raise e

@@ -38,7 +38,12 @@ dependencies = [
   "pydantic",
   "standard-pkg-resources",            # pkg_resources required by fs (transitive) at runtime
 ]
-optional-dependencies.dev = ["bumpver", "check-manifest", "pip-tools", "pipenv"]
+optional-dependencies.dev = [
+  "bump-my-version==1.5.1",
+  "check-manifest",
+  "pip-tools",
+  "pipenv",
+]
 optional-dependencies.tests = [
   "coverage",
   "pytest>=7.3.2",
@@ -66,7 +71,7 @@ entry-points."invenio_jobs.jobs".merge_names_orcid_duplicates = "invenio_remote_
 entry-points."invenio_jobs.jobs".find_names_duplicates = "invenio_remote_user_data_kcworks.jobs:FindNamesDuplicatesJob"
 
 [dependency-groups]
-dev = ["bumpver>=2025.1131", "pytest-timeout>=2.4"]
+dev = ["bump-my-version==1.5.1", "pytest-timeout>=2.4"]
 
 [tool.setuptools]
 package-data.invenio_remote_user_data_kcworks = [
@@ -222,26 +227,39 @@ ini_options.testpaths = ["tests", "invenio_remote_user_data_kcworks"]
 [tool.coverage]
 run.omit = []
 
-[tool.bumpver]
+[tool.bumpversion]
 current_version = "1.0.0"
-version_pattern = "MAJOR.MINOR.PATCH"
-commit_message = "Bumping version {old_version} -> {new_version}."
-tag_message = "{new_version}"
-tag_scope = "default"
-pre_commit_hook = ""
-post_commit_hook = ""
-commit = true
-tag = true
-push = false
-file_patterns."pyproject.toml" = [
-  '^version = "{version}"',
-  '^current_version = "{version}"',
-]
-file_patterns."README.md" = ["^Version {version}"]
-file_patterns.VERSION = ['^"{version}"']
-file_patterns."invenio_remote_user_data_kcworks/__init__.py" = [
-  '^__version__ = "{version}"',
-]
+parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
+serialize = ["{major}.{minor}.{patch}"]
+search = "{current_version}"
+replace = "{new_version}"
+commit = false
+tag = false
+allow_shell_hooks = false
+message = "Bump version: {current_version} → {new_version}"
+
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+key_path = "project.version"
+
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+key_path = "tool.bumpversion.current_version"
+
+[[tool.bumpversion.files]]
+filename = "README.md"
+search = "Version {current_version}"
+replace = "Version {new_version}"
+
+[[tool.bumpversion.files]]
+filename = "VERSION"
+search = '"{current_version}"'
+replace = '"{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "invenio_remote_user_data_kcworks/__init__.py"
+search = '__version__ = "{current_version}"'
+replace = '__version__ = "{new_version}"'
 
 [tool.pydocstyle]
 add_ignore = "D401"

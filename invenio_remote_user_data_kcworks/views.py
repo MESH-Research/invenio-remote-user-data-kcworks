@@ -60,22 +60,22 @@ from .utils.redirect import safe_redirect_target
 
 
 def _resolve_webhook_config_idp(idp: str) -> tuple[str, str]:
-    """Map a webhook ``idp`` value to remote-data config and OAuth method keys.
+    """Map a webhook `idp` value to remote-data config and OAuth method keys.
 
-    The ``idp`` field in webhook payloads may be either the
-    ``REMOTE_USER_DATA_API_ENDPOINTS`` key (e.g. ``knowledgeCommons``) or any
-    alias listed in ``KC_REMOTE_IDPS`` (e.g. ``cilogon``).
+    The `idp` field in webhook payloads may be either the
+    `REMOTE_USER_DATA_API_ENDPOINTS` key (e.g. `knowledgeCommons`) or any
+    alias listed in `KC_REMOTE_IDPS` (e.g. `cilogon`).
 
     Args:
-        idp: The ``idp`` string from the webhook JSON body.
+        idp: The `idp` string from the webhook JSON body.
 
     Returns:
-        A ``(config_idp, auth_method)`` tuple where ``config_idp`` is the key
-        in ``REMOTE_USER_DATA_API_ENDPOINTS`` and ``auth_method`` is the
-        ``UserIdentity.method`` for OAuth subject lookups.
+        A `(config_idp, auth_method)` tuple where `config_idp` is the key
+        in `REMOTE_USER_DATA_API_ENDPOINTS` and `auth_method` is the
+        `UserIdentity.method` for OAuth subject lookups.
 
     Raises:
-        BadRequest: If ``idp`` is not a known config key or KC alias.
+        BadRequest: If `idp` is not a known config key or KC alias.
     """
     endpoints = app.config.get("REMOTE_USER_DATA_API_ENDPOINTS", {})
     kc_aliases = app.config.get("KC_REMOTE_IDPS", [])
@@ -93,14 +93,14 @@ def _resolve_webhook_config_idp(idp: str) -> tuple[str, str]:
 
 
 def _resolve_user_for_webhook(kc_username: str, auth_method: str) -> User | None:
-    """Look up a local user by KC member name from a webhook ``users`` event.
+    """Look up a local user by KC member name from a webhook `users` event.
 
     Args:
-        kc_username: The ``updates.users[].id`` value (KC username).
-        auth_method: OAuth method name from ``_resolve_webhook_config_idp``.
+        kc_username: The `updates.users[].id` value (KC username).
+        auth_method: OAuth method name from `_resolve_webhook_config_idp`.
 
     Returns:
-        The matching ``User``, or ``None`` if not found. Returns ``None`` when
+        The matching `User`, or `None` if not found. Returns `None` when
         multiple users match (ambiguous).
     """
     user = CILogonHelpers.try_get_user_by_kc_username(kc_username, auth_method)
@@ -282,16 +282,16 @@ def sso_broker_callback() -> Response:
 
 
 def _normalize_webhook_payload(data: dict) -> dict:
-    """Normalize webhook JSON so entity updates are always under ``updates``.
+    """Normalize webhook JSON so entity updates are always under `updates`.
 
-    Some senders use a top-level ``associations`` object with a nested
-    ``associations`` array instead of ``updates.associations``.
+    Some senders use a top-level `associations` object with a nested
+    `associations` array instead of `updates.associations`.
 
     Args:
         data: Raw webhook JSON body.
 
     Returns:
-        Payload with an ``updates`` key suitable for the webhook handler.
+        Payload with an `updates` key suitable for the webhook handler.
     """
     if "updates" in data:
         return data
@@ -420,9 +420,9 @@ class RemoteUserDataUpdateWebhook(MethodView):
     single request. The signal body must be a JSON object whose top-level keys are
 
     :idp: The name of the remote IDP that is sending the signal. This must
-          match a key in ``REMOTE_USER_DATA_API_ENDPOINTS`` (e.g.
-          ``knowledgeCommons``) or an alias listed in ``KC_REMOTE_IDPS``
-          (e.g. ``cilogon``).
+          match a key in `REMOTE_USER_DATA_API_ENDPOINTS` (e.g.
+          `knowledgeCommons`) or an alias listed in `KC_REMOTE_IDPS`
+          (e.g. `cilogon`).
 
     :updates: A JSON object whose top-level keys are the types of data object that
               have been updated on the remote IDP. The value of each key is an
@@ -432,8 +432,8 @@ class RemoteUserDataUpdateWebhook(MethodView):
               'event' property, whose value is the type of event that is being
               signalled (e.g., 'updated', 'created', 'deleted', etc.).
 
-              For ``users`` events, ``id`` is the member's KC username (not the
-              OAuth ``sub``).
+              For `users` events, `id` is the member's KC username (not the
+              OAuth `sub`).
 
     For example:
 
@@ -464,6 +464,8 @@ class RemoteUserDataUpdateWebhook(MethodView):
         # The endpoint is protected by account-related OAuth tokens.
         self.logger = app.logger
 
+    @require_api_auth()
+    @require_oauth_scopes("webhooks:user-data")
     def post(self) -> tuple[Response, int]:
         """Handle POST requests to the user data webhook endpoint.
 
@@ -479,12 +481,20 @@ class RemoteUserDataUpdateWebhook(MethodView):
             werkzeug.exceptions.NotFound: Updates referenced unknown users/groups
                 in specific edge cases.
         """
-        current_remote_user_data_service.require_permission(
-            g.identity, "trigger_update"
-        )
         try:
             data = _normalize_webhook_payload(request.get_json())
             raw_idp = data["idp"]
+            updates = data["updates"]
+            # Users/associations and groups are separate capabilities. Mixed
+            # payloads require both; check before enqueueing any work.
+            if "users" in updates or "associations" in updates:
+                current_remote_user_data_service.require_permission(
+                    g.identity, "trigger_users_sync"
+                )
+            if "groups" in updates:
+                current_remote_user_data_service.require_permission(
+                    g.identity, "trigger_groups_sync"
+                )
             config_idp, auth_method = _resolve_webhook_config_idp(raw_idp)
             events = []
             idp_config = app.config["REMOTE_USER_DATA_API_ENDPOINTS"][config_idp]
@@ -498,7 +508,7 @@ class RemoteUserDataUpdateWebhook(MethodView):
             associations = []
             bad_associations = []
 
-            for e in data["updates"].keys():
+            for e in updates.keys():
                 if e in entity_types.keys():
                     for u in data["updates"][e]:
                         if u["event"] in entity_types[e]["events"]:
@@ -667,6 +677,8 @@ class RemoteUserDataUpdateWebhook(MethodView):
             202,
         )
 
+    @require_api_auth()
+    @require_oauth_scopes("webhooks:user-data")
     def get(self) -> tuple[Response, int]:
         """Confirm the webhook endpoint is reachable.
 
@@ -743,6 +755,8 @@ class RemoteUserLogoutView(MethodView):
         """Attach the Flask app logger for this view."""
         self.logger = app.logger
 
+    @require_api_auth()
+    @require_oauth_scopes("webhooks:logout")
     def post(self) -> tuple[Response, int]:
         """Handle POST requests to the user logout webhook endpoint.
 
@@ -820,6 +834,8 @@ class RemoteUserLogoutView(MethodView):
             200,
         )
 
+    @require_api_auth()
+    @require_oauth_scopes("webhooks:logout")
     def get(self) -> tuple[Response, int]:
         """Confirm the logout webhook endpoint is reachable.
 

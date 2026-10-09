@@ -138,7 +138,7 @@ REMOTE_USER_DATA_API_ENDPOINTS
                 ),
                 "remote_identifier": "id",
                 "remote_method": "GET",
-                "token_env_variable_label": "COMMONS_API_TOKEN",
+                "token_env_variable_label": "COMMONS_PROFILES_API_TOKEN",
             },
             "groups": {
                 "remote_endpoint": (
@@ -146,7 +146,7 @@ REMOTE_USER_DATA_API_ENDPOINTS
                 ),
                 "remote_identifier": "id",
                 "remote_method": "GET",
-                "token_env_variable_label": "COMMONS_API_TOKEN",
+                "token_env_variable_label": "COMMONS_PROFILES_API_TOKEN",
             },
             "entity_types": {
                 "users": {"events": ["created", "updated", "deleted"]},

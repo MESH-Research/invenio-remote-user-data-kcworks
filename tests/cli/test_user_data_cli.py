@@ -30,17 +30,24 @@ from invenio_remote_user_data_kcworks.cli.main import cli
 
 
 @pytest.fixture()
-def runner(base_app):
+def runner(base_app, capsys, cli_runner):
     """A Flask CLI runner bound to the pytest-invenio `base_app`.
 
-    Flask's `test_cli_runner()` (a thin subclass of Click's
-    `CliRunner`) sets up the ambient app context that the
-    `@with_appcontext`-decorated commands need.
+    Delegates to the shared `cli_runner` fixture (fd capture + merge of
+    pytest-escaped stdout) while keeping the `runner.invoke(cli, args)`
+    call shape these tests already use.
 
     Returns:
-        A `flask.testing.FlaskCliRunner` instance.
+        A runner with an `invoke` method compatible with Click's.
     """
-    return base_app.test_cli_runner()
+
+    class _Runner:
+        def invoke(self, command, args=None, **kwargs):
+            args = list(args or [])
+            input_text = kwargs.get("input")
+            return cli_runner(command, *args, input=input_text)
+
+    return _Runner()
 
 
 # ---------------------------------------------------------------------------

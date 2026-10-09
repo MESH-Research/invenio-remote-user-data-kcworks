@@ -101,13 +101,13 @@ REMOTE_USER_DATA_API_ENDPOINTS = {
             "remote_endpoint": ("https://hcommons-dev.org/wp-json/commons/v1/users/"),
             "remote_identifier": "id",
             "remote_method": "GET",
-            "token_env_variable_label": "COMMONS_API_TOKEN",
+            "token_env_variable_label": "COMMONS_PROFILES_API_TOKEN",
         },
         "groups": {
             "remote_endpoint": ("https://hcommons-dev.org/wp-json/commons/v1/groups/"),
             "remote_identifier": "id",
             "remote_method": "GET",
-            "token_env_variable_label": "COMMONS_API_TOKEN",
+            "token_env_variable_label": "COMMONS_PROFILES_API_TOKEN",
         },
         "entity_types": {
             "associations": {"events": ["associated"]},

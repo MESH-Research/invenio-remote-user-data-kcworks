@@ -59,12 +59,17 @@ optional-dependencies.tests = [
 urls.Homepage = "https://github.com/MESH-Research/invenio-remote-user-data-kcworks"
 scripts.user-data = "invenio_remote_user_data_kcworks.cli.main:cli"
 entry-points."flask.commands".user-data = "invenio_remote_user_data_kcworks.cli.main:cli"
+entry-points."invenio_access.actions".groups_sync_action = "invenio_remote_user_data_kcworks.permissions:groups_sync_action"
+entry-points."invenio_access.actions".users_logout_action = "invenio_remote_user_data_kcworks.permissions:users_logout_action"
+entry-points."invenio_access.actions".users_sync_action = "invenio_remote_user_data_kcworks.permissions:users_sync_action"
 entry-points."invenio_base.api_apps".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:InvenioRemoteUserData"
 entry-points."invenio_base.api_blueprints".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.blueprints:create_api_blueprint"
 entry-points."invenio_base.api_finalize_app".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:api_finalize_app"
 entry-points."invenio_base.apps".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:InvenioRemoteUserData"
 entry-points."invenio_base.blueprints".invenio_remote_user_data_kcworks_sso = "invenio_remote_user_data_kcworks.blueprints:create_sso_blueprint"
 entry-points."invenio_base.finalize_app".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.ext:finalize_app"
+entry-points."invenio_oauth2server.scopes".webhooks_user_data = "invenio_remote_user_data_kcworks.scopes:webhooks_user_data_scope"
+entry-points."invenio_oauth2server.scopes".webhooks_logout = "invenio_remote_user_data_kcworks.scopes:webhooks_logout_scope"
 entry-points."invenio_celery.tasks".invenio_remote_user_data_kcworks = "invenio_remote_user_data_kcworks.tasks"
 entry-points."invenio_jobs.jobs".sync_names_missing_users = "invenio_remote_user_data_kcworks.jobs:SyncNamesMissingUsersJob"
 entry-points."invenio_jobs.jobs".merge_names_orcid_duplicates = "invenio_remote_user_data_kcworks.jobs:MergeNamesOrcidDuplicatesJob"
@@ -238,13 +243,9 @@ tag = false
 allow_shell_hooks = false
 message = "Bump version: {current_version} → {new_version}"
 
-[[tool.bumpversion.files]]
-filename = "pyproject.toml"
-key_path = "project.version"
-
-[[tool.bumpversion.files]]
-filename = "pyproject.toml"
-key_path = "tool.bumpversion.current_version"
+# pyproject.toml project.version and tool.bumpversion.current_version are
+# updated automatically by bump-my-version's update_config_file; listing them
+# here double-applies a whole-file search and fails on the second entry.
 
 [[tool.bumpversion.files]]
 filename = "README.md"

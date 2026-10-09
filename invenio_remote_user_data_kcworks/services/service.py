@@ -136,7 +136,7 @@ class RemoteGroupDataService(Service):
             RuntimeError: If more than one active group collection is
                 found for the remote group.
         """
-        self.require_permission(identity, "trigger_update")
+        self.require_permission(identity, "trigger_groups_sync")
         if not timeout:
             timeout = self.config.api_timeout
         results_dict = {}
@@ -420,7 +420,7 @@ class RemoteUserDataService(Service):
             The created local `User` after profile fields and groups are applied,
             or `None` when the remote profile is missing or user creation fails.
         """
-        self.require_permission(identity, "trigger_update")
+        self.require_permission(identity, "trigger_users_sync")
 
         remote_service = idp
         if idp in self.config.kc_remote_idps:
@@ -478,8 +478,8 @@ class RemoteUserDataService(Service):
             user_id (int): The user's id in the Invenio database.
             idp (str): The identity provider name. This is not the oauth
                 method name but rather the name of the user data source.
-            remote_id (str | None): The OAuth ``sub`` on the remote IDP, when
-                known. Ignored when ``kc_username`` is provided.
+            remote_id (str | None): The OAuth `sub` on the remote IDP, when
+                known. Ignored when `kc_username` is provided.
             remote_data (APIResponse | None): A pre-fetched user data API response
                 to use instead of making a new remote request (optional)
             kc_username (str | None): KC member name to fetch profile data by.
@@ -508,7 +508,7 @@ class RemoteUserDataService(Service):
             LocalUserNotFoundError: If `user_id` does not resolve to a local user.
 
         """
-        self.require_permission(identity, "trigger_update")
+        self.require_permission(identity, "trigger_users_sync")
 
         # TODO: Can we refresh the user's identity if they're currently
         # logged in?

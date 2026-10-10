@@ -28,6 +28,7 @@ from flask_login import login_user
 from invenio_accounts.models import User
 from invenio_accounts.sessions import delete_user_sessions
 from invenio_db import db
+from invenio_oauth2server.decorators import require_api_auth, require_oauth_scopes
 from werkzeug.exceptions import (
     BadRequest,
     MethodNotAllowed,

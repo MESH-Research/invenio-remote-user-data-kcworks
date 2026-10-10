@@ -16,6 +16,7 @@ from invenio_accounts.models import User
 
 from . import config
 from .proxies import current_remote_user_data_service
+from .roles import ensure_service_capabilities
 from .services.config import RemoteGroupDataServiceConfig, RemoteUserDataServiceConfig
 from .services.names_sync import NamesSyncService
 from .services.record_username_sync import RecordKcUsernameSyncService
@@ -43,9 +44,7 @@ def on_user_logged_in(_, user: User) -> None:
             update_interval = current_app.config["REMOTE_USER_DATA_UPDATE_INTERVAL"]
             if login_sync_is_due(user.id, update_interval):
                 record_login_sync_timestamp(user.id)
-                do_user_data_update.delay(
-                    user.id, send_status_callback=False
-                )  # noqa
+                do_user_data_update.delay(user.id, send_status_callback=False)  # noqa
 
 
 class InvenioRemoteUserData:
@@ -187,10 +186,18 @@ def _register_kcworks_names_schema_override(app) -> None:
 
 
 def finalize_app(app) -> None:
-    """UI finalize hook; registered on `invenio_base.finalize_app`."""
+    """UI finalize hook; registered on `invenio_base.finalize_app`.
+
+    Ensures Profiles sync / SSO logout capability roles and service accounts.
+    """
     _register_kcworks_names_schema_override(app)
+    ensure_service_capabilities()
 
 
 def api_finalize_app(app) -> None:
-    """API finalize hook; registered on `invenio_base.api_finalize_app`."""
+    """API finalize hook; registered on `invenio_base.api_finalize_app`.
+
+    Ensures Profiles sync / SSO logout capability roles and service accounts.
+    """
     _register_kcworks_names_schema_override(app)
+    ensure_service_capabilities()

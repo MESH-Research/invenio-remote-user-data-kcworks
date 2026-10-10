@@ -51,7 +51,17 @@ from invenio_rdm_records.services.communities.components import (
 )
 from marshmallow import Schema, fields
 
-from tests.fixtures.env_defaults import PYTEST_DEFAULT_COMMONS_PROFILES_API_TOKEN
+from tests.fixtures import env_defaults as _env_defaults
+
+PYTEST_DEFAULT_COMMONS_PROFILES_API_TOKEN = (
+    _env_defaults.PYTEST_DEFAULT_COMMONS_PROFILES_API_TOKEN
+)
+# Present after kcworks-test-fixtures bump that splits Profiles/SSO placeholders.
+PYTEST_DEFAULT_COMMONS_SSO_LOGOUT_API_TOKEN = getattr(
+    _env_defaults,
+    "PYTEST_DEFAULT_COMMONS_SSO_LOGOUT_API_TOKEN",
+    "pytest-mock-commons-sso-logout-token",
+)
 from tests.fixtures.idms import register_idms_static_api_token_before_request
 
 from .fixtures.custom_fields import test_config_fields
@@ -119,6 +129,10 @@ def _commons_profiles_api_token_default() -> None:
         "COMMONS_PROFILES_API_TOKEN",
         PYTEST_DEFAULT_COMMONS_PROFILES_API_TOKEN,
     )
+    os.environ.setdefault(
+        "COMMONS_SSO_LOGOUT_API_TOKEN",
+        PYTEST_DEFAULT_COMMONS_SSO_LOGOUT_API_TOKEN,
+    )
 
 
 def _(x: Any) -> Any:
@@ -166,18 +180,9 @@ test_config: dict[str, Any] = {
     "WTF_CSRF_ENABLED": False,
     "WTF_CSRF_METHODS": [],
     "RATELIMIT_ENABLED": False,
-    # Static bearer for IDMS→KCWorks API paths (see `tests.fixtures.idms` hook).
-    # Tests set `TEST_IDMS_STATIC_API_TOKEN`;
-    # `idms_static_api_auth` overrides user id.
-    "STATIC_API_TOKEN_ROUTES": {
-        "/api/webhooks/user_data_update": "COMMONS_PROFILES_API_TOKEN",
-        "/api/webhooks/users/logout": "COMMONS_PROFILES_API_TOKEN",
-        "/api/webhooks/users/update": "COMMONS_PROFILES_API_TOKEN",
-        "/webhooks/user_data_update": "COMMONS_PROFILES_API_TOKEN",
-        "/webhooks/users/logout": "COMMONS_PROFILES_API_TOKEN",
-        "/webhooks/users/update": "COMMONS_PROFILES_API_TOKEN",
-    },
-    "STATIC_API_TOKEN_USER_ID": 1,
+    # Inbound static-token routes/user ids are opt-in via
+    # `idms_static_api_principals` / `idms_static_api_auth` /
+    # `idms_sso_static_api_auth` in `tests.fixtures.idms`.
     "APP_DEFAULT_SECURE_HEADERS": {
         "content_security_policy": {"default-src": []},
         "force_https": False,

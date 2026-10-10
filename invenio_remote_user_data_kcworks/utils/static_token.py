@@ -19,40 +19,36 @@ class StaticTokenRouteBinding(NamedTuple):
     user_id: int | None
 
 
-def _normalize_route_entry(entry: Any) -> tuple[str, str | None]:
+def _normalize_route_entry(entry: Any) -> tuple[str, str]:
     """Normalize a routes-map value to `(token_env, user_id_config)`.
 
     Args:
-        entry: Either a token env-var name (str) or a mapping with
-            `token_env` and optional `user_id_config`.
+        entry: Mapping with `token_env` and `user_id_config`.
 
     Returns:
-        Tuple of token env-var name and optional config key for the user id.
+        Tuple of token env-var name and config key for the user id.
 
     Raises:
-        TypeError: If `entry` is neither a string nor a mapping with
-            `token_env`.
+        TypeError: If `entry` is not a mapping with both required keys.
     """
-    if isinstance(entry, str):
-        return entry, None
-    if isinstance(entry, Mapping):
-        token_env = entry.get("token_env")
-        if not isinstance(token_env, str) or not token_env:
-            raise TypeError(
-                "STATIC_API_TOKEN_ROUTES dict entries require a non-empty "
-                "'token_env' string"
-            )
-        user_id_config = entry.get("user_id_config")
-        if user_id_config is not None and not isinstance(user_id_config, str):
-            raise TypeError(
-                "STATIC_API_TOKEN_ROUTES 'user_id_config' must be a string "
-                "config key when provided"
-            )
-        return token_env, user_id_config
-    raise TypeError(
-        "STATIC_API_TOKEN_ROUTES values must be a token env-var name or a "
-        "dict with 'token_env'"
-    )
+    if not isinstance(entry, Mapping):
+        raise TypeError(
+            "STATIC_API_TOKEN_ROUTES values must be a dict with "
+            "'token_env' and 'user_id_config'"
+        )
+    token_env = entry.get("token_env")
+    if not isinstance(token_env, str) or not token_env:
+        raise TypeError(
+            "STATIC_API_TOKEN_ROUTES dict entries require a non-empty "
+            "'token_env' string"
+        )
+    user_id_config = entry.get("user_id_config")
+    if not isinstance(user_id_config, str) or not user_id_config:
+        raise TypeError(
+            "STATIC_API_TOKEN_ROUTES dict entries require a non-empty "
+            "'user_id_config' string"
+        )
+    return token_env, user_id_config
 
 
 def resolve_static_token_route(
@@ -63,12 +59,8 @@ def resolve_static_token_route(
     """Resolve the static-token binding for a request path.
 
     Route map keys are path prefixes. The matching prefix with the most path
-    segments wins. Values may be:
-
-    - a string env-var name for the bearer token (user id from
-      `STATIC_API_TOKEN_USER_ID`), or
-    - a dict with `token_env` and optional `user_id_config` (config key
-      holding the impersonated user id).
+    segments wins. Values must be a dict with `token_env` and
+    `user_id_config` (config key holding the impersonated user id).
 
     Args:
         path: Request path as seen by the app.
@@ -93,8 +85,7 @@ def resolve_static_token_route(
         matches, key=lambda item: len([s for s in item[0].split("/") if s])
     )
     token_env, user_id_config = _normalize_route_entry(most_specific[1])
-    config_key = user_id_config or "STATIC_API_TOKEN_USER_ID"
-    user_id = config.get(config_key)
+    user_id = config.get(user_id_config)
     if user_id is None:
         return StaticTokenRouteBinding(token_env=token_env, user_id=None)
     return StaticTokenRouteBinding(token_env=token_env, user_id=int(user_id))

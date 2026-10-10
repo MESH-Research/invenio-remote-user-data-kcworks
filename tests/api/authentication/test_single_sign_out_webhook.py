@@ -12,18 +12,18 @@ from invenio_accounts.models import SessionActivity
 from invenio_accounts.testutils import login_user_via_session
 
 
-def test_logout_webhook_get_ping(app, client):
+def test_logout_webhook_get_ping(app, client, idms_sso_static_api_auth):
     """GET confirms the receiver is mounted (no username processing)."""
     webhook_url = url_for(
         "invenio_remote_user_data_kcworks.remote_user_data_kcworks_logout_webhook",
     )
-    resp = client.get(webhook_url)
+    resp = client.get(webhook_url, headers=idms_sso_static_api_auth)
     assert resp.status_code == 200
     assert resp.json == {"message": "Webhook receiver is active", "status": 200}
 
 
 def test_logout_webhook_post_requires_username(
-    app, client, db, idms_static_api_auth
+    app, client, db, idms_sso_static_api_auth
 ):
     """POST without `username` query param returns 400."""
     webhook_url = url_for(
@@ -31,13 +31,14 @@ def test_logout_webhook_post_requires_username(
     )
     resp = client.post(
         webhook_url,
-        headers=idms_static_api_auth,
+        headers=idms_sso_static_api_auth,
     )
     assert resp.status_code == 400
+    assert "username" in (resp.get_json() or {}).get("message", "").lower()
 
 
 def test_logout_webhook_post_unknown_username_returns_404(
-    app, client, idms_static_api_auth
+    app, client, idms_sso_static_api_auth
 ):
     """Central logout for a KC username that does not exist locally → 404 JSON."""
     webhook_url = url_for(
@@ -46,7 +47,7 @@ def test_logout_webhook_post_unknown_username_returns_404(
     resp = client.post(
         webhook_url,
         query_string={"username": "definitely_missing_user"},
-        headers=idms_static_api_auth,
+        headers=idms_sso_static_api_auth,
     )
     assert resp.status_code == 404
     body = resp.json
@@ -55,7 +56,7 @@ def test_logout_webhook_post_unknown_username_returns_404(
 
 
 def test_logout_webhook_post_invalidates_sessions(
-    app, db, client, admin, user_factory, idms_static_api_auth
+    app, db, client, admin, user_factory, idms_sso_static_api_auth
 ):
     """Inbound webhook deletes sessions for every local user matched by KC username."""
     webhook_url = url_for(
@@ -91,7 +92,7 @@ def test_logout_webhook_post_invalidates_sessions(
         resp = webhook_client.post(
             webhook_url,
             query_string={"username": kc_username},
-            headers=idms_static_api_auth,
+            headers=idms_sso_static_api_auth,
         )
     assert resp.status_code == 200
     assert resp.json["status"] == "success"

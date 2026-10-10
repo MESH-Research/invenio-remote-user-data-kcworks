@@ -28,16 +28,22 @@ def test_resolve_prefers_most_specific_prefix():
     assert binding.user_id == 2
 
 
-def test_resolve_string_entry_uses_legacy_user_id_key():
-    routes = {"/webhooks/users/update": "COMMONS_PROFILES_API_TOKEN"}
-    binding = resolve_static_token_route(
-        "/webhooks/users/update",
-        routes,
-        {"STATIC_API_TOKEN_USER_ID": 99},
-    )
-    assert binding is not None
-    assert binding.token_env == "COMMONS_PROFILES_API_TOKEN"
-    assert binding.user_id == 99
+def test_resolve_rejects_bare_string_entry():
+    with pytest.raises(TypeError, match="dict with"):
+        resolve_static_token_route(
+            "/webhooks/users/update",
+            {"/webhooks/users/update": "COMMONS_PROFILES_API_TOKEN"},
+            {},
+        )
+
+
+def test_resolve_rejects_missing_user_id_config():
+    with pytest.raises(TypeError, match="user_id_config"):
+        resolve_static_token_route(
+            "/webhooks/users/update",
+            {"/webhooks/users/update": {"token_env": "COMMONS_PROFILES_API_TOKEN"}},
+            {},
+        )
 
 
 def test_resolve_missing_user_id_returns_binding_with_none():

@@ -361,15 +361,13 @@ class RemoteUserDataService(Service):
             A four-tuple of `(user, user_field_changes, groups, group_changes)`.
         """
         group_changes = CILogonHelpers.calculate_group_changes(profile, user)
+        old_kc_username = (user.user_profile or {}).get("identifier_kc_username")
         user_changes, new_data = CILogonHelpers.calculate_user_changes(profile, user)
-
-        new_kc_username = (user_changes.get("user_profile") or {}).get(
+        # Prefer full ``new_data`` over the sparse diff so a rename still
+        # enqueues rewrite when ``identifier_kc_username`` is present on the
+        # normalized payload (not only when it appears in ``user_changes``).
+        new_kc_username = (new_data.get("user_profile") or {}).get(
             "identifier_kc_username"
-        )
-        old_kc_username = (
-            (user.user_profile or {}).get("identifier_kc_username")
-            if new_kc_username
-            else None
         )
 
         updated_data = CILogonHelpers.update_local_user_data(

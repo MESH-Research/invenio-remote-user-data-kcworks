@@ -26,12 +26,25 @@ from flask_principal import Need
 from invenio_access.models import ActionRoles
 from invenio_accounts.proxies import current_accounts
 from invenio_db import db
+from sqlalchemy import inspect
 
 from invenio_remote_user_data_kcworks.permissions import (
     groups_sync_action,
     users_logout_action,
     users_sync_action,
 )
+
+
+def _accounts_tables_ready() -> bool:
+    """Return True when the accounts schema is present.
+
+    Finalize hooks can run during test bootstrap before session `create_all`.
+    Production always has migrated tables by the time the app finalizes.
+    """
+    try:
+        return inspect(db.engine).has_table("accounts_role")
+    except Exception:
+        return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,11 +207,14 @@ def ensure_service_accounts() -> list[dict[str, Any]]:
 def ensure_service_capabilities() -> dict[str, Any]:
     """Ensure capability roles, service accounts, and role assignments.
 
-    Idempotent. Safe to run on every deploy.
+    Idempotent. Safe to run on every deploy. No-ops when the accounts tables
+    are not present yet (test bootstrap before `create_all`).
 
     Returns:
         Dict with `roles` (role name list) and `accounts` (per-account dicts).
     """
+    if not _accounts_tables_ready():
+        return {"roles": [], "accounts": []}
     roles = ensure_service_capability_roles()
     accounts = ensure_service_accounts()
     return {"roles": roles, "accounts": accounts}

@@ -133,35 +133,46 @@ class RecordKcUsernameSyncService(Service):
     ) -> Iterator[str]:
         """Scan record or draft IDs with matching KC username metadata.
 
-        The public RDM service exposes `scan()` for published records but
-        only `search_drafts()` for drafts. This method uses the same
-        service `_search` path for both, swapping only the action,
-        record class, search config, and read permission action.
+        Uses `create_search` (permission filter + our extra filter only)
+        rather than `_search` / `search_drafts`. The latter apply UI search
+        interpreters (`versions.is_latest`, `deletion_status=P`,
+        `has_draft=False`) that are wrong for a rename rewrite:
+
+        - Published pass must not depend on those interpreters; a missing
+          or mismatched flag would silently skip every published hit.
+        - Drafts pass must not use the broad `rdmrecords` alias without
+          restricting to unpublished drafts. `search_drafts` intentionally
+          returns published records that have no draft; opening those with
+          `read_draft` raises `DraftNotCreatedError`.
 
         Args:
             identity: The Invenio identity for the scan.
             old_username: The pre-rename KC username.
-            drafts: If `True`, scan drafts; otherwise scan published records.
+            drafts: If `True`, scan unpublished drafts; otherwise scan
+                published records (`rdmrecords-records`).
 
         Yields:
             Record IDs whose full source metadata contains the old
             `kc_username` in creators or contributors.
         """
         svc = current_rdm_records_service
-        action = "search_drafts" if drafts else "scan"
         record_cls = svc.draft_cls if drafts else svc.record_cls
         search_opts = svc.config.search_drafts if drafts else svc.config.search
         permission_action = "read_draft" if drafts else "read"
 
-        search = svc._search(
-            action,
+        extra_filter = self._identifier_filter(old_username)
+        if drafts:
+            # RDMDraft.search_alias is ``rdmrecords`` (records + drafts).
+            # Keep only unpublished drafts so we never call read_draft on
+            # a published recid.
+            extra_filter &= dsl.Q("term", is_published=False)
+
+        search = svc.create_search(
             identity,
-            params={},
-            search_preference=None,
             record_cls=record_cls,
             search_opts=search_opts,
-            extra_filter=self._identifier_filter(old_username),
             permission_action=permission_action,
+            extra_filter=extra_filter,
         )
 
         for hit in search.scan():
@@ -230,10 +241,10 @@ class RecordKcUsernameSyncService(Service):
 
         Default (`drafts=False`) operates on the published-records
         index: each match is opened via `edit()`, patched with
-        `update_draft()`, and re-published. With `drafts=True`, draft
-        hits are scanned through the same service search path with the
-        draft search configuration, opened via `read_draft()`, and
-        patched with `update_draft()`; drafts are never auto-published.
+        `update_draft()`, and re-published. With `drafts=True`, only
+        unpublished drafts are scanned (see `_scan_ids`), opened via
+        `read_draft()`, and patched with `update_draft()`; drafts are
+        never auto-published.
 
         The scan filters by identifier value first, then checks the full
         hit metadata for `scheme == "kc_username"` before returning a

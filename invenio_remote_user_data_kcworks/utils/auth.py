@@ -541,11 +541,14 @@ class CILogonHelpers:
         new_data["user_profile"]["identifier_kc_username"] = profile.username
         new_data["username"] = profile.username
         new_data["email"] = profile.email
-        new_data["preferences"] = user.preferences
-        new_data["preferences"].update({
+        # Copy before mutate: ``initial_user_data["preferences"]`` holds the
+        # same object as ``user.preferences``. Updating in place would make
+        # the sparse diff miss visibility changes.
+        new_data["preferences"] = {
+            **(user.preferences or {}),
             "visibility": "public",
             "email_visibility": "public",
-        })
+        }
         user_changes = CILogonHelpers._diff_between_nested_dicts(
             initial_user_data, new_data
         )

@@ -163,6 +163,11 @@ test_config: dict[str, Any] = {
     "SSO_BROKER_RETRY_COOKIE_NAME": "_sso_checked",
     "SSO_BROKER_COOKIE_TTL": 300,
     "SSO_BROKER_SILENT_LOGIN_TIMEOUT": 3,
+    # Same as site `kcworks.config.auth`: Flask-Security `/login` is the
+    # broker login handler (`sso_broker_login`), which 302s to Profiles.
+    "ACCOUNTS_LOGIN_VIEW_FUNCTION": (
+        "invenio_remote_user_data_kcworks.views:sso_broker_login"
+    ),
     # --- Database -----------------------------------------------------------
     "SQLALCHEMY_DATABASE_URI": (
         "postgresql+psycopg2://invenio:invenio@localhost:5432/invenio"

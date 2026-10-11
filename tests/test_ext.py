@@ -1,4 +1,9 @@
-"""Extension initialization smoke tests."""
+"""Package wiring — extension load.
+
+Covers:
+
+- The extension loads.
+"""
 
 from flask import Flask
 

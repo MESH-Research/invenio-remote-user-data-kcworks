@@ -1,0 +1,79 @@
+# Part of invenio-remote-user-data-kcworks
+# Copyright (C) 2023-2026, MESH Research
+#
+# invenio-remote-user-data-kcworks is free software; you can redistribute and/or
+# modify it under the terms of the MIT License; see LICENSE file for more details.
+
+"""Skip Profiles when a usable remote profile is already in hand.
+
+Covers:
+
+- If we already have an authorized profile in hand, we do not call Profiles
+  again.
+
+Related coverage elsewhere:
+
+- Missing local user → `test_local_user_missing.py`.
+- Unusable remote responses → `test_unusable_profile_stops.py`.
+- How we look up Profiles (URLs, fallback, IdP key) → `test_lookup_path.py`.
+"""
+
+from unittest.mock import patch
+
+from invenio_access.permissions import system_identity
+from invenio_accounts.models import UserIdentity
+
+from invenio_remote_user_data_kcworks.proxies import (
+    current_remote_user_data_service as user_data_service,
+)
+from tests.fixtures.idms import minimal_api_response, minimal_profile
+
+
+def test_update_user_from_remote_prefetched_skips_fetch(app, user_factory, db):
+    """Authorized profile in hand: do not call Profiles again."""
+    myuser = user_factory(
+        email="prefetch@example.org",
+        oauth_src=None,
+        oauth_id=None,
+        kc_username=None,
+    )
+    UserIdentity.create(myuser.user, "knowledgeCommons", "sub-prefetch")
+    remote_in = minimal_api_response(
+        "sub-prefetch",
+        profile=minimal_profile(username="pref"),
+    )
+    group_delta = {"added_groups": [], "dropped_groups": [], "unchanged_groups": []}
+    updated_payload = {"user": {"username": "x"}, "groups": ["g"]}
+
+    with patch(
+        "invenio_remote_user_data_kcworks.services.service.UserDataAPIClient."
+        "fetch_user_profile",
+    ) as fetch_mock:
+        with patch(
+            "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
+            "calculate_group_changes",
+            return_value=group_delta,
+        ):
+            with patch(
+                "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
+                "calculate_user_changes",
+                return_value=({}, {}),
+            ):
+                with patch(
+                    "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
+                    "update_local_user_data",
+                    return_value=updated_payload,
+                ):
+                    out = user_data_service.update_user_from_remote(
+                        system_identity,
+                        myuser.id,
+                        "knowledgeCommons",
+                        "sub-prefetch",
+                        remote_data=remote_in,
+                    )
+
+    fetch_mock.assert_not_called()
+    assert out[0] is myuser.user
+    assert out[1] == updated_payload["user"]
+    assert out[2] == updated_payload["groups"]
+    assert out[3] == group_delta

@@ -1,6 +1,6 @@
 [build-system]
 build-backend = "setuptools.build_meta"
-requires = ["setuptools>=61", "wheel"]
+requires = ["setuptools>=83", "wheel"]
 
 [project]
 name = "invenio-remote-user-data-kcworks"
@@ -27,7 +27,7 @@ classifiers = [
 dependencies = [
   "celery",
   "click",
-  "deepdiff",
+  "deepdiff>=9.1",
   "invenio-app-rdm<14",
   "invenio-communities",
   "invenio-group-collections-kcworks",

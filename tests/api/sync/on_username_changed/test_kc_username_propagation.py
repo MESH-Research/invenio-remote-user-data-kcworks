@@ -13,6 +13,7 @@ Covers:
 - Published records get edited/republished; drafts get patched.
 - Stale name entries get cleaned up.
 - Rewrite work only kicks off when the username actually changed.
+- Task body (sync `.run()`) against real published/draft records.
 """
 
 from __future__ import annotations
@@ -22,13 +23,25 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from invenio_access.permissions import system_identity
+from invenio_rdm_records.proxies import current_rdm_records_service
+from invenio_search.proxies import current_search_client
 
 from invenio_remote_user_data_kcworks.config import KCNamesTag
+from invenio_remote_user_data_kcworks.proxies import (
+    current_record_kc_username_sync_service,
+    current_remote_user_data_service,
+)
 from invenio_remote_user_data_kcworks.services.names_sync import NamesSyncService
 from invenio_remote_user_data_kcworks.services.record_username_sync import (
     RecordKcUsernameSyncService,
 )
+from invenio_remote_user_data_kcworks.tasks import (
+    rewrite_records_for_kc_username_change,
+)
+from invenio_remote_user_data_kcworks.types.profiles_api import APIResponse
 from invenio_remote_user_data_kcworks.utils.record_metadata import rewrite_kc_username
+from tests.fixtures.idms import minimal_api_response, minimal_profile
 
 # ---------------------------------------------------------------------------
 # Builders
@@ -239,15 +252,32 @@ def _make_draft_item(draft_id: str, metadata: dict[str, Any]):
     """Return a duck-typed RecordItem for a freshly-edited draft."""
     item = MagicMock()
     item.id = draft_id
-    item.to_dict.return_value = {"id": draft_id, "metadata": metadata}
+    item.data = {"id": draft_id, "metadata": metadata}
     return item
 
 
 def _make_scan_hit(record_id: str, metadata: dict[str, Any]):
-    """Return a duck-typed search hit from `create_search().scan()`."""
+    """Return a duck-typed search hit from `dsl.Search(...).scan()`."""
     hit = MagicMock()
     hit.to_dict.return_value = {"id": record_id, "metadata": metadata}
     return hit
+
+
+def _make_search_obj(*hits: MagicMock) -> MagicMock:
+    """Return a Search DSL mock that chains `.filter()` and yields scan hits."""
+    search_obj = MagicMock()
+    search_obj.filter.return_value = search_obj
+    search_obj.scan.return_value = iter(hits)
+    return search_obj
+
+
+_SEARCH_PATCH = (
+    "invenio_remote_user_data_kcworks.services.record_username_sync.dsl.Search"
+)
+_RECORDS_PATCH = (
+    "invenio_remote_user_data_kcworks.services.record_username_sync."
+    "current_rdm_records_service"
+)
 
 
 class TestRewritePublished:
@@ -256,10 +286,9 @@ class TestRewritePublished:
     def test_noop_when_old_equals_new(self, sync_service):
         """Early return: no scan, no edit, no publish, zero stats."""
         records_mock = MagicMock(name="current_rdm_records_service")
-        with patch(
-            "invenio_remote_user_data_kcworks.services.record_username_sync."
-            "current_rdm_records_service",
-            new=records_mock,
+        with (
+            patch(_RECORDS_PATCH, new=records_mock),
+            patch(_SEARCH_PATCH) as search_cls,
         ):
             stats = sync_service.rewrite("same", "same")
         assert stats == {
@@ -268,7 +297,8 @@ class TestRewritePublished:
             "failed": 0,
             "drafts_left_uncommitted": 0,
         }
-        records_mock.create_search.assert_not_called()
+        search_cls.assert_not_called()
+        records_mock.edit.assert_not_called()
 
     def test_happy_path_published_record_is_edited_and_republished(
         self, base_app, sync_service
@@ -278,25 +308,22 @@ class TestRewritePublished:
             "creators": [_personal_creator("Doe", "Jane", kc_username="oldname")],
             "contributors": [],
         }
-        search_obj = MagicMock()
-        search_obj.scan.return_value = iter([
-            _make_scan_hit("rec-1", edited_metadata),
-        ])
+        search_obj = _make_search_obj(_make_scan_hit("rec-1", edited_metadata))
         draft_item = _make_draft_item("rec-1", edited_metadata)
 
         records_mock = MagicMock()
-        records_mock.create_search.return_value = search_obj
         records_mock.edit.return_value = draft_item
 
         with base_app.app_context():
-            with patch(
-                "invenio_remote_user_data_kcworks.services.record_username_sync."
-                "current_rdm_records_service",
-                records_mock,
+            with (
+                patch(_RECORDS_PATCH, records_mock),
+                patch(_SEARCH_PATCH, return_value=search_obj) as search_cls,
             ):
                 stats = sync_service.rewrite("oldname", "newname")
 
-        records_mock.create_search.assert_called_once()
+        search_cls.assert_called_once()
+        assert "rdmrecords-records" in search_cls.call_args.kwargs["index"]
+        search_obj.filter.assert_called_once()
         records_mock.edit.assert_called_once()
         records_mock.update_draft.assert_called_once()
         records_mock.publish.assert_called_once()
@@ -325,19 +352,13 @@ class TestRewritePublished:
             "creators": [_personal_creator("Doe", "Jane", orcid="oldname")],
             "contributors": [],
         }
-        search_obj = MagicMock()
-        search_obj.scan.return_value = iter([
-            _make_scan_hit("rec-1", source_metadata),
-        ])
-
+        search_obj = _make_search_obj(_make_scan_hit("rec-1", source_metadata))
         records_mock = MagicMock()
-        records_mock.create_search.return_value = search_obj
 
         with base_app.app_context():
-            with patch(
-                "invenio_remote_user_data_kcworks.services.record_username_sync."
-                "current_rdm_records_service",
-                records_mock,
+            with (
+                patch(_RECORDS_PATCH, records_mock),
+                patch(_SEARCH_PATCH, return_value=search_obj),
             ):
                 stats = sync_service.rewrite("oldname", "newname")
 
@@ -357,14 +378,11 @@ class TestRewritePublished:
             "creators": [_personal_creator("A", kc_username="oldname")],
             "contributors": [],
         }
-        search_obj = MagicMock()
-        search_obj.scan.return_value = iter([
+        search_obj = _make_search_obj(
             _make_scan_hit("rec-good", good_metadata),
             _make_scan_hit("rec-bad", good_metadata),
-        ])
-
+        )
         records_mock = MagicMock()
-        records_mock.create_search.return_value = search_obj
 
         def _edit(identity, record_id):
             if record_id == "rec-bad":
@@ -374,10 +392,9 @@ class TestRewritePublished:
         records_mock.edit.side_effect = _edit
 
         with base_app.app_context():
-            with patch(
-                "invenio_remote_user_data_kcworks.services.record_username_sync."
-                "current_rdm_records_service",
-                records_mock,
+            with (
+                patch(_RECORDS_PATCH, records_mock),
+                patch(_SEARCH_PATCH, return_value=search_obj),
             ):
                 stats = sync_service.rewrite("oldname", "newname")
 
@@ -401,28 +418,20 @@ class TestRewriteDrafts:
             "contributors": [],
         }
         draft_item = _make_draft_item("draft-1", edited_metadata)
+        search_obj = _make_search_obj(_make_scan_hit("draft-1", edited_metadata))
 
         records_mock = MagicMock()
-        search_obj = MagicMock()
-        search_obj.scan.return_value = iter([
-            _make_scan_hit("draft-1", edited_metadata),
-        ])
-        records_mock.create_search.return_value = search_obj
         records_mock.read_draft.return_value = draft_item
 
         with base_app.app_context():
-            with patch(
-                "invenio_remote_user_data_kcworks.services.record_username_sync."
-                "current_rdm_records_service",
-                records_mock,
+            with (
+                patch(_RECORDS_PATCH, records_mock),
+                patch(_SEARCH_PATCH, return_value=search_obj) as search_cls,
             ):
                 stats = sync_service.rewrite("oldname", "newname", drafts=True)
 
-        create_kwargs = records_mock.create_search.call_args.kwargs
-        assert create_kwargs["permission_action"] == "read_draft"
-        # Unpublished-only filter must be ANDed into the extra_filter so the
-        # broad ``rdmrecords`` alias cannot return published recids.
-        assert "is_published" in str(create_kwargs["extra_filter"].to_dict())
+        assert "rdmrecords-drafts" in search_cls.call_args.kwargs["index"]
+        search_obj.filter.assert_called_once()
 
         records_mock.update_draft.assert_called_once()
         records_mock.publish.assert_not_called()
@@ -592,134 +601,254 @@ class TestPruneStaleUserRecords:
 
 
 class TestUpdateUserFromRemoteDispatch:
-    """Did `update_user_from_remote` dispatch the rewrite task?"""
+    """When remote sync applies a profile, enqueue record rewrite only on rename.
 
-    def _patch_helpers(
-        self,
-        *,
-        old_kc: str | None,
-        new_kc: str | None,
-    ):
-        """Set up the helper mocks for one dispatch scenario.
-
-        Dispatch is now driven entirely by the sparse `user_changes`
-        diff returned by `calculate_user_changes`. When `new_kc` differs
-        from `old_kc`, the mocked diff carries
-        `user_profile.identifier_kc_username = new_kc` (mirroring what
-        `_diff_between_nested_dicts` would produce); otherwise the diff
-        is empty and no dispatch should fire. `update_local_user_data`
-        is stubbed to a no-op because it does not influence the
-        dispatch decision under the new logic.
-
-        Returns:
-            An `ExitStack` context manager holding the helper patches.
-        """
-        from contextlib import ExitStack
-
-        stack = ExitStack()
-        stack.enter_context(
-            patch(
-                "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-                "calculate_group_changes",
-                return_value={
-                    "added_groups": [],
-                    "dropped_groups": [],
-                    "unchanged_groups": [],
-                },
-            )
-        )
-
-        if new_kc and new_kc != old_kc:
-            user_changes = {
-                "user_profile": {"identifier_kc_username": new_kc},
-            }
-        else:
-            user_changes = {}
-
-        stack.enter_context(
-            patch(
-                "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-                "calculate_user_changes",
-                return_value=(user_changes, {}),
-            )
-        )
-        stack.enter_context(
-            patch(
-                "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-                "update_local_user_data",
-                return_value={"user": {}, "groups": []},
-            )
-        )
-        return stack
+    `update_user_from_remote` compares the local `identifier_kc_username` to
+    the username on the transformed remote profile (`new_data`). A change
+    queues `rewrite_records_for_kc_username_change`; an unchanged username
+    does not, even if other fields (e.g. email) update.
+    """
 
     def test_dispatches_task_when_username_changes(self, app, user_factory, db):
-        """Committed rename triggers `rewrite_records_for_kc_username_change.delay`."""
-        from invenio_access.permissions import system_identity
-
-        from invenio_remote_user_data_kcworks.proxies import (
-            current_remote_user_data_service,
-        )
-        from invenio_remote_user_data_kcworks.types.profiles_api import APIResponse
-        from tests.fixtures.idms import minimal_api_response, minimal_profile
-
+        """Remote username rename enqueues `rewrite_records_for_kc_username_change`."""
         fixture = user_factory(
             email="dispatched@example.org",
             kc_username="oldname",
             oauth_src="cilogon",
             oauth_id="sub-d",
         )
-
         remote_in: APIResponse = minimal_api_response(
-            "sub-d", profile=minimal_profile(username="newname")
+            "sub-d",
+            profile=minimal_profile(
+                username="newname",
+                email="dispatched@example.org",
+            ),
         )
 
-        with self._patch_helpers(old_kc="oldname", new_kc="newname"):
-            with patch(
-                "invenio_remote_user_data_kcworks.tasks."
-                "rewrite_records_for_kc_username_change.delay"
-            ) as delay_mock:
-                current_remote_user_data_service.update_user_from_remote(
-                    system_identity,
-                    fixture.user.id,
-                    "knowledgeCommons",
-                    "sub-d",
-                    remote_data=remote_in,
-                )
+        with patch(
+            "invenio_remote_user_data_kcworks.tasks."
+            "rewrite_records_for_kc_username_change.delay"
+        ) as delay_mock:
+            current_remote_user_data_service.update_user_from_remote(
+                system_identity,
+                fixture.user.id,
+                "knowledgeCommons",
+                "sub-d",
+                remote_data=remote_in,
+            )
 
         delay_mock.assert_called_once_with(fixture.user.id, "oldname", "newname")
 
     def test_no_dispatch_when_username_unchanged(self, app, user_factory, db):
-        """Email-only update: same kc_username → no task dispatched."""
-        from invenio_access.permissions import system_identity
-
-        from invenio_remote_user_data_kcworks.proxies import (
-            current_remote_user_data_service,
-        )
-        from invenio_remote_user_data_kcworks.types.profiles_api import APIResponse
-        from tests.fixtures.idms import minimal_api_response, minimal_profile
-
+        """Email-only remote update: same kc_username → no rewrite task."""
         fixture = user_factory(
             email="unchanged@example.org",
             kc_username="samename",
             oauth_src="cilogon",
             oauth_id="sub-u",
         )
-
         remote_in: APIResponse = minimal_api_response(
-            "sub-u", profile=minimal_profile(username="samename")
+            "sub-u",
+            profile=minimal_profile(
+                username="samename",
+                email="new-email@example.org",
+            ),
         )
 
-        with self._patch_helpers(old_kc="samename", new_kc="samename"):
-            with patch(
-                "invenio_remote_user_data_kcworks.tasks."
-                "rewrite_records_for_kc_username_change.delay"
-            ) as delay_mock:
-                current_remote_user_data_service.update_user_from_remote(
-                    system_identity,
-                    fixture.user.id,
-                    "knowledgeCommons",
-                    "sub-u",
-                    remote_data=remote_in,
-                )
+        with patch(
+            "invenio_remote_user_data_kcworks.tasks."
+            "rewrite_records_for_kc_username_change.delay"
+        ) as delay_mock:
+            current_remote_user_data_service.update_user_from_remote(
+                system_identity,
+                fixture.user.id,
+                "knowledgeCommons",
+                "sub-u",
+                remote_data=remote_in,
+            )
 
         delay_mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Task body (sync): real records / service persistence
+# ---------------------------------------------------------------------------
+
+
+def _creator_kc_usernames(record_dict: dict[str, Any]) -> list[str]:
+    """Return `kc_username` identifier values on `creators[0]`.
+
+    Returns:
+        Identifier strings for the first creator's `kc_username` scheme.
+    """
+    identifiers = record_dict["metadata"]["creators"][0]["person_or_org"]["identifiers"]
+    return [
+        ident["identifier"]
+        for ident in identifiers
+        if ident.get("scheme") == "kc_username"
+    ]
+
+
+def _seed_published_and_draft_with_kc_username(
+    *,
+    old_username: str,
+    title: str,
+    minimal_published_record_factory,
+    minimal_draft_record_factory,
+) -> tuple[str, str]:
+    """Create published + draft records citing `old_username`, refresh search.
+
+    Returns:
+        `(published_id, draft_id)`.
+    """
+    creator = {
+        "person_or_org": {
+            "family_name": "Doe",
+            "given_name": "Jane",
+            "name": "Doe, Jane",
+            "type": "personal",
+            "identifiers": [
+                {"scheme": "kc_username", "identifier": old_username},
+            ],
+        },
+    }
+    published = minimal_published_record_factory(
+        metadata_updates={"metadata|creators|0": creator},
+    )
+    draft = minimal_draft_record_factory(
+        metadata={
+            "pids": {},
+            "access": {"record": "public", "files": "public"},
+            "files": {"enabled": False},
+            "metadata": {
+                "creators": [creator],
+                "publication_date": "2020-06-01",
+                "publisher": "Acme Inc",
+                "resource_type": {"id": "image-photograph"},
+                "title": title,
+            },
+            "custom_fields": {},
+        },
+    )
+    current_search_client.indices.refresh(index="*rdmrecords*")
+    return published.id, draft.id
+
+
+def _assert_creators_rewritten(
+    *,
+    published_id: str,
+    draft_id: str,
+    new_username: str,
+    stats: dict[str, Any],
+) -> None:
+    """Assert RDM service reads show `new_username` on published + draft."""
+    published_after = current_rdm_records_service.read(
+        system_identity, published_id
+    ).to_dict()
+    draft_after = current_rdm_records_service.read_draft(
+        system_identity, draft_id
+    ).to_dict()
+
+    assert new_username in _creator_kc_usernames(published_after), (
+        f"published creators still {_creator_kc_usernames(published_after)!r}; "
+        f"stats={stats!r}"
+    )
+    assert new_username in _creator_kc_usernames(draft_after), (
+        f"draft creators still {_creator_kc_usernames(draft_after)!r}; "
+        f"stats={stats!r}"
+    )
+
+
+class TestRewriteRecordsTaskBody:
+    """Run `rewrite_records_for_kc_username_change` body against real records.
+
+    Isolates the Celery task from login/dispatch: call `.run()` so the body
+    executes in-process, then assert RDM service reads show the new username.
+    """
+
+    def test_run_rewrites_published_and_draft_creators(
+        self,
+        running_app,
+        db,
+        user_factory,
+        minimal_published_record_factory,
+        minimal_draft_record_factory,
+        search_clear,
+    ):
+        """Synchronous task body updates published + draft creator usernames."""
+        old_username = "taskbodyold"
+        new_username = "taskbodynew"
+
+        user = user_factory(
+            email="taskbody@example.org",
+            kc_username=old_username,
+            oauth_src="cilogon",
+            oauth_id="sub-task-body",
+        )
+        published_id, draft_id = _seed_published_and_draft_with_kc_username(
+            old_username=old_username,
+            title="Draft for task-body rewrite",
+            minimal_published_record_factory=minimal_published_record_factory,
+            minimal_draft_record_factory=minimal_draft_record_factory,
+        )
+
+        summary = rewrite_records_for_kc_username_change.run(
+            user.user.id,
+            old_username,
+            new_username,
+            prune_names=False,
+        )
+
+        assert summary["errors"] == 0
+        assert summary["records"]["published"]["updated"] >= 1
+        assert summary["records"]["drafts"]["updated"] >= 1
+
+        # Task nests app_context; drop outer identity-map so reads rehit the DB.
+        db.session.expire_all()
+
+        _assert_creators_rewritten(
+            published_id=published_id,
+            draft_id=draft_id,
+            new_username=new_username,
+            stats=summary["records"],
+        )
+
+
+class TestRewriteAllService:
+    """Call `RecordKcUsernameSyncService.rewrite_all` against real records.
+
+    Sister to `TestRewriteRecordsTaskBody`: same seed/asserts, no Celery task.
+    """
+
+    def test_rewrite_all_rewrites_published_and_draft_creators(
+        self,
+        running_app,
+        db,
+        minimal_published_record_factory,
+        minimal_draft_record_factory,
+        search_clear,
+    ):
+        """Direct `rewrite_all` updates published + draft creator usernames."""
+        old_username = "rewriteallold"
+        new_username = "rewriteallnew"
+
+        published_id, draft_id = _seed_published_and_draft_with_kc_username(
+            old_username=old_username,
+            title="Draft for rewrite_all",
+            minimal_published_record_factory=minimal_published_record_factory,
+            minimal_draft_record_factory=minimal_draft_record_factory,
+        )
+
+        stats = current_record_kc_username_sync_service.rewrite_all(
+            old_username, new_username
+        )
+
+        assert stats["errors"] == 0
+        assert stats["published"]["updated"] >= 1
+        assert stats["drafts"]["updated"] >= 1
+        _assert_creators_rewritten(
+            published_id=published_id,
+            draft_id=draft_id,
+            new_username=new_username,
+            stats=stats,
+        )

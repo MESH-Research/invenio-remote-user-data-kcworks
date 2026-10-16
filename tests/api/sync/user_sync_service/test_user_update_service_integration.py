@@ -183,34 +183,22 @@ def test_update_user_from_remote_delegates_kwargs_to_update_local(
     db,
 ):
     """Extra options are passed through to the local-user update step."""
-    myuser = user_factory(email="kw@example.org")
-    remote_in = minimal_api_response("sk", profile=minimal_profile())
-    group_delta = {
-        "added_groups": ["knowledgeCommons---1|member"],
-        "dropped_groups": [],
-        "unchanged_groups": [],
-    }
+    myuser = user_factory(email="kw@example.org", kc_username="myuser")
+    remote_in = minimal_api_response(
+        "sk",
+        profile=minimal_profile(username="myuser", email="kw@example.org"),
+    )
     with patch(
         "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-        "calculate_group_changes",
-        return_value=group_delta,
-    ):
-        with patch(
-            "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-            "calculate_user_changes",
-            return_value=({}, {}),
-        ):
-            with patch(
-                "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-                "update_local_user_data",
-                return_value={"user": {}, "groups": ["knowledgeCommons---1|member"]},
-            ) as update_mock:
-                user_data_service.update_user_from_remote(
-                    system_identity,
-                    myuser.id,
-                    "knowledgeCommons",
-                    "sk",
-                    remote_data=remote_in,
-                    dry_run=True,
-                )
+        "update_local_user_data",
+    ) as update_mock:
+        update_mock.return_value = {"user": {}, "groups": []}
+        user_data_service.update_user_from_remote(
+            system_identity,
+            myuser.id,
+            "knowledgeCommons",
+            "sk",
+            remote_data=remote_in,
+            dry_run=True,
+        )
     assert update_mock.call_args[1]["dry_run"] is True

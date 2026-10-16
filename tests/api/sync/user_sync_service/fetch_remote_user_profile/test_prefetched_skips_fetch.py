@@ -40,40 +40,25 @@ def test_update_user_from_remote_prefetched_skips_fetch(app, user_factory, db):
     UserIdentity.create(myuser.user, "knowledgeCommons", "sub-prefetch")
     remote_in = minimal_api_response(
         "sub-prefetch",
-        profile=minimal_profile(username="pref"),
+        profile=minimal_profile(
+            username="pref",
+            email="prefetch@example.org",
+        ),
     )
-    group_delta = {"added_groups": [], "dropped_groups": [], "unchanged_groups": []}
-    updated_payload = {"user": {"username": "x"}, "groups": ["g"]}
 
     with patch(
         "invenio_remote_user_data_kcworks.services.service.UserDataAPIClient."
         "fetch_user_profile",
     ) as fetch_mock:
-        with patch(
-            "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-            "calculate_group_changes",
-            return_value=group_delta,
-        ):
-            with patch(
-                "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-                "calculate_user_changes",
-                return_value=({}, {}),
-            ):
-                with patch(
-                    "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-                    "update_local_user_data",
-                    return_value=updated_payload,
-                ):
-                    out = user_data_service.update_user_from_remote(
-                        system_identity,
-                        myuser.id,
-                        "knowledgeCommons",
-                        "sub-prefetch",
-                        remote_data=remote_in,
-                    )
+        out = user_data_service.update_user_from_remote(
+            system_identity,
+            myuser.id,
+            "knowledgeCommons",
+            "sub-prefetch",
+            remote_data=remote_in,
+        )
 
     fetch_mock.assert_not_called()
-    assert out[0] is myuser.user
-    assert out[1] == updated_payload["user"]
-    assert out[2] == updated_payload["groups"]
-    assert out[3] == group_delta
+    assert out[0].id == myuser.user.id
+    assert out[0].username == "pref"
+    assert out[0].user_profile.get("identifier_kc_username") == "pref"

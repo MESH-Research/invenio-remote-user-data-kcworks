@@ -382,6 +382,13 @@ class RemoteUserDataService(Service):
         if old_kc_username and new_kc_username and old_kc_username != new_kc_username:
             from ..tasks import rewrite_records_for_kc_username_change
 
+            self.logger.info(
+                "enqueue rewrite_records_for_kc_username_change "
+                "user_id=%s old=%s new=%s",
+                user.id,
+                old_kc_username,
+                new_kc_username,
+            )
             rewrite_records_for_kc_username_change.delay(
                 user.id, old_kc_username, new_kc_username
             )

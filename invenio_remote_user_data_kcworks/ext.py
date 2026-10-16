@@ -13,6 +13,7 @@ import re
 from flask import Response, current_app, request
 from flask_login import current_user, user_logged_in, user_logged_out
 from invenio_accounts.models import User
+from invenio_db import db
 
 from . import config
 from .proxies import current_remote_user_data_service
@@ -45,6 +46,9 @@ def on_user_logged_in(_, user: User) -> None:
             if login_sync_is_due(user.id, update_interval):
                 record_login_sync_timestamp(user.id)
                 do_user_data_update.delay(user.id, send_status_callback=False)  # noqa
+                # Eager Celery nests the update on the shared test connection;
+                # release this context's savepoint before teardown rolls it back.
+                db.session.commit()
 
 
 class InvenioRemoteUserData:

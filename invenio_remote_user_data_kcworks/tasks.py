@@ -157,7 +157,11 @@ def with_update_task_lock(lock_id_resolver: Callable, key_suffix: str):
                         lock.acquire(lock_id)
                         try:
                             with lock:
-                                return func(*args, **kwargs)
+                                result = func(*args, **kwargs)
+                                # Release before app-context teardown rolls back
+                                # nested work from the shared eager/test connection.
+                                db.session.commit()
+                                return result
                         except UpdateLockNotHeld:
                             time.sleep(current_backoff)
                             attempt += 1
@@ -168,7 +172,9 @@ def with_update_task_lock(lock_id_resolver: Callable, key_suffix: str):
                         "status": "timeout",
                         "reason": "Max retries reached before lock could be acquired",
                     }
-                return func(*args, **kwargs)
+                result = func(*args, **kwargs)
+                db.session.commit()
+                return result
 
         return wrapper
 
@@ -662,6 +668,10 @@ def do_user_data_update(
             summary["user_field_payload_type"] = (
                 type(updated_data).__name__ if updated_data is not None else None
             )
+        # Release this task's nested savepoint before app-context teardown
+        # rolls it back (eager Celery nests tasks on the shared test
+        # connection; without this, child-task work is lost on remove()).
+        db.session.commit()
         encoded = json.dumps(summary, default=str)
         return json.loads(encoded)
 
@@ -1299,6 +1309,14 @@ def rewrite_records_for_kc_username_change(
             "pruned_names_pids": [],
             "errors": 0,
         }
+        app.logger.info(
+            "rewrite_records_for_kc_username_change: start user_id=%s "
+            "old=%s new=%s prune_names=%s",
+            user_id,
+            old_kc_username,
+            new_kc_username,
+            prune_names,
+        )
 
         if (
             not old_kc_username
@@ -1316,6 +1334,12 @@ def rewrite_records_for_kc_username_change(
         try:
             summary["records"] = current_record_kc_username_sync_service.rewrite_all(
                 old_kc_username, new_kc_username
+            )
+            app.logger.info(
+                "rewrite_records_for_kc_username_change: records done "
+                "user_id=%s stats=%s",
+                user_id,
+                summary["records"],
             )
         except Exception:  # noqa: BLE001 - logged, never propagated
             summary["errors"] += 1

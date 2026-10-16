@@ -84,31 +84,12 @@ def test_update_user_from_remote_fetch_urls_match_client(
     )
     requests_mock.get(_members_url(base, "kc_u"), json=profile_body)
 
-    with patch(
-        "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-        "calculate_group_changes",
-        return_value={
-            "added_groups": [],
-            "dropped_groups": [],
-            "unchanged_groups": [],
-        },
-    ):
-        with patch(
-            "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-            "calculate_user_changes",
-            return_value=({}, {}),
-        ):
-            with patch(
-                "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-                "update_local_user_data",
-                return_value={"user": {}, "groups": []},
-            ):
-                user_data_service.update_user_from_remote(
-                    system_identity,
-                    myuser.id,
-                    "knowledgeCommons",
-                    "sub-url",
-                )
+    user_data_service.update_user_from_remote(
+        system_identity,
+        myuser.id,
+        "knowledgeCommons",
+        "sub-url",
+    )
 
     history = [r.url for r in requests_mock.request_history]
     assert history == [
@@ -125,11 +106,12 @@ def test_update_user_from_remote_fallback_fetch_by_username(app, user_factory, d
         oauth_id="sub-fb",
         kc_username="kc_fb_user",
     )
-    profile = minimal_profile(username="kc_fb_user")
+    profile = minimal_profile(
+        username="kc_fb_user",
+        email="fallback@example.org",
+    )
     empty = empty_api_response()
     fetch_mock = MagicMock(side_effect=[empty, profile])
-    group_delta = {"added_groups": [], "dropped_groups": [], "unchanged_groups": []}
-    updated_payload = {"user": {}, "groups": []}
 
     with patch(
         "invenio_remote_user_data_kcworks.services.service.UserDataAPIClient."
@@ -138,25 +120,15 @@ def test_update_user_from_remote_fallback_fetch_by_username(app, user_factory, d
     ):
         with patch(
             "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-            "calculate_group_changes",
-            return_value=group_delta,
-        ):
-            with patch(
-                "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-                "calculate_user_changes",
-                return_value=({}, {}),
-            ):
-                with patch(
-                    "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-                    "update_local_user_data",
-                    return_value=updated_payload,
-                ) as update_mock:
-                    user_data_service.update_user_from_remote(
-                        system_identity,
-                        myuser.id,
-                        "knowledgeCommons",
-                        "sub-fb",
-                    )
+            "update_local_user_data",
+        ) as update_mock:
+            update_mock.return_value = {"user": {}, "groups": []}
+            user_data_service.update_user_from_remote(
+                system_identity,
+                myuser.id,
+                "knowledgeCommons",
+                "sub-fb",
+            )
 
     assert fetch_mock.call_count == 2
     assert fetch_mock.call_args_list[0].kwargs.get("sub_id") == "sub-fb"
@@ -170,29 +142,27 @@ def test_update_user_from_remote_fallback_fetch_by_username(app, user_factory, d
 
 def test_update_user_from_remote_remote_service_pass_through_idp(app, user_factory, db):
     """Unknown IdP name is kept as the remote service key."""
-    myuser = user_factory(email="rawidp@example.org")
-    remote_in = minimal_api_response("x", profile=minimal_profile())
-    group_delta = {"added_groups": [], "dropped_groups": [], "unchanged_groups": []}
+    myuser = user_factory(
+        email="rawidp@example.org",
+        kc_username="myuser",
+    )
+    remote_in = minimal_api_response(
+        "x",
+        profile=minimal_profile(
+            username="myuser",
+            email="rawidp@example.org",
+        ),
+    )
     with patch(
         "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-        "calculate_group_changes",
-        return_value=group_delta,
-    ):
-        with patch(
-            "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-            "calculate_user_changes",
-            return_value=({}, {}),
-        ):
-            with patch(
-                "invenio_remote_user_data_kcworks.services.service.CILogonHelpers."
-                "update_local_user_data",
-                return_value={"user": {}, "groups": []},
-            ) as update_mock:
-                user_data_service.update_user_from_remote(
-                    system_identity,
-                    myuser.id,
-                    "standalone-idp",
-                    "remote-x",
-                    remote_data=remote_in,
-                )
+        "update_local_user_data",
+    ) as update_mock:
+        update_mock.return_value = {"user": {}, "groups": []}
+        user_data_service.update_user_from_remote(
+            system_identity,
+            myuser.id,
+            "standalone-idp",
+            "remote-x",
+            remote_data=remote_in,
+        )
     assert update_mock.call_args[0][4] == "standalone-idp"

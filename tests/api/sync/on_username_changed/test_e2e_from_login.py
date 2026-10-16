@@ -9,22 +9,20 @@
 Trigger is `login_user` (owned by `on_user_login/`); this file owns the
 rename fan-out assertions.
 
-Covers:
+Chain: `login_user` → `do_user_data_update` → rename →
+`rewrite_records_for_kc_username_change` → published + draft creators.
 
-- Published personal creator `kc_username` rewritten (republished).
-- Draft personal creator `kc_username` patched in place.
-
-Unit / service coverage of rewrite helpers:
-`test_kc_username_propagation.py`.
+Forces Celery eager so the rewrite runs in-process. Narrower coverage of
+rewrite helpers / task body: `test_kc_username_propagation.py`.
 """
-
-import time
 
 from flask_login import login_user
 from invenio_access.permissions import system_identity
 from invenio_accounts.proxies import current_accounts
+from invenio_app.celery import celery as invenio_celery
 from invenio_rdm_records.proxies import current_rdm_records_service
 from invenio_search.proxies import current_search_client
+from invenio_search.utils import prefix_index
 
 from tests.fixtures.users import user_data_set
 
@@ -39,6 +37,24 @@ def _creator_kc_usernames(record_dict: dict) -> list[str]:
     ]
 
 
+def _os_creator_kc_usernames(record_id: str, *, drafts: bool = False) -> list[str]:
+    """Return creators[0] kc_username values from the OpenSearch document."""
+    index_alias = prefix_index(
+        "rdmrecords-drafts" if drafts else "rdmrecords-records"
+    )
+    result = current_search_client.search(
+        index=index_alias,
+        body={
+            "size": 1,
+            "query": {"term": {"id": record_id}},
+        },
+    )
+    hits = result.get("hits", {}).get("hits", [])
+    if not hits:
+        return []
+    return _creator_kc_usernames(hits[0].get("_source", {}))
+
+
 def test_login_sync_rename_rewrites_published_and_draft_creators(
     running_app,
     db,
@@ -46,10 +62,13 @@ def test_login_sync_rename_rewrites_published_and_draft_creators(
     minimal_published_record_factory,
     minimal_draft_record_factory,
     search_clear,
-    celery_worker,
     mock_send_remote_api_update_fixture,
 ):
     """Login sync that changes kc_username rewrites published + draft creators."""
+    running_app.app.config["CELERY_TASK_ALWAYS_EAGER"] = True
+    invenio_celery.conf.task_always_eager = True
+    invenio_celery.conf.task_eager_propagates = True
+
     new_data_payload = user_data_set["user1"]
     new_kc_username = new_data_payload["kc_username"]
 
@@ -98,35 +117,33 @@ def test_login_sync_rename_rewrites_published_and_draft_creators(
 
     login_user(u.user)
 
-    # Login sync is ``do_user_data_update.delay`` then nested
-    # ``rewrite_records_for_kc_username_change.delay`` (suite is non-eager).
-    deadline = time.time() + 30
-    published_identifiers: list[str] = []
-    draft_identifiers: list[str] = []
-    while time.time() < deadline:
-        db.session.expire_all()
-        refreshed = current_accounts.datastore.get_user_by_id(user_id)
-        if refreshed is not None and refreshed.username == new_kc_username:
-            current_search_client.indices.refresh(index="*rdmrecords*")
-            published_after = current_rdm_records_service.read(
-                system_identity, published_record_id
-            ).to_dict()
-            draft_after = current_rdm_records_service.read_draft(
-                system_identity, draft_record_id
-            ).to_dict()
-            published_identifiers = _creator_kc_usernames(published_after)
-            draft_identifiers = _creator_kc_usernames(draft_after)
-            if (
-                new_kc_username in published_identifiers
-                and new_kc_username in draft_identifiers
-            ):
-                break
-        time.sleep(0.25)
-    else:
-        raise AssertionError(
-            "Timed out waiting for login sync rename rewrite; "
-            f"published={published_identifiers!r} draft={draft_identifiers!r}"
-        )
+    # Nested eager task commits release into this session's connection; expire
+    # so the outer identity map does not keep the pre-login User row.
+    db.session.expire_all()
+
+    refreshed = current_accounts.datastore.get_user_by_id(user_id)
+    assert refreshed.username == new_kc_username
+
+    current_search_client.indices.refresh(index="*rdmrecords*")
+    os_published_identifiers = _os_creator_kc_usernames(
+        published_record_id, drafts=False
+    )
+    os_draft_identifiers = _os_creator_kc_usernames(draft_record_id, drafts=True)
+    assert new_kc_username in os_published_identifiers, (
+        f"OpenSearch published creators still {os_published_identifiers!r}"
+    )
+    assert new_kc_username in os_draft_identifiers, (
+        f"OpenSearch draft creators still {os_draft_identifiers!r}"
+    )
+
+    published_after = current_rdm_records_service.read(
+        system_identity, published_record_id
+    ).to_dict()
+    draft_after = current_rdm_records_service.read_draft(
+        system_identity, draft_record_id
+    ).to_dict()
+    published_identifiers = _creator_kc_usernames(published_after)
+    draft_identifiers = _creator_kc_usernames(draft_after)
 
     assert new_kc_username in published_identifiers
     assert new_kc_username in draft_identifiers

@@ -215,7 +215,9 @@ def test_calculate_group_changes_fixture_driven(
         }),
         myuser,
     )
-    assert actual_group_changes == group_changes
+    # Membership sets matter; list order follows user.roles / ORM and is unstable.
+    for key in ("added_groups", "dropped_groups", "unchanged_groups"):
+        assert set(actual_group_changes[key]) == set(group_changes[key])
 
 
 def test_update_group_memberships_helper(app, user_factory, db):

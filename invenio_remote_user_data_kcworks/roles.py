@@ -27,12 +27,16 @@ from invenio_access.models import ActionRoles
 from invenio_accounts.proxies import current_accounts
 from invenio_db import db
 from sqlalchemy import inspect
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.exc import StaleDataError
 
 from invenio_remote_user_data_kcworks.permissions import (
     groups_sync_action,
     users_logout_action,
     users_sync_action,
 )
+
+SERVICE_ROLE_CHECK_RETRIES = 5
 
 
 def _accounts_tables_ready() -> bool:
@@ -105,7 +109,8 @@ def ensure_service_capability_roles() -> list[str]:
     """Create capability roles and bind each to its access action.
 
     Idempotent. Looks up each role first; creates and commits only when the
-    role or its action binding is missing.
+    role or its action binding is missing. Retries on concurrent create/bind
+    races from peer app instances.
 
     Returns:
         Role names that were ensured (created or already present).
@@ -113,20 +118,57 @@ def ensure_service_capability_roles() -> list[str]:
     datastore = current_accounts.datastore
     ensured: list[str] = []
 
-    for capability in SERVICE_CAPABILITIES:
-        role = datastore.find_role(capability.role_name)
-        if role is None:
-            role = datastore.create_role(name=capability.role_name)
-            datastore.commit()
-
+    def _try_actionrole_write(role, capability):
         already_bound = any(
             row.role_id == role.id
             for row in ActionRoles.query_by_action(capability.action).all()
         )
         if not already_bound:
-            db.session.add(ActionRoles.create(action=capability.action, role=role))
-            db.session.commit()
+            db.session.add(
+                ActionRoles.create(action=capability.action, role_id=role.id)
+            )
+            try:
+                db.session.commit()
+                return True
+            except (IntegrityError, StaleDataError):
+                db.session.rollback()
+                return False
+        return True
 
+    def _try_role_check(capability):
+        role = datastore.find_role(capability.role_name)
+        if role is None:
+            role = datastore.create_role(name=capability.role_name)
+            try:
+                datastore.commit()
+            except (IntegrityError, StaleDataError):
+                db.session.rollback()
+                return None
+        return role
+
+    for capability in SERVICE_CAPABILITIES:
+        # Peer app instances race to create the role and/or action link
+        role = None
+        for _ in range(SERVICE_ROLE_CHECK_RETRIES):
+            role = _try_role_check(capability)
+            if role:
+                break
+        if not role:
+            raise RuntimeError(
+                "invenio_remote_user_data_kcworks could not ensure role "
+                f"exists for role {capability.role_name}"
+            )
+
+        action_bound = False
+        for _ in range(SERVICE_ROLE_CHECK_RETRIES):
+            action_bound = _try_actionrole_write(role, capability)
+            if action_bound:
+                break
+        if not action_bound:
+            raise RuntimeError(
+                "invenio_remote_user_data_kcworks could not ensure action role "
+                f"exists for role {role.id}, action {capability.action}"
+            )
         ensured.append(capability.role_name)
 
     return ensured
@@ -150,32 +192,39 @@ def ensure_service_accounts() -> list[dict[str, Any]]:
 
     Users are active (required for static-token / OAuth API auth), confirmed,
     and created without a password so they cannot use local login. Idempotent.
+    Retries on concurrent create/assign races from peer app instances.
 
     Returns:
         One dict per account with `username`, `user_id`, `created`, and
         `roles_added`.
 
     Raises:
-        RuntimeError: If a required capability role has not been created yet.
+        RuntimeError: If a required capability role is missing, or if the
+            user / role assignments cannot be ensured after retries.
     """
     datastore = current_accounts.datastore
     results: list[dict[str, Any]] = []
 
-    for spec in SERVICE_ACCOUNTS:
+    def _try_user_check(spec: ServiceAccountSpec) -> tuple[Any, bool] | None:
         user = _find_service_user(spec.username, spec.email)
-        created = False
-        if user is None:
-            user = datastore.create_user(
-                email=spec.email,
-                username=spec.username,
-                password=None,
-                active=True,
-                confirmed_at=datetime.now(UTC),
-                user_profile={"full_name": spec.description},
-            )
+        if user is not None:
+            return user, False
+        user = datastore.create_user(
+            email=spec.email,
+            username=spec.username,
+            password=None,
+            active=True,
+            confirmed_at=datetime.now(UTC),
+            user_profile={"full_name": spec.description},
+        )
+        try:
             datastore.commit()
-            created = True
+            return user, True
+        except (IntegrityError, StaleDataError):
+            db.session.rollback()
+            return None
 
+    def _try_role_assign(user: Any, spec: ServiceAccountSpec) -> list[str] | None:
         roles_added: list[str] = []
         existing_role_names = {role.name for role in (user.roles or [])}
         for role_name in spec.role_names:
@@ -189,8 +238,44 @@ def ensure_service_accounts() -> list[dict[str, Any]]:
                 )
             datastore.add_role_to_user(user, role)
             roles_added.append(role_name)
-        if roles_added:
+        if not roles_added:
+            return []
+        try:
             datastore.commit()
+            return roles_added
+        except (IntegrityError, StaleDataError):
+            db.session.rollback()
+            return None
+
+    for spec in SERVICE_ACCOUNTS:
+        # Peer app instances race to create the user and/or assign roles
+        user = None
+        created = False
+        for _ in range(SERVICE_ROLE_CHECK_RETRIES):
+            got = _try_user_check(spec)
+            if got is not None:
+                user, created = got
+                break
+        if user is None:
+            raise RuntimeError(
+                "invenio_remote_user_data_kcworks could not ensure service "
+                f"account exists for {spec.username!r}"
+            )
+
+        roles_added: list[str] | None = None
+        for _ in range(SERVICE_ROLE_CHECK_RETRIES):
+            # Re-load so we don't keep a stale User after a failed assign commit.
+            user = _find_service_user(spec.username, spec.email)
+            if user is None:
+                break
+            roles_added = _try_role_assign(user, spec)
+            if roles_added is not None:
+                break
+        if user is None or roles_added is None:
+            raise RuntimeError(
+                "invenio_remote_user_data_kcworks could not ensure role "
+                f"assignments for service account {spec.username!r}"
+            )
 
         results.append({
             "username": spec.username,

@@ -10,7 +10,6 @@
 
 import os
 from collections.abc import Mapping
-from pprint import pformat
 from typing import Any
 
 import requests
@@ -523,7 +522,12 @@ class RemoteUserDataService(Service):
             f" remote_id: {remote_id}."
         )
         if remote_data:
-            self.logger.debug(f"Using pre-fetched remote data: {pformat(remote_data)}")
+            keys = (
+                sorted(str(k) for k in remote_data.keys())
+                if isinstance(remote_data, Mapping)
+                else type(remote_data).__name__
+            )
+            self.logger.debug("Using pre-fetched remote data (keys=%s)", keys)
 
         remote_service = idp
         if idp in self.config.kc_remote_idps:

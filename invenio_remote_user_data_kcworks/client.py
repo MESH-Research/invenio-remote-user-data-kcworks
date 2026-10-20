@@ -17,6 +17,7 @@ from flask import request
 
 from .config import UserDataEvent, UserDataStatus
 from .types.profiles_api import APIResponse, LogoutRequest, Profile
+from .utils.log_redact import safe_body_snippet
 
 
 class SessionBrokerAPIClient:
@@ -326,7 +327,9 @@ class UserDataAPIClient:
                     assert resp_json["data"]["user_agent"] == user_agent
                     assert "successful" in resp_json["message"]
                     app.logger.debug(
-                        f"DEBUG: received successful response: {resp_json}"
+                        "Profiles logout API success for user %r (HTTP %s)",
+                        user_name,
+                        response.status_code,
                     )
                     return True
 
@@ -335,14 +338,15 @@ class UserDataAPIClient:
                         "Profiles logout API returned unexpected "
                         "response logging out user %r: %s",
                         user_name,
-                        response.text[:400],
+                        safe_body_snippet(response.text, max_len=200),
                     )
                     return False
 
             else:
                 app.logger.error(
-                    f"Profiles logout API returned HTTP {response.status_code}: "
-                    f"{response.text[:400]}"
+                    "Profiles logout API returned HTTP %s: %s",
+                    response.status_code,
+                    safe_body_snippet(response.text, max_len=200),
                 )
                 return False
 
@@ -498,7 +502,7 @@ class UserDataAPIClient:
                     resp.status_code,
                     attempt,
                     *error_args,
-                    resp.text[:200],
+                    safe_body_snippet(resp.text, max_len=200),
                 )
             except (requests.RequestException, requests.Timeout) as exc:
                 last_exc = exc

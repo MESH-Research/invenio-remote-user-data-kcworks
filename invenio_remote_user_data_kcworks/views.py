@@ -595,6 +595,21 @@ class RemoteUserDataUpdateWebhook(MethodView):
             if len(events) > 0:
                 _enqueue_update_tasks(events)
             else:
+                updates_summary = {
+                    bucket: {
+                        "count": len(items),
+                        "triples": [
+                            (
+                                bucket,
+                                str(it.get("event")),
+                                str(it.get("id")),
+                            )
+                            for it in items
+                        ],
+                    }
+                    for bucket, items in (data.get("updates") or {}).items()
+                    if isinstance(items, list)
+                }
                 if (
                     (not users and bad_users)
                     or (not groups and bad_groups)
@@ -612,40 +627,27 @@ class RemoteUserDataUpdateWebhook(MethodView):
                             entity_string += " and "
                         entity_string += "associations"
                     self.logger.info(
-                        "%s requested updates for %s that do not exist",
+                        "%s requested updates for %s that do not exist; summary=%s",
                         raw_idp,
                         entity_string,
+                        updates_summary,
                     )
-                    self.logger.info(data["updates"])
                     raise NotFound(
                         "Updates attempted for unknown users, groups, or associations"
                     )
                 elif not groups and bad_groups:
                     self.logger.info(
-                        f"{raw_idp} requested updates for groups that do not exist"
+                        "%s requested updates for groups that do not exist; "
+                        "summary=%s",
+                        raw_idp,
+                        updates_summary,
                     )
-                    self.logger.info(data["updates"])
                     raise NotFound("Updates attempted for unknown groups")
                 else:
-                    summary = {
-                        bucket: {
-                            "count": len(items),
-                            "triples": [
-                                (
-                                    bucket,
-                                    str(it.get("event")),
-                                    str(it.get("id")),
-                                )
-                                for it in items
-                            ],
-                        }
-                        for bucket, items in (data.get("updates") or {}).items()
-                        if isinstance(items, list)
-                    }
                     self.logger.warning(
                         "%s no valid events received; summary=%s",
                         raw_idp,
-                        summary,
+                        updates_summary,
                     )
                     raise BadRequest("No valid events received")
 
@@ -657,13 +659,10 @@ class RemoteUserDataUpdateWebhook(MethodView):
                 raise BadRequest
         except KeyError:  # request is missing 'idp' or 'updates' keys
             raw_body = request.data or b""
-            excerpt = raw_body[:400]
             self.logger.error(
-                "Received malformed signal (Content-Type=%r, Content-Length=%d): %r%s",
+                "Received malformed signal (Content-Type=%r, Content-Length=%d)",
                 request.content_type,
                 len(raw_body),
-                excerpt,
-                "..." if len(raw_body) > len(excerpt) else "",
             )
             raise BadRequest(
                 "Received malformed signal. Missing 'idp' or 'updates' keys."

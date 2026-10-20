@@ -11,7 +11,6 @@ import datetime
 import json
 import os
 from collections.abc import Iterable, Mapping
-from pprint import pformat
 from typing import Any, cast
 from urllib.parse import urlencode, urlparse, urlunparse
 
@@ -219,13 +218,17 @@ class CILogonHelpers:
                 f"Multiple users found with KC username {account_info.kc_username}"
             )
 
-        # Try email lookup
-        app.logger.debug(pformat(account_info.model_dump()))
+        # Try email lookup (do not log full AccountInfo / email — PII)
+        app.logger.debug(
+            "Trying email lookup for account_info external_id=%r "
+            "kc_username=%r has_email=%s",
+            account_info.external_id,
+            account_info.kc_username,
+            bool(account_info.email),
+        )
         user = CILogonHelpers._try_get_user_by_email(account_info.email)
         if isinstance(user, User):
-            app.logger.debug("User found by email")
-            app.logger.debug(user.id)
-            app.logger.debug(user.email)
+            app.logger.debug("User found by email (user_id=%s)", user.id)
             return user
 
         app.logger.debug("No user found for account info.")

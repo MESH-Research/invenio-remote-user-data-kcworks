@@ -226,7 +226,7 @@ def test_update_group_memberships_helper(app, user_factory, db):
         "dropped_groups": ["cool-group"],
         "added_groups": ["awesome-mock"],
     }
-    expected_updated_memberships = ["admin", "awesome-mock"]
+    expected_updated_memberships = {"admin", "awesome-mock"}
     myuser = user_factory().user
 
     grouper = GroupRolesService(user_data_service)
@@ -239,8 +239,9 @@ def test_update_group_memberships_helper(app, user_factory, db):
         myuser, test_changed_memberships
     )
 
-    assert actual_updated_memberships == expected_updated_memberships
-    assert [r.name for r in myuser.roles] == ["admin", "awesome-mock"]
+    # Role membership is unordered; compare as sets.
+    assert set(actual_updated_memberships) == expected_updated_memberships
+    assert {r.name for r in myuser.roles} == expected_updated_memberships
     my_identity = get_identity_for_user(myuser.email)
     assert all(
         n.value

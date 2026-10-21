@@ -25,6 +25,7 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
+  "setuptools>=83.0.0",
   "celery",
   "click",
   "deepdiff>=9.1",
@@ -38,12 +39,7 @@ dependencies = [
   "pydantic",
   "standard-pkg-resources",            # pkg_resources required by fs (transitive) at runtime
 ]
-optional-dependencies.dev = [
-  "bump-my-version==1.5.1",
-  "check-manifest",
-  "pip-tools",
-  "pipenv",
-]
+optional-dependencies.dev = ["bump-my-version==1.5.1", "check-manifest"]
 optional-dependencies.tests = [
   "coverage",
   "pytest>=7.3.2",

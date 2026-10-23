@@ -73,7 +73,6 @@ def test_update_group_from_remote_changes_visibility_with_public_record(
             "kcr:commons_group_description": "",
             "kcr:commons_group_visibility": "public",
         },
-        mock_search_api=False,
     )
 
     record = minimal_published_record_factory(

@@ -19,7 +19,6 @@ rewrite helpers / task body: `test_kc_username_propagation.py`.
 from flask_login import login_user
 from invenio_access.permissions import system_identity
 from invenio_accounts.proxies import current_accounts
-from invenio_app.celery import celery as invenio_celery
 from invenio_rdm_records.proxies import current_rdm_records_service
 from invenio_search.proxies import current_search_client
 from invenio_search.utils import prefix_index

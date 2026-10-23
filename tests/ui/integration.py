@@ -20,7 +20,14 @@ from tests.fixtures.idms import IDMS_SUBS_RESPONSE_SUB
 
 
 def test_return_handler_existing_user(
-    running_app, db, client, user_factory, requests_mock, monkeypatch, search_clear
+    running_app,
+    db,
+    client,
+    user_factory,
+    requests_mock,
+    monkeypatch,
+    search_clear,
+    enable_celery_eager,
 ):
     """Test that the sso return handler behaves correctly.
 

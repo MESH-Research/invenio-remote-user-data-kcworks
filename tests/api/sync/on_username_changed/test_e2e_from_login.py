@@ -39,9 +39,7 @@ def _creator_kc_usernames(record_dict: dict) -> list[str]:
 
 def _os_creator_kc_usernames(record_id: str, *, drafts: bool = False) -> list[str]:
     """Return creators[0] kc_username values from the OpenSearch document."""
-    index_alias = prefix_index(
-        "rdmrecords-drafts" if drafts else "rdmrecords-records"
-    )
+    index_alias = prefix_index("rdmrecords-drafts" if drafts else "rdmrecords-records")
     result = current_search_client.search(
         index=index_alias,
         body={
@@ -63,12 +61,9 @@ def test_login_sync_rename_rewrites_published_and_draft_creators(
     minimal_draft_record_factory,
     search_clear,
     mock_send_remote_api_update_fixture,
+    enable_celery_eager,
 ):
     """Login sync that changes kc_username rewrites published + draft creators."""
-    running_app.app.config["CELERY_TASK_ALWAYS_EAGER"] = True
-    invenio_celery.conf.task_always_eager = True
-    invenio_celery.conf.task_eager_propagates = True
-
     new_data_payload = user_data_set["user1"]
     new_kc_username = new_data_payload["kc_username"]
 

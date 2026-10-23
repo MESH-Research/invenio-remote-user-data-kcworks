@@ -190,7 +190,10 @@ ini_options.isort_show_files = true
 ini_options.plugins = [
   "celery.contrib.pytest",
   # "tests.fixtures.caching",  # depends on invenio-stats-dashboard
+  "tests.fixtures.app",
+  "tests.fixtures.app_config",
   "tests.fixtures.bootstrap",
+  "tests.fixtures.celery",
   "tests.fixtures.cli",
   "tests.fixtures.communities",
   "tests.fixtures.community_events",
@@ -200,6 +203,7 @@ ini_options.plugins = [
   "tests.fixtures.frontend",
   "tests.fixtures.identifiers",
   "tests.fixtures.idms",
+  "tests.fixtures.indexer_queues",
   "tests.fixtures.logging",
   "tests.fixtures.mail",
   "tests.fixtures.names",

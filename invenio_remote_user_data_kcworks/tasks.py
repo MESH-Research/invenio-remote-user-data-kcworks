@@ -447,6 +447,7 @@ def _handle_profiles_api_failure(
     bind=True,
     ignore_result=True,
     max_retries=5,
+    resultrepr_maxsize=0,
 )
 @with_update_task_lock(
     lock_id_resolver=lambda self, user_id, *args, **kwargs: int(user_id),
@@ -707,7 +708,7 @@ def _enqueue_user_data_update(
         do_user_data_update.delay(user_id, idp, remote_id, **update_kwargs)
 
 
-@shared_task(ignore_result=True)
+@shared_task(ignore_result=True, resultrepr_maxsize=0)
 @with_update_task_lock(
     lock_id_resolver=lambda user_id, *args, **kwargs: int(user_id),
     key_suffix=USER_DATA_UPDATE_LOCK_SUFFIX,
@@ -885,7 +886,7 @@ def do_group_data_update(idp, remote_id, **kwargs):
         return True
 
 
-@shared_task(ignore_result=False)
+@shared_task(ignore_result=False, resultrepr_maxsize=0)
 def do_find_names_duplicates(
     limit: int | None = None,
     since: datetime | None = None,
@@ -1377,7 +1378,7 @@ def rewrite_records_for_kc_username_change(
         return summary
 
 
-@shared_task(ignore_result=True)
+@shared_task(ignore_result=True, resultrepr_maxsize=0)
 def sync_user_to_names(user_id: int, dry_run: bool = False) -> dict | None:
     """Mirror a single local user into the Names vocabulary.
 

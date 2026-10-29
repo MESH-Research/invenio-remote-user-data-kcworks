@@ -16,7 +16,18 @@ import time
 from unittest.mock import MagicMock
 from urllib.parse import urlencode
 
-from flask import url_for
+from flask import request, url_for
+
+
+def _test_client_url(app, path: str) -> str:
+    """Absolute URL the Flask test client uses for ``path``.
+
+    Silent SSO passes ``request.url`` as ``final_redirect`` (see
+    ``ext.py``), which follows the WSGI/test-client scheme (``http``),
+    not ``SITE_UI_URL``. Assert against that, not the canonical UI base.
+    """
+    with app.test_request_context(path):
+        return request.url
 
 
 def test_sso_login_success(base_app, client, requests_mock):
@@ -28,7 +39,7 @@ def test_sso_login_success(base_app, client, requests_mock):
     - check that sso session check is made (Profiles url is called)
     """
     sso_check_url = base_app.config.get("SSO_BROKER_SILENT_LOGIN_URL")
-    expected_final_redirect = base_app.config["SITE_UI_URL"] + "/search"
+    expected_final_redirect = _test_client_url(base_app, "/search")
     expected_return_to = url_for(
         "invenio_remote_user_data_kcworks_sso.broker_callback",
         _external=True,
@@ -54,14 +65,14 @@ def test_sso_pass_with_cookie(base_app_with_templates, client):
     - check that sso session check is made (Profiles url is called)
     """
     base_app = base_app_with_templates
-    expected_final_redirect = base_app.config["SITE_UI_URL"] + "/search"
+    expected_request_url = _test_client_url(base_app, "/search")
     cookie_name = base_app.config["SSO_BROKER_RETRY_COOKIE_NAME"]
     cookie_val = str(int(time.time()))
     client.set_cookie(cookie_name, cookie_val)
 
     response = client.get("/search")
 
-    assert response.request.url == expected_final_redirect
+    assert response.request.url == expected_request_url
 
     # cookie is not re-set
     set_cookie = response.headers.getlist("Set-Cookie")
@@ -94,7 +105,7 @@ def test_sso_check_pass_logged_in(base_app_with_templates, client, monkeypatch):
     user.is_anonymous = False
     user.get_id.return_value = "1"
 
-    expected_final_redirect = base_app.config["SITE_UI_URL"] + "/search"
+    expected_request_url = _test_client_url(base_app, "/search")
 
     ds = client.application.extensions["security"].datastore
     monkeypatch.setattr(
@@ -106,7 +117,7 @@ def test_sso_check_pass_logged_in(base_app_with_templates, client, monkeypatch):
         session["_fresh"] = True
 
     response = client.get("/search")
-    assert response.request.url == expected_final_redirect
+    assert response.request.url == expected_request_url
     assert not client.get_cookie(base_app.config["SSO_BROKER_RETRY_COOKIE_NAME"])
     assert response.status_code == 200
 

@@ -20,11 +20,14 @@ from flask import request, url_for
 
 
 def _test_client_url(app, path: str) -> str:
-    """Absolute URL the Flask test client uses for ``path``.
+    """Absolute URL the Flask test client uses for `path`.
 
-    Silent SSO passes ``request.url`` as ``final_redirect`` (see
-    ``ext.py``), which follows the WSGI/test-client scheme (``http``),
-    not ``SITE_UI_URL``. Assert against that, not the canonical UI base.
+    Silent SSO passes `request.url` as `final_redirect` (see
+    `ext.py`), which follows the WSGI/test-client scheme (`http`),
+    not `SITE_UI_URL`. Assert against that, not the canonical UI base.
+
+    Returns:
+        String URL of the test client.
     """
     with app.test_request_context(path):
         return request.url

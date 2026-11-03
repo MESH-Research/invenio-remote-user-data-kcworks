@@ -145,15 +145,11 @@ class GroupRolesService:
 
         Returns:
             `True` when the user was added successfully.
-
-        Raises:
-            RuntimeError: If the user could not be added to the role.
         """
-        app.logger.debug(f"got group name {group_name}")
         user_added = current_accounts.datastore.add_role_to_user(user, group_name)
         current_accounts.datastore.commit()
         if user_added is False:
-            raise RuntimeError("Cannot add user to group role.")
+            app.logger.debug(f"User was already a member of group {group_name}.")
         else:
             user_str = user.email if isinstance(user, User) else user
             app.logger.info(

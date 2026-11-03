@@ -25,7 +25,7 @@ class RemoteUserDataServiceConfig(ServiceConfig, ConfiguratorMixin):
     service_id = "remote-user-data-service"
     endpoints_config = FromConfig("REMOTE_USER_DATA_API_ENDPOINTS")
     update_interval = FromConfig("REMOTE_USER_DATA_UPDATE_INTERVAL")
-    api_timeout = FromConfig("REMOTE_USER_DATA_API_TIMEOUT", 5)
+    api_timeout = FromConfig("REMOTE_USER_DATA_API_TIMEOUT", 15)
     kc_remote_idps = FromConfig("KC_REMOTE_IDPS")
 
 
@@ -39,5 +39,5 @@ class RemoteGroupDataServiceConfig(ServiceConfig, ConfiguratorMixin):
     service_id = "remote-group-data-service"
     endpoints_config = FromConfig("REMOTE_USER_DATA_API_ENDPOINTS")
     update_interval = FromConfig("REMOTE_USER_DATA_UPDATE_INTERVAL")
-    api_timeout = FromConfig("REMOTE_USER_DATA_API_TIMEOUT", 5)
+    api_timeout = FromConfig("REMOTE_USER_DATA_API_TIMEOUT", 15)
     kc_remote_idps = FromConfig("KC_REMOTE_IDPS")

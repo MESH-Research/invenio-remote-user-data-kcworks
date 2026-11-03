@@ -609,13 +609,15 @@ class CILogonHelpers:
 
         # Also add roles for admin to remote superusers
         if profile and profile.is_superadmin is True:
-            remote_groups.append("administration")
-            remote_groups.append("administration-moderation")
+            remote_groups.extend(app.config.get("REMOTE_USER_DATA_ADMIN_ROLES", []))
 
         if remote_groups != local_groups:
             # Filter local groups to only knowledge commons groups for comparison
             local_kc_groups = [
-                g for g in local_groups if g.split("---")[0] == "knowledgeCommons"
+                g
+                for g in local_groups
+                if g.split("---")[0] == "knowledgeCommons"
+                or g in app.config.get("REMOTE_USER_DATA_ADMIN_ROLES", [])
             ]
 
             group_changes = {

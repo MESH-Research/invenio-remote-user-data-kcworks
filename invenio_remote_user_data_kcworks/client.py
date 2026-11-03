@@ -174,7 +174,8 @@ class UserDataAPIClient:
         Args:
             sub_id: The subject ID to query for (exclusive of kc_username)
             kc_username: The username to query for (exclusive of sub_id)
-            timeout: The timeout duration for the API request in seconds (default 10).
+            timeout: The timeout duration for the API request in seconds
+                (default `REMOTE_USER_DATA_API_TIMEOUT`, currently 15).
             use_sub_endpoint: A flag indicating that a request using the
                 `kc_username` should be made to the sub endpoint rather than
                 the members endpoint. This does nothing if a `sub_id` is
@@ -194,7 +195,7 @@ class UserDataAPIClient:
                 the API request fails or the response cannot be parsed.
         """
         if not timeout:
-            timeout = app.config.get("REMOTE_USER_DATA_API_TIMEOUT", 5)
+            timeout = app.config.get("REMOTE_USER_DATA_API_TIMEOUT", 15)
 
         if not sub_id and not kc_username:
             raise ValueError("sub_id or kc_username must be provided")
@@ -419,7 +420,8 @@ class UserDataAPIClient:
                 class name or a short reason).
             max_attempts: Total number of POST attempts before giving
                 up and logging an error.
-            timeout: Per-request timeout in seconds (default 5).
+            timeout: Per-request timeout in seconds (default 15, or
+                `REMOTE_USER_DATA_API_TIMEOUT` when set).
 
         Returns:
             `True` when the callback was accepted (HTTP 2xx) on any
@@ -473,7 +475,7 @@ class UserDataAPIClient:
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
-        timeout = timeout or 5
+        timeout = timeout or app.config.get("REMOTE_USER_DATA_API_TIMEOUT", 15)
         error_args = [
             max_attempts,
             sub,

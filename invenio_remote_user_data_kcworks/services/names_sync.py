@@ -1338,9 +1338,11 @@ class NamesSyncService(Service):
                 return None
 
             # Clean up any cited stub at PID=orcid_id.
+            # Names use ModelPIDField, so a missing PID raises
+            # NoResultFound (not PIDDoesNotExistError).
             try:
                 service.delete(identity, orcid)
-            except PIDDoesNotExistError:
+            except (PIDDoesNotExistError, NoResultFound):
                 pass
             except Exception:
                 self.logger.warning(

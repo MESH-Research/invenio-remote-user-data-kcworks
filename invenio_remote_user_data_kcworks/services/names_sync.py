@@ -953,18 +953,28 @@ class NamesSyncService(Service):
             )
 
         payload.setdefault("props", {})["source"] = source
-        item = None
-        try:
-            item = service.create(identity, payload)
-        except PIDAlreadyExists:
-            try:
-                existing = cast(
-                    NamesRecordDict, service.read(identity, orcid).to_dict()
-                )
-            except PIDDoesNotExistError:
-                return None
+
+        # Read-before-create: a failed Names `create` UoW calls
+        # `session.rollback()` and would wipe an in-flight draft parent
+        # when this runs inside `CitedNamesUpsertComponent`. Prefer
+        # update when PID=orcid already exists.
+        existing_item = self._read_existing(identity, orcid)
+        if existing_item is not None:
+            existing = cast(NamesRecordDict, existing_item.to_dict())
             merged = self._merge_cited_stub_refresh(existing, payload)
             item = service.update(identity, orcid, merged)
+        else:
+            try:
+                item = service.create(identity, payload)
+            except PIDAlreadyExists:
+                # Race: another writer created PID=orcid between read
+                # and create. Refresh that winner rather than failing.
+                existing_item = self._read_existing(identity, orcid)
+                if existing_item is None:
+                    return None
+                existing = cast(NamesRecordDict, existing_item.to_dict())
+                merged = self._merge_cited_stub_refresh(existing, payload)
+                item = service.update(identity, orcid, merged)
         return item.to_dict() if item is not None else None
 
     def backfill_cited_orcid_from_records(

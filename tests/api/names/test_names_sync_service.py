@@ -404,6 +404,9 @@ class TestUpsertCitedOrcidName:
             lambda *a, **k: None,
         )
         names = MagicMock()
+        names.read.side_effect = PIDDoesNotExistError(
+            "names", "0000-0002-1825-0097"
+        )
         item = MagicMock()
         item.to_dict.return_value = {"id": "0000-0002-1825-0097", "created": True}
         names.create.return_value = item
@@ -431,7 +434,7 @@ class TestUpsertCitedOrcidName:
     def test_refresh_merges_incoming_over_existing_stub(
         self, base_app, service: NamesSyncService, monkeypatch: pytest.MonkeyPatch
     ):
-        """PIDAlreadyExists refreshes via incoming-wins merge, not wholesale replace."""
+        """Existing PID=orcid refreshes via read+update (no create attempt)."""
         monkeypatch.setattr(
             service,
             "_find_user_record_by_identifier",
@@ -454,7 +457,6 @@ class TestUpsertCitedOrcidName:
             },
         }
         names = MagicMock()
-        names.create.side_effect = PIDAlreadyExists("orcid", "0000-0002-1825-0097")
         read_item = MagicMock()
         read_item.to_dict.return_value = existing
         names.read.return_value = read_item
@@ -484,6 +486,8 @@ class TestUpsertCitedOrcidName:
             out = service.upsert_cited_orcid_name(payload, source="creatibutor")
 
         assert out == {"id": "0000-0002-1825-0097", "updated": True}
+        names.create.assert_not_called()
+        names.read.assert_called_once()
         names.update.assert_called_once()
         _identity, pid, merged = names.update.call_args[0]
         assert pid == "0000-0002-1825-0097"

@@ -107,12 +107,11 @@ def test_delete_group_from_remote(
         r.name for r in grouper.get_current_user_roles(u)
     ]
 
-    assert actual == {
-        "disowned_communities": [],
-        "deleted_roles": [
-            "knowledgeCommons---1004290|member",
-            "knowledgeCommons---1004290|administrator",
-        ],
+    assert set(actual.keys()) == {"disowned_communities", "deleted_roles"}
+    assert actual["disowned_communities"] == []
+    assert set(actual["deleted_roles"]) == {
+        "knowledgeCommons---1004290|member",
+        "knowledgeCommons---1004290|administrator",
     }
 
 

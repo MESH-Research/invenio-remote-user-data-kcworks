@@ -529,16 +529,16 @@ def do_user_data_update(
         **kwargs: Reserved for future Celery options; forwarded
             unchanged to the long-delay reschedule path.
 
+    Returns:
+        Plain dict summarizing the run (IDs, group names, group deltas, and
+        optional user-field changes when the service returns a dict). Safe for
+        Celery's JSON result backend; not the raw service tuple.
+
     Raises:
         LocalUserNotFoundError: If the local user row is missing during
             `update_user_from_remote`.
         NoIDPFoundError: If the user has no resolvable remote identity
             provider.
-
-    Returns:
-        Plain dict summarizing the run (IDs, group names, group deltas, and
-        optional user-field changes when the service returns a dict). Safe for
-        Celery's JSON result backend; not the raw service tuple.
     """
     with app.app_context():
         if isinstance(status_event, str):
@@ -1010,12 +1010,8 @@ def do_user_created(
             (username-list ingest only).
         **kwargs: Forwarded on subs-fetch reschedule.
 
-    Raises:
-        LocalUserNotFoundError: Propagated from delegated
-            ``do_user_data_update`` when the local user row is missing.
-
     Returns:
-        Local user id, or ``None`` on give-up, ingest skip, or subs-fetch
+        Local user id, or `None` on give-up, ingest skip, or subs-fetch
         reschedule.
     """
     with app.app_context():
@@ -1412,6 +1408,33 @@ def sync_user_to_names(user_id: int, dry_run: bool = False) -> dict | None:
         return result
 
 
+@shared_task(ignore_result=True, resultrepr_maxsize=0)
+def upsert_cited_orcid_name_task(
+    payload: dict[str, Any],
+    source: str = "creatibutor",
+) -> dict[str, Any] | None:
+    """Upsert a Names record from an ORCID creatibutor payload.
+
+    Celery entrypoint for `CitedNamesUpsertComponent`: the component
+    registers this via `TaskOp` so it runs only after the draft unit of
+    work commits, in a worker session separate from draft create/update.
+
+    Args:
+        payload: A Names-shaped dict whose `id` is the bare ORCID (from
+            `collect_orcid_payloads` / the deposit form).
+        source: Free-text attribution recorded on cited stubs (default
+            `"creatibutor"`).
+
+    Returns:
+        The Names record dict from `upsert_cited_orcid_name`, or `None`
+        when the upsert skips or fails to write.
+    """
+    with app.app_context():
+        return current_names_sync_service.upsert_cited_orcid_name(
+            payload, source=source
+        )
+
+
 @shared_task(ignore_result=False)
 def do_sync_all_users_to_names(
     *,
@@ -1480,9 +1503,10 @@ def _iter_jsonl_rows(filepath: str, offset: int):
 
 
 def _iter_username_rows(filepath: str, offset: int):
-    """Yield ``(line_number, username)`` from a one-column file, skipping blanks and comments.
+    """Yield `(line_number, username)` from a one-column file.
 
-    ``line_number`` is the 1-based physical line number in the source file.
+    Skips blanks and comments. `line_number` is the 1-based physical line
+    number in the source file.
     """
     with open(filepath, encoding="utf-8") as f:
         for line_no, raw in enumerate(islice(f, offset - 1, None), start=offset):

@@ -29,7 +29,7 @@ from typing import Any
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest
-from invenio_pidstore.errors import PIDAlreadyExists
+from invenio_pidstore.errors import PIDAlreadyExists, PIDDoesNotExistError
 
 from invenio_remote_user_data_kcworks.config import KCNamesTag
 from invenio_remote_user_data_kcworks.services.names_sync import NamesSyncService
@@ -349,6 +349,56 @@ class TestUpsertCitedOrcidName:
         merge.assert_called_once()
         names.create.assert_not_called()
 
+    def test_skips_merge_when_kc_username_mismatches(
+        self, base_app, service: NamesSyncService, monkeypatch: pytest.MonkeyPatch
+    ):
+        """ORCID USER hit with a different kc_username than the payload is skipped.
+
+        Two USER Names rows can share one ORCID. Merging the deposit's
+        ``kc_username`` into the other USER would produce two identifiers
+        for that scheme; we refuse the cross-user merge instead.
+        """
+        wrong_user = {
+            "id": "beta_user",
+            "tags": [KCNamesTag.USER],
+            "identifiers": [
+                {"scheme": "orcid", "identifier": "0000-0002-1825-0097"},
+                {"scheme": "kc_username", "identifier": "beta_user"},
+            ],
+        }
+        calls: list[tuple[str, str]] = []
+
+        def find(value: str, scheme: str, *, identity=None):
+            calls.append((scheme, value))
+            if scheme == "orcid" and value == "0000-0002-1825-0097":
+                return wrong_user
+            return None
+
+        merge = MagicMock(return_value={"id": "beta_user", "merged": True})
+        names = MagicMock()
+        monkeypatch.setattr(service, "_find_user_record_by_identifier", find)
+        monkeypatch.setattr(service, "merge_cited_orcid_into_kc", merge)
+        monkeypatch.setattr(
+            NamesSyncService,
+            "names_service",
+            PropertyMock(return_value=names),
+        )
+
+        payload = {
+            "id": "0000-0002-1825-0097",
+            "identifiers": [
+                {"scheme": "orcid", "identifier": "0000-0002-1825-0097"},
+                {"scheme": "kc_username", "identifier": "alpha_user"},
+            ],
+        }
+        with base_app.app_context():
+            out = service.upsert_cited_orcid_name(payload)
+
+        assert out is None
+        assert calls == [("orcid", "0000-0002-1825-0097")]
+        merge.assert_not_called()
+        names.create.assert_not_called()
+
     def test_merges_when_user_found_only_by_kc_username(
         self, base_app, service: NamesSyncService, monkeypatch: pytest.MonkeyPatch
     ):
@@ -501,6 +551,42 @@ class TestUpsertCitedOrcidName:
         assert schemes["kc_username"] == "mcurie"
         assert {"name": "Sorbonne"} in merged["affiliations"]
         assert {"name": "Old Lab"} in merged["affiliations"]
+
+
+class TestMergeOrcidDataIntoKcIdentifiers:
+    """KC←payload identifier merge keeps one entry per scheme."""
+
+    def test_skips_payload_identifier_when_scheme_already_on_kc(
+        self, service: NamesSyncService
+    ):
+        """Payload ``kc_username`` is dropped if the KC record already has one."""
+        kc = {
+            "id": "beta_user",
+            "tags": [KCNamesTag.USER],
+            "identifiers": [
+                {"scheme": "kc_username", "identifier": "beta_user"},
+                {"scheme": "orcid", "identifier": "0000-0002-1825-0097"},
+            ],
+            "affiliations": [],
+            "props": {},
+        }
+        payload = {
+            "id": "0000-0002-1825-0097",
+            "identifiers": [
+                {"scheme": "kc_username", "identifier": "alpha_user"},
+                {"scheme": "orcid", "identifier": "0000-0002-1825-0097"},
+                {"scheme": "email", "identifier": "alpha@example.org"},
+            ],
+            "affiliations": [],
+            "props": {},
+        }
+        merged = service._merge_orcid_data_into_kc(kc, payload)
+        schemes = {i["scheme"]: i["identifier"] for i in merged["identifiers"]}
+        assert schemes == {
+            "kc_username": "beta_user",
+            "orcid": "0000-0002-1825-0097",
+            "email": "alpha@example.org",
+        }
 
 
 class TestMergeCitedStubRefresh:

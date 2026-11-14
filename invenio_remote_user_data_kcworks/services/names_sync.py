@@ -832,7 +832,12 @@ class NamesSyncService(Service):
         if orcid and item is not None:
             # RecordItem.__getitem__ reads from dumped `.data`; dicts
             # are mutated directly. Either way we pass a dict into merge.
-            item_dict = item if isinstance(item, dict) else item.to_dict()
+            to_dict = getattr(item, "to_dict", None)
+            item_dict: dict[str, Any] = (
+                cast(dict[str, Any], to_dict())
+                if callable(to_dict)
+                else cast(dict[str, Any], item)
+            )
             item_dict.setdefault("tags", []).append(KCNamesTag.MERGED)
             self.logger.debug("Handling orcid for name sync")
             try:
@@ -863,7 +868,10 @@ class NamesSyncService(Service):
 
         if item is None:
             return None
-        return item if isinstance(item, dict) else item.to_dict()
+        to_dict = getattr(item, "to_dict", None)
+        if callable(to_dict):
+            return cast(dict[str, Any], to_dict())
+        return cast(dict[str, Any], item)
 
     def upsert_cited_orcid_name(
         self,
@@ -929,27 +937,40 @@ class NamesSyncService(Service):
         service = self.names_service
         identity = identity or system_identity
 
-        user_record = self._find_user_record_by_identifier(
+        payload_kc_username = self._kc_username_from_identifiers(
+            payload.get("identifiers", [])
+        )
+        user_name_record = self._find_user_record_by_identifier(
             orcid, "orcid", identity=identity
         )
-        if user_record is None:
-            kc_username = next(
-                (
-                    (i.get("identifier") or "").strip()
-                    for i in payload.get("identifiers", [])
-                    if (i.get("scheme") or "").lower() == "kc_username"
-                    and (i.get("identifier") or "").strip()
-                ),
-                "",
+        if user_name_record is None and payload_kc_username:
+            user_name_record = self._find_user_record_by_identifier(
+                payload_kc_username, "kc_username", identity=identity
             )
-            if kc_username:
-                user_record = self._find_user_record_by_identifier(
-                    kc_username, "kc_username", identity=identity
+        if user_name_record is not None:
+            target_kc_username = self._kc_username_from_user_record(
+                user_name_record
+            )
+            # Two USER Names rows can share one ORCID. Merging a deposit that
+            # names USER A into USER B would union two `kc_username` values and
+            # Names schema rejects that. Skip rather than cross-write.
+            if (
+                payload_kc_username
+                and target_kc_username
+                and payload_kc_username.lower() != target_kc_username.lower()
+            ):
+                self.logger.info(
+                    "upsert_cited_orcid_name: skipping merge into %s; payload "
+                    "kc_username %s does not match",
+                    user_name_record.get("id"),
+                    payload_kc_username,
                 )
-        if user_record is not None:
+                return None
             return cast(
                 "dict[str, Any] | None",
-                self.merge_cited_orcid_into_kc(user_record, payload, identity=identity),
+                self.merge_cited_orcid_into_kc(
+                    user_name_record, payload, identity=identity
+                ),
             )
 
         payload.setdefault("props", {})["source"] = source
@@ -1371,11 +1392,7 @@ class NamesSyncService(Service):
             )
             return cast(NamesRecordDict, item.to_dict()) if item is not None else None
         else:
-            return (
-                cast(NamesRecordDict, merged_payload)
-                if merged_payload is not None
-                else None
-            )
+            return merged_payload if merged_payload is not None else None
 
     @staticmethod
     def _identifier_key(ident: Mapping[str, Any]) -> tuple[str, str]:
@@ -1389,6 +1406,80 @@ class NamesSyncService(Service):
             case-insensitive collision detection.
         """
         return (ident["scheme"].lower(), ident["identifier"].lower())
+
+    @staticmethod
+    def _kc_username_from_identifiers(
+        identifiers: list[NameIdentifierDict] | None,
+    ) -> str:
+        """Return the first non-blank `kc_username` identifier value.
+
+        Args:
+            identifiers: A Names `identifiers` list.
+
+        Returns:
+            The username string, or `""` when absent.
+        """
+        for ident in identifiers or []:
+            if (ident.get("scheme") or "").lower() != "kc_username":
+                continue
+            value = (ident.get("identifier") or "").strip()
+            if value:
+                return value
+        return ""
+
+    @classmethod
+    def _kc_username_from_user_record(
+        cls, user_name_record: NamesRecordDict
+    ) -> str:
+        """Return the KC username for a USER Names record.
+
+        Prefers an explicit `kc_username` identifier; falls back to the
+        Names PID (`id`), which is the username for `kcworks-user` rows.
+
+        Args:
+            user_name_record: A USER-tagged Names record dict.
+
+        Returns:
+            The username string, or `""` when absent.
+        """
+        from_idents = cls._kc_username_from_identifiers(
+            user_name_record.get("identifiers")
+        )
+        if from_idents:
+            return from_idents
+        return (user_name_record.get("id") or "").strip()
+
+    @staticmethod
+    def _merge_identifiers_one_per_scheme(
+        primary: list[NameIdentifierDict] | None,
+        secondary: list[NameIdentifierDict] | None,
+    ) -> list[NameIdentifierDict]:
+        """Merge identifier lists keeping at most one entry per scheme.
+
+        Names schema allows only one identifier per scheme. `primary`
+        entries are kept in order; a `secondary` entry is appended only
+        when its scheme is not already present on `primary`.
+
+        Args:
+            primary: Preferred identifiers (e.g. the KC USER record).
+            secondary: Additional identifiers (e.g. the deposit payload).
+
+        Returns:
+            A new list of identifier dicts.
+        """
+        merged: list[NameIdentifierDict] = []
+        seen_schemes: set[str] = set()
+        for source in (primary or [], secondary or []):
+            for ident in source:
+                scheme = (ident.get("scheme") or "").strip().lower()
+                value = (ident.get("identifier") or "").strip()
+                if not scheme or not value:
+                    continue
+                if scheme in seen_schemes:
+                    continue
+                seen_schemes.add(scheme)
+                merged.append({"scheme": scheme, "identifier": value})
+        return merged
 
     @staticmethod
     def _affiliation_key(aff: Mapping[str, Any]) -> tuple[str, str] | None:
@@ -1418,10 +1509,13 @@ class NamesSyncService(Service):
         (where `orcid_data` is a freshly-built payload from
         `build_name_payload_from_orcid`).
 
-        KC values win for scalar names and `props`; `identifiers` and
-        `affiliations` are unioned. The KC record's `id` and `tags`
-        are preserved, so the resulting payload is a no-op for those
-        fields when handed to `service.update(identity, kc_pid, ...)`.
+        KC values win for scalar names and `props`; `affiliations` are
+        unioned. Identifiers keep at most one entry per scheme: KC-record
+        schemes win, and payload identifiers are added only for schemes
+        the KC record does not already carry (Names schema rejects
+        duplicates). The KC record's `id` and `tags` are preserved, so
+        the resulting payload is a no-op for those fields when handed to
+        `service.update(identity, kc_pid, ...)`.
 
         Args:
             kc_record: The KC-user record dict (must carry `id`).
@@ -1441,10 +1535,9 @@ class NamesSyncService(Service):
                 "id": kc_record.get("id", ""),
                 "internal_id": internal_id,
                 "tags": list(kc_record.get("tags") or [KCNamesTag.USER]),
-                "identifiers": union_dicts_by_key(
+                "identifiers": self._merge_identifiers_one_per_scheme(
                     kc_record.get("identifiers", []),
                     orcid_data.get("identifiers", []),
-                    key=self._identifier_key,
                 ),
                 "affiliations": union_dicts_by_key(
                     kc_record.get("affiliations", []),
@@ -1501,10 +1594,9 @@ class NamesSyncService(Service):
                 "id": existing.get("id") or incoming.get("id") or "",
                 "internal_id": incoming.get("internal_id", existing.get("internal_id")),
                 "tags": tags,
-                "identifiers": union_dicts_by_key(
+                "identifiers": self._merge_identifiers_one_per_scheme(
                     incoming.get("identifiers", []),
                     existing.get("identifiers", []),
-                    key=self._identifier_key,
                 ),
                 "affiliations": union_dicts_by_key(
                     incoming.get("affiliations", []),

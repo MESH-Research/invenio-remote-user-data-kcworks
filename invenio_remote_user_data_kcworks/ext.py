@@ -14,6 +14,9 @@ from flask import Response, current_app, request
 from flask_login import current_user, user_logged_in, user_logged_out
 from invenio_accounts.models import User
 from invenio_db import db
+from kcworks.services.networks.resolver_service import (
+    ensure_sso_before_network_resolver,
+)
 
 from . import config
 from .proxies import current_remote_user_data_service
@@ -73,6 +76,7 @@ class InvenioRemoteUserData:
         self.init_config(app)
         self.init_services(app)
         self.init_listeners(app)
+        self.init_middleware(app)
         app.extensions["invenio-remote-user-data-kcworks"] = self
 
     def init_config(self, app) -> None:
@@ -111,62 +115,13 @@ class InvenioRemoteUserData:
         user_logged_in.connect(on_user_logged_in, app)
         user_logged_out.connect(on_user_logged_out, app)
 
-        @app.before_request
-        def _sso_silent_login_check() -> Response | None:
-            """Attempt transparent SSO login for anonymous users.
+    def init_middleware(self, app):
+        """Initialize before_request handlers on the Flask app."""
 
-            If the user is anonymous and the TTL cookie has expired (or is
-            absent), make a server-side request to the Profiles broker's
-            silent-login endpoint. If an active session is found, decrypt
-            the broker token, validate the nonce, and log the user in.
-
-            Network errors or broker downtime are caught so they never
-            block the original request.
-
-            Returns:
-                Response | None: If the user is anonymous and hasn't recently
-                  checked for a Profiles login, returns a Flask redirect
-                  response to send the user to the silent Profiles login check.
-                  Otherwise, returns None.
-            """
-            # Silent SSO targets the UI app: skip REST API, static assets, broker
-            # callback, and IDMS webhook receivers. On `create_api` apps, webhook
-            # routes live at `/webhooks/...` (no `/api` prefix on `request.path`);
-            # skipping them avoids `url_for(...broker_callback)` when the SSO
-            # blueprint is not registered on the API app.
-            # Bare `/api` (no trailing slash) and `SCRIPT_NAME=/api` mounts are
-            # handled separately so we do not match e.g. `/apiculture`.
-            path = request.path or "/"
-            script = (request.script_root or "").rstrip("/")
-            if (
-                path.startswith((
-                    "/api/",
-                    "/static/",
-                    "/sso/broker-callback/",
-                    "/webhooks/",
-                ))
-                or path.rstrip("/") == "/api"
-                or script == "/api"
-                or path.rstrip("/").endswith("/sso/broker-callback")
-            ):
-                return
-
-            app.logger.debug("CHECKING FOR SSO LOGIN")
-            cu = current_user._get_current_object()
-            if not getattr(cu, "is_anonymous", False):
-                return
-
-            if BrokerHelpers.ready_for_login_broker_check():
-                try:
-                    # NOTE: This must return the redirect response to the browser.
-                    # If we don't return it, the redirect is constructed but never sent
-                    # to the browser, so the broker callback won't be hit.
-                    return sso_broker_login(next=request.url, silent=True)
-
-                except Exception:
-                    current_app.logger.exception(
-                        "Silent SSO login check failed unexpectedly"
-                    )
+        funcs = app.before_request_funcs.get(None, [])
+        prepend_funcs = [sso_silent_login_check]
+        app.before_request_funcs[None] = prepend_funcs + funcs
+        ensure_sso_before_network_resolver(app)
 
 
 def _register_kcworks_names_schema_override(app) -> None:

@@ -21,8 +21,8 @@ Covers:
 import pytest
 from invenio_access.permissions import system_identity
 from invenio_communities.communities.records.api import Community
+from invenio_communities.errors import CommunityDeletedError
 from invenio_communities.proxies import current_communities
-from invenio_group_collections_kcworks.errors import CollectionNotFoundError
 from invenio_group_collections_kcworks.proxies import current_group_collections_service
 from invenio_search import current_search_client
 from invenio_search.engine import dsl
@@ -421,7 +421,7 @@ def test_update_group_from_remote_with_deleted_community(
         Community.index.refresh()
     assert delete_result.to_dict()["deletion_status"]["is_deleted"] is True
     with app.app_context():
-        with pytest.raises(CollectionNotFoundError):
+        with pytest.raises(CommunityDeletedError):
             current_group_collections_service.read(
                 system_identity, existing_collection["slug"]
             )

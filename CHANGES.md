@@ -1,18 +1,26 @@
 # Changes
 
+## 1.0.1 (2026-03-19)
+
+- Update test to match new upstream behaviour.
+
 ## 1.0.0 (2026-03-19)
 
-- First release of major rewrite to support Knowledge Commons' new IDMS based on Cilogon and the new KCProfiles app.
-- Includes update to use KCProfiles as a login broker for transparent SSO rather than communicating directly with cilogon.
+- First release of major rewrite to support Knowledge Commons' new IDMS based on
+  Cilogon and the new KCProfiles app.
+- Includes update to use KCProfiles as a login broker for transparent SSO rather
+  than communicating directly with cilogon.
 
 ## 0.6.1-beta3 (2025-02-25)
 
-- Fixed bug where user profile data was not being updated because comparison with initial data was not being made correctly.
+- Fixed bug where user profile data was not being updated because comparison
+  with initial data was not being made correctly.
 - Improved handling of timeout errors when fetching data from the remote source.
 
 ## 0.6.0-beta2 (2024-12-19)
 
-- Fixed bug where user profile data was not being updated because comparison with initial data was not being made correctly.
+- Fixed bug where user profile data was not being updated because comparison
+  with initial data was not being made correctly.
 
 ## Version 0.0.1
 

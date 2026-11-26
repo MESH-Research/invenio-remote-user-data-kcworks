@@ -2091,7 +2091,7 @@ wheels = [
 
 [[package]]
 name = "invenio-group-collections-kcworks"
-version = "1.0.0"
+version = "1.1.0"
 source = { editable = "../invenio-group-collections-kcworks" }
 dependencies = [
     { name = "alembic" },
@@ -2142,6 +2142,7 @@ requires-dist = [
     { name = "selenium", marker = "extra == 'tests'" },
     { name = "setuptools", specifier = ">=83.0.0" },
     { name = "standard-pkg-resources" },
+    { name = "ty", marker = "extra == 'tests'" },
     { name = "unidecode" },
     { name = "werkzeug", specifier = ">=3.1.9" },
 ]

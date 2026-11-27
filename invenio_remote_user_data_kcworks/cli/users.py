@@ -28,12 +28,194 @@ from invenio_users_resources.proxies import current_users_service
 from ..proxies import (
     current_remote_user_data_service as user_data_service,
 )
-from ..tasks import do_ingest_profiles_dump
+from ..services.user_profile import UserProfileService
+from ..tasks import do_ingest_profiles_dump, sync_user_to_names
 
 
 @click.group(name="users")
 def users_cli():
     """Bulk user provisioning and re-pull from the Profiles API."""
+
+
+@users_cli.command("name-parts")
+@click.argument("user_id", type=str)
+@click.option("-g", "--given", type=str, required=False)
+@click.option("-f", "--family", type=str, required=False)
+@click.option(
+    "-m",
+    "--middle",
+    type=str,
+    required=False,
+    help="One or more middle names, separated by spaces.",
+)
+@click.option(
+    "-s",
+    "--suffix",
+    type=str,
+    required=False,
+    help=(
+        "A suffix that follows the last name (e.g. 'Jr., III'). "
+        "This is moved behind the first name when names are listed "
+        "with the last name first."
+    ),
+)
+@click.option(
+    "-r",
+    "--family-prefix",
+    type=str,
+    required=False,
+    help=(
+        "A prefix introducing the family name (like 'van der', 'de la', 'de', "
+        "'von', etc.) that is not kept in front of the family name for "
+        "alphabetical sorting"
+    ),
+)
+@click.option(
+    "-x",
+    "--family-prefix-fixed",
+    type=str,
+    required=False,
+    help=(
+        "A prefix introducing the family name (like 'van der', 'de la', 'de', "
+        "'von', etc.) that is kept in front of the family name for alphabetical "
+        "sorting"
+    ),
+)
+@click.option(
+    "-u",
+    "--spousal",
+    type=str,
+    required=False,
+    help=(
+        "A spousal family name that is kept in front of the family name for "
+        "alphabetical sorting (e.g. 'Garcia' + 'Martinez' -> 'Garcia Martinez')"
+    ),
+)
+@click.option("-p", "--parental", type=str, required=False)
+@click.option(
+    "-n",
+    "--undivided",
+    type=str,
+    required=False,
+    help=(
+        "A name string that should not be divided into parts, "
+        "but should be kept the same in any alphabetical list."
+    ),
+)
+@click.option("-k", "--nickname", type=str, required=False)
+@with_appcontext
+def name_parts(
+    user_id,
+    given,
+    family,
+    middle,
+    suffix,
+    family_prefix,
+    family_prefix_fixed,
+    spousal,
+    parental,
+    undivided,
+    nickname,
+) -> None:
+    """Update or read local name parts for a user.
+
+    After a successful update, queues `sync_user_to_names` so the Names
+    vocabulary entry reflects the new local split.
+    """
+    parts = {
+        "given": given,
+        "family": family,
+        "middle": middle,
+        "suffix": suffix,
+        "family_prefix": family_prefix,
+        "family_prefix_fixed": family_prefix_fixed,
+        "spousal": spousal,
+        "parental": parental,
+        "undivided": undivided,
+        "nickname": nickname,
+    }
+    if not any(parts.values()):
+        click.echo(f"Reading current local name parts for user {user_id}.")
+        try:
+            current = UserProfileService.read_local_name_parts(user_id)
+            click.echo("Current name parts:")
+            pprint(current)
+        except (KeyError, ValueError):
+            click.echo(f"No local name parts found for user {user_id}.")
+        return
+
+    click.echo(f"Updating name parts for user {user_id}")
+    new_user = UserProfileService.update_local_name_parts(
+        user_id, {k: v for k, v in parts.items() if v is not None}
+    )
+    pprint(new_user.user_profile)
+    click.echo("Updated name parts:")
+    pprint(new_user.user_profile["name_parts_local"])
+    async_result = sync_user_to_names.delay(int(user_id))
+    click.echo(
+        f"Queued Names vocabulary sync for user {user_id} (task {async_result.id})."
+    )
+
+
+@users_cli.command("backfill-display-names")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Report what would change without writing.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Recompute and overwrite existing non-empty display_name values.",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Stop after updating this many user profiles.",
+)
+@click.option(
+    "--sync-names",
+    is_flag=True,
+    default=False,
+    help=(
+        "After each profile update, upsert the user's Names vocabulary "
+        "entry so props.display_name matches. For a full Names resync "
+        "without profile writes, use `invenio user-data names sync-now --all`."
+    ),
+)
+@with_appcontext
+def backfill_display_names(
+    dry_run: bool,
+    force: bool,
+    limit: int | None,
+    sync_names: bool,
+) -> None:
+    """Backfill persisted `user_profile.display_name` from name parts.
+
+    Does not rewrite creatibutor strings on existing records (use
+    `user-data records backfill-creatibutor-names` for that).
+    """
+    stats = UserProfileService.backfill_display_names(
+        dry_run=dry_run,
+        force=force,
+        limit=limit,
+        sync_names=sync_names and not dry_run,
+    )
+    mode = "dry-run" if dry_run else "applied"
+    click.echo(
+        f"Done ({mode}). "
+        f"users_scanned={stats['users_scanned']}  "
+        f"updated={stats['updated']}  "
+        f"skipped_has_display={stats['skipped_has_display']}  "
+        f"skipped_no_parts={stats['skipped_no_parts']}  "
+        f"unchanged={stats['unchanged']}  "
+        f"names_synced={stats['names_synced']}  "
+        f"names_errors={stats['names_errors']}  "
+        f"errors={stats['errors']}"
+    )
 
 
 @users_cli.command(name="update")

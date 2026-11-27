@@ -104,6 +104,7 @@ def test_calculate_user_changes_maps_core_fields_from_api_response(base_app):
         assert new_data["email"] == "remote@example.org"
         assert new_data["user_profile"]["identifier_kc_username"] == "remote_u"
         assert new_data["user_profile"]["full_name"] == "Remote Name"
+        assert new_data["user_profile"]["display_name"] == "Name, Remote"
         assert json.loads(new_data["user_profile"]["name_parts"]) == {
             "first": "Remote",
             "last": "Name",
@@ -235,6 +236,7 @@ def test_calculate_user_changes_keeps_local_affiliation_when_remote_blank(base_a
                 "user_profile": {
                     "affiliations": "Michigan State University",
                     "full_name": "My User",
+                    "display_name": "User, My",
                     "identifier_orcid": "0000-0002-1825-0097",
                     "identifier_kc_username": "myuser",
                     "name_parts": '{"first": "My", "last": "User"}',
@@ -250,6 +252,7 @@ def test_calculate_user_changes_keeps_local_affiliation_when_remote_blank(base_a
                 "user_profile": {
                     "affiliations": "Michigan State University",
                     "full_name": "My User",
+                    "display_name": "User, My",
                     "identifier_orcid": "0000-0002-1825-0097",
                     "name_parts": '{"first": "My", "last": "User"}',
                 },

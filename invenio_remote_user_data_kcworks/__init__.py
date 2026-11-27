@@ -230,6 +230,6 @@ Other environment variables
 
 from .ext import InvenioRemoteUserData
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 
 __all__ = ("__version__", "InvenioRemoteUserData")

@@ -26,6 +26,7 @@ from invenio_group_collections_kcworks.utils import (
 
 from ..errors import UserCreationFailed
 from ..services.group_roles import GroupRolesService
+from ..services.user_profile import UserProfileService
 from ..types.auth import AccountInfo
 from ..types.profiles_api import APIResponse, Profile
 from ..types.users import (
@@ -501,8 +502,9 @@ class CILogonHelpers:
             1 (CalculatedUserDataDict): Full normalized data for a user after
                a successful application of the changes: Has the keys 'active',
                'username', 'email', 'preferences' (including visibility
-               flags), and 'user_profile' nested dict with 'full_name', 'name_parts'
-               (JSON string), 'identifier_kc_username', optional 'affiliations' and
+               flags), and 'user_profile' nested dict with 'full_name',
+               'display_name' (inverted), 'name_parts' (JSON string),
+               'identifier_kc_username', optional 'affiliations' and
                'identifier_orcid', etc. (see CalculatedUserDataDict in types.py).
         """
         initial_user_data = {
@@ -530,13 +532,21 @@ class CILogonHelpers:
         if isinstance(profile, APIResponse):
             profile = profile.data[0].profile
 
+        remote_name_parts = {
+            "first": profile.first_name,
+            "last": profile.last_name,
+        }
         new_data["user_profile"].update({
             "full_name": profile.name,
-            "name_parts": json.dumps({
-                "first": profile.first_name,
-                "last": profile.last_name,
-            }),
+            "name_parts": json.dumps(remote_name_parts),
         })
+        # Prefer local name-part overrides so remote re-sync does not
+        # clobber a remembered split (same rule as UserProfileService).
+        inverted = UserProfileService.compute_display_name_from_profile(
+            new_data["user_profile"]
+        )
+        if inverted:
+            new_data["user_profile"]["display_name"] = inverted
         if profile.institutional_affiliation:
             new_data["user_profile"]["affiliations"] = profile.institutional_affiliation
         if profile.orcid and profile.orcid != "":

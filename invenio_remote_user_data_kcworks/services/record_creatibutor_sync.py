@@ -4,15 +4,17 @@
 # and/or modify it under the terms of the MIT License; see LICENSE file for
 # more details.
 
-"""Service for propagating a KC username rename through RDM records.
+"""Service for rewriting creatibutor metadata on RDM records.
 
-After a Profiles `updated` webhook flips a user's `kc_username`, every
-record (published or draft) that cited the old username in a
-`metadata.creators[*]` or `metadata.contributors[*]` block becomes stale.
-The link from the record back to the user lives in the `identifiers` list,
-shaped `{"scheme": "kc_username", "identifier": "<username>"}`; we rewrite
-those values to the new username so search / display / mention paths keep
-resolving.
+Owns two related creatibutor updates on published records and drafts:
+
+- KC username rename: after a Profiles `updated` webhook flips a user's
+  `kc_username`, rewrite matching `identifiers` entries shaped
+  `{"scheme": "kc_username", "identifier": "<username>"}` so search /
+  display / mention paths keep resolving.
+- Display-name backfill: set matching personal creatibutors'
+  `person_or_org.name` to each user's persisted profile `display_name`
+  (matched by `kc_username` / `orcid` / `email`).
 
 Why a dedicated service rather than a bare function:
 
@@ -29,8 +31,9 @@ Why a dedicated service rather than a bare function:
   `NamesSyncService.backfill_cited_orcid_from_records` and
   `CitedNamesUpsertComponent` swallow per-item failures.
 
-The pure rewrite step lives in `utils.record_metadata.rewrite_kc_username`
-so it can be unit-tested without I/O.
+Pure metadata transforms live in `utils.record_metadata`
+(`rewrite_kc_username`, `rewrite_creatibutor_display_names`) so they can
+be unit-tested without I/O.
 """
 
 from __future__ import annotations
@@ -41,22 +44,28 @@ from typing import Any
 
 from flask_principal import Identity
 from invenio_access.permissions import system_identity
+from invenio_accounts.models import User
+from invenio_accounts.proxies import current_accounts
 from invenio_rdm_records.proxies import current_rdm_records_service
 from invenio_records_resources.services import Service
 from invenio_search.engine import dsl
 from invenio_search.proxies import current_search_client
 from invenio_search.utils import prefix_index
 
-from ..utils.record_metadata import rewrite_kc_username
+from ..utils.record_metadata import (
+    rewrite_creatibutor_display_names,
+    rewrite_kc_username,
+    user_identifier_pairs,
+)
 
-__all__ = ("RecordKcUsernameSyncService",)
+__all__ = ("RecordCreatibutorSyncService",)
 
 
-class RecordKcUsernameSyncService(Service):
-    """Rewrite kc_username identifiers across published records and drafts.
+class RecordCreatibutorSyncService(Service):
+    """Rewrite creatibutor identifiers and names on published records and drafts.
 
     Construct once at app init via `InvenioRemoteUserData` and access elsewhere
-    via the `current_record_kc_username_sync_service` proxy.
+    via the `current_record_creatibutor_sync_service` proxy.
     """
 
     def __init__(self, app, config=None, **kwargs):
@@ -483,3 +492,206 @@ class RecordKcUsernameSyncService(Service):
                     new_username,
                 )
         return result
+
+    # ------------------------------------------------------------------
+    # Creatibutor display_name rewrite (same edit/publish shell)
+    # ------------------------------------------------------------------
+
+    def _scan_ids_for_identifier_value(
+        self,
+        identifier: str,
+        *,
+        drafts: bool,
+    ) -> Iterator[str]:
+        """Yield record IDs whose creatibutors cite `identifier` (any scheme).
+
+        Unlike `_scan_ids`, this does not post-filter on `kc_username` scheme;
+        callers that rewrite by profile identifier pairs apply scheme checks
+        in `rewrite_creatibutor_display_names`.
+
+        Args:
+            identifier: Creatibutor identifier value to match.
+            drafts: If `True`, scan drafts; otherwise published records.
+
+        Yields:
+            Record ID strings.
+        """
+        index_alias = (
+            prefix_index("rdmrecords-drafts")
+            if drafts
+            else prefix_index("rdmrecords-records")
+        )
+        search = (
+            dsl.Search(using=current_search_client, index=index_alias)
+            .filter(self._identifier_filter(identifier))
+            .source(["id"])
+        )
+        for hit in search.scan():
+            source = hit.to_dict() if hasattr(hit, "to_dict") else dict(hit)
+            record_id = source.get("id") or getattr(hit, "meta", {}).get("id")
+            if record_id:
+                yield str(record_id)
+
+    def _apply_creatibutor_display_name(
+        self,
+        record_id: str,
+        *,
+        display_name: str,
+        id_pairs: list[tuple[str, str]],
+        drafts: bool,
+        dry_run: bool,
+        identity: Identity,
+    ) -> str:
+        """Rewrite one record/draft. Returns `updated`, `unchanged`, or `failed`."""
+        try:
+            if dry_run:
+                # Read only — never `edit()`, which would leave an open draft.
+                record = (
+                    current_rdm_records_service.read_draft(identity, record_id)
+                    if drafts
+                    else current_rdm_records_service.read(identity, record_id)
+                )
+                metadata = deepcopy(record.data.get("metadata") or {})
+                changed = rewrite_creatibutor_display_names(
+                    metadata,
+                    display_name=display_name,
+                    id_pairs=id_pairs,
+                )
+                return "updated" if changed else "unchanged"
+
+            if drafts:
+                draft = current_rdm_records_service.read_draft(identity, record_id)
+            else:
+                draft = current_rdm_records_service.edit(identity, record_id)
+            draft_data = deepcopy(draft.data)
+            metadata = draft_data.get("metadata") or {}
+            changed = rewrite_creatibutor_display_names(
+                metadata,
+                display_name=display_name,
+                id_pairs=id_pairs,
+            )
+            if not changed:
+                return "unchanged"
+            draft_data["metadata"] = metadata
+            current_rdm_records_service.update_draft(identity, draft.id, draft_data)
+            if not drafts:
+                current_rdm_records_service.publish(identity, draft.id)
+            return "updated"
+        except Exception:  # noqa: BLE001 - counted by caller
+            self.logger.exception(
+                "creatibutor display_name rewrite failed for record %s (drafts=%s)",
+                record_id,
+                drafts,
+            )
+            return "failed"
+
+    def backfill_creatibutor_display_names(
+        self,
+        *,
+        dry_run: bool = False,
+        limit: int | None = None,
+        user_id: int | str | None = None,
+        identity: Identity | None = None,
+    ) -> dict[str, int]:
+        """Rewrite creatibutor `name` to each user's persisted `display_name`.
+
+        Matches personal creators/contributors by profile identifiers
+        (`kc_username`, `orcid`, `email`) only. Skips users without
+        `display_name` or without identifiers. Uses the same
+        edit/update_draft/publish shell as username rewrites.
+
+        Args:
+            dry_run: Count would-be updates without writing.
+            limit: Stop after this many record updates (published + drafts).
+            user_id: When set, only process this local user.
+            identity: Optional Invenio identity. Defaults to `system_identity`.
+
+        Returns:
+            Stats: `users_scanned`, `users_eligible`, `records_updated`,
+            `records_unchanged`, `records_failed`, `errors`.
+        """
+        identity = identity or system_identity
+        stats = {
+            "users_scanned": 0,
+            "users_eligible": 0,
+            "records_updated": 0,
+            "records_unchanged": 0,
+            "records_failed": 0,
+            "errors": 0,
+        }
+
+        if user_id is not None:
+            user = current_accounts.datastore.get_user_by_id(user_id)
+            if user is None:
+                stats["errors"] += 1
+                self.logger.error(
+                    "creatibutor display_name backfill: user %s not found", user_id
+                )
+                return stats
+            users: Iterator[User] = iter([user])
+        else:
+            users = User.query.order_by(User.id).yield_per(200)
+
+        for user in users:
+            stats["users_scanned"] += 1
+            try:
+                profile = dict(user.user_profile or {})
+                display_name = (profile.get("display_name") or "").strip()
+                id_pairs = user_identifier_pairs(profile)
+                if not display_name or not id_pairs:
+                    continue
+                stats["users_eligible"] += 1
+
+                seen: set[str] = set()
+                for _scheme, identifier in id_pairs:
+                    for drafts in (False, True):
+                        try:
+                            record_ids = list(
+                                self._scan_ids_for_identifier_value(
+                                    identifier, drafts=drafts
+                                )
+                            )
+                        except Exception:  # noqa: BLE001 - logged, continue
+                            stats["errors"] += 1
+                            self.logger.exception(
+                                "creatibutor display_name backfill: scan failed "
+                                "for user=%s identifier=%s drafts=%s",
+                                user.id,
+                                identifier,
+                                drafts,
+                            )
+                            continue
+
+                        for record_id in record_ids:
+                            key = f"{'d' if drafts else 'p'}:{record_id}"
+                            if key in seen:
+                                continue
+                            seen.add(key)
+
+                            if (
+                                limit is not None
+                                and stats["records_updated"] >= limit
+                            ):
+                                return stats
+
+                            result = self._apply_creatibutor_display_name(
+                                record_id,
+                                display_name=display_name,
+                                id_pairs=id_pairs,
+                                drafts=drafts,
+                                dry_run=dry_run,
+                                identity=identity,
+                            )
+                            if result == "updated":
+                                stats["records_updated"] += 1
+                            elif result == "unchanged":
+                                stats["records_unchanged"] += 1
+                            else:
+                                stats["records_failed"] += 1
+            except Exception:  # noqa: BLE001 - counted, not propagated
+                stats["errors"] += 1
+                self.logger.exception(
+                    "creatibutor display_name backfill: user %s failed", user.id
+                )
+
+        return stats

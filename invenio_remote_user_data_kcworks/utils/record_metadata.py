@@ -9,7 +9,7 @@
 Anything in this module is a pure-Python walker / mutator over a
 `metadata` sub-dict (or one of its lists). No I/O, no app context, no
 Names / RDM service calls. The companion service in
-`services.record_username_sync` is responsible for the orchestration
+`services.record_creatibutor_sync` is responsible for the orchestration
 side: searching for records, opening drafts via `edit()`, calling
 `update_draft` / `publish`, and accumulating per-pass stats.
 
@@ -27,56 +27,59 @@ another helper file; that keeps the metadata-related surface in one
 place.
 """
 
-from __future__ import annotations
-
+from collections.abc import Iterator
 from typing import Any
 
 
-def _rewrite_in_list(
-    entries: list[dict[str, Any]],
-    *,
-    old_username: str,
-    new_username: str,
-) -> bool:
-    """Rewrite the kc_username identifier in a list of creator/contributor entries.
+def _iter_personal_person_or_org(
+    metadata: dict[str, Any],
+) -> Iterator[dict[str, Any]]:
+    """Yield personal `person_or_org` dicts from creators and contributors.
 
-    Iterates `entries` in place; for each personal-type entry whose
-    `person_or_org.identifiers` list contains an item with
-    `scheme == "kc_username"` and `identifier == old_username`, replace the
-    `identifier` value with `new_username`.
+    Skips non-dict metadata, non-list entry lists, non-dict entries, and
+    non-personal `person_or_org` blocks.
 
     Args:
-        entries: A list of creator or contributor entry dicts (e.g.
-            `metadata.get("creators", [])`).
-        old_username: The pre-rename KC username to replace.
-        new_username: The post-rename KC username to write in its place.
+        metadata: Record `metadata` dict.
+
+    Yields:
+        Mutable `person_or_org` dicts with `type == "personal"`.
+    """
+    for key in ("creators", "contributors"):
+        entries = metadata.get(key)
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            person = entry.get("person_or_org")
+            if not isinstance(person, dict) or person.get("type") != "personal":
+                continue
+            yield person
+
+
+def _identifiers_include(
+    identifiers: Any,
+    wanted: set[tuple[str, str]],
+) -> bool:
+    """Whether an identifiers list contains any `(scheme, identifier)` in wanted.
+
+    Args:
+        identifiers: Creatibutor `identifiers` value (usually a list of dicts).
+        wanted: Set of `(scheme, identifier)` pairs to match.
 
     Returns:
-        `True` if at least one identifier value was rewritten; `False`
-        otherwise.
+        `True` if any identifier dict matches a wanted pair.
     """
-    changed = False
-    for entry in entries:
-        if not isinstance(entry, dict):
+    if not isinstance(identifiers, list):
+        return False
+    for ident in identifiers:
+        if not isinstance(ident, dict):
             continue
-        person_or_org = entry.get("person_or_org")
-        if not isinstance(person_or_org, dict):
-            continue
-        if person_or_org.get("type") != "personal":
-            continue
-        identifiers = person_or_org.get("identifiers")
-        if not isinstance(identifiers, list):
-            continue
-        for ident in identifiers:
-            if not isinstance(ident, dict):
-                continue
-            if (
-                ident.get("scheme") == "kc_username"
-                and ident.get("identifier") == old_username
-            ):
-                ident["identifier"] = new_username
-                changed = True
-    return changed
+        pair = (ident.get("scheme") or "", ident.get("identifier") or "")
+        if pair in wanted:
+            return True
+    return False
 
 
 def rewrite_kc_username(
@@ -111,14 +114,79 @@ def rewrite_kc_username(
     if not old_username or not new_username or old_username == new_username:
         return False
 
-    creators_changed = _rewrite_in_list(
-        metadata.get("creators") or [],
-        old_username=old_username,
-        new_username=new_username,
-    )
-    contributors_changed = _rewrite_in_list(
-        metadata.get("contributors") or [],
-        old_username=old_username,
-        new_username=new_username,
-    )
-    return creators_changed or contributors_changed
+    changed = False
+    for person in _iter_personal_person_or_org(metadata):
+        identifiers = person.get("identifiers")
+        if not isinstance(identifiers, list):
+            continue
+        for ident in identifiers:
+            if not isinstance(ident, dict):
+                continue
+            if (
+                ident.get("scheme") == "kc_username"
+                and ident.get("identifier") == old_username
+            ):
+                ident["identifier"] = new_username
+                changed = True
+    return changed
+
+
+# Profile field → creatibutor identifier scheme (deposit form convention).
+_PROFILE_IDENTIFIER_FIELDS: tuple[tuple[str, str], ...] = (
+    ("identifier_kc_username", "kc_username"),
+    ("identifier_orcid", "orcid"),
+    ("identifier_email", "email"),
+)
+
+
+def user_identifier_pairs(profile: dict[str, Any]) -> list[tuple[str, str]]:
+    """Return `(scheme, identifier)` pairs from a user profile.
+
+    Args:
+        profile: A `user_profile` dict.
+
+    Returns:
+        Non-empty identifier pairs suitable for matching creatibutors.
+    """
+    pairs: list[tuple[str, str]] = []
+    for field, scheme in _PROFILE_IDENTIFIER_FIELDS:
+        value = (profile.get(field) or "").strip()
+        if value:
+            pairs.append((scheme, value))
+    return pairs
+
+
+def rewrite_creatibutor_display_names(
+    metadata: dict[str, Any],
+    *,
+    display_name: str,
+    id_pairs: list[tuple[str, str]],
+) -> bool:
+    """Set matching personal creatibutors' `name` to `display_name`.
+
+    Only personal entries whose identifiers include one of `id_pairs` are
+    updated, and only when the current `name` differs.
+
+    Args:
+        metadata: Record `metadata` dict (mutated in place).
+        display_name: Target bibliographic/inverted display string.
+        id_pairs: `(scheme, identifier)` pairs that identify the user.
+
+    Returns:
+        `True` if any entry was changed.
+    """
+    if not isinstance(metadata, dict):
+        return False
+    if not display_name or not id_pairs:
+        return False
+    wanted = {(scheme, ident) for scheme, ident in id_pairs}
+    changed = False
+    for person in _iter_personal_person_or_org(metadata):
+        if not _identifiers_include(person.get("identifiers"), wanted):
+            continue
+        current = (person.get("name") or "").strip()
+        if current == display_name:
+            continue
+        person["name"] = display_name
+        changed = True
+    return changed

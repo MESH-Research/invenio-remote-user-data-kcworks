@@ -528,13 +528,17 @@ class NamesSyncService(Service):
         props: NamePropsDict = {
             "kcworks_user_id": str(user.id),
         }
-        display_name = name_inverted
+        # Prefer the profile's persisted inverted form so Names stays
+        # aligned with `user_profile.display_name`.
+        stored_display = (profile.get("display_name") or "").strip()
+        display_name = stored_display or name_inverted
         if parts:
             props["name_parts"] = parts
-            try:
-                display_name = get_full_name_inverted(parts)
-            except ValueError:
-                pass
+            if not stored_display:
+                try:
+                    display_name = get_full_name_inverted(parts)
+                except ValueError:
+                    pass
         if display_name:
             props["display_name"] = display_name
         family_token = self._normalize_family_token(family)

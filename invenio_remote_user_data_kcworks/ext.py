@@ -16,11 +16,12 @@ from invenio_accounts.models import User
 from invenio_db import db
 
 from . import config
+from .filters.user_profile_dict import user_profile_dict
 from .proxies import current_remote_user_data_service
 from .roles import ensure_service_capabilities
 from .services.config import RemoteGroupDataServiceConfig, RemoteUserDataServiceConfig
 from .services.names_sync import NamesSyncService
-from .services.record_username_sync import RecordKcUsernameSyncService
+from .services.record_creatibutor_sync import RecordCreatibutorSyncService
 from .services.service import RemoteGroupDataService, RemoteUserDataService
 from .tasks import do_user_data_update
 from .utils.broker import BrokerHelpers
@@ -73,7 +74,12 @@ class InvenioRemoteUserData:
         self.init_config(app)
         self.init_services(app)
         self.init_listeners(app)
+        self.init_template_filters(app)
         app.extensions["invenio-remote-user-data-kcworks"] = self
+
+    def init_template_filters(self, app) -> None:
+        """Register Jinja template filters owned by this extension."""
+        app.add_template_filter(user_profile_dict)
 
     def init_config(self, app) -> None:
         """Initialize configuration for the extention.
@@ -98,7 +104,7 @@ class InvenioRemoteUserData:
             app, config=RemoteGroupDataServiceConfig.build(app)
         )
         self.names_sync_service = NamesSyncService(app, config=app.config)
-        self.record_kc_username_sync_service = RecordKcUsernameSyncService(
+        self.record_creatibutor_sync_service = RecordCreatibutorSyncService(
             app, config=app.config
         )
 

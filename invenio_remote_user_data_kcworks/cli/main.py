@@ -8,10 +8,11 @@
 """CLI commands for user data and Names vocabulary maintenance.
 
 Single top-level group `user-data` (registered via the
-`flask.commands` entry point) with two subgroups:
+`flask.commands` entry point) with three subgroups:
 
 * `users` — bulk user provisioning / re-pull from Profiles
-  (`update`, `ingest-profiles-dump`).
+  (`update`, `ingest-profiles-dump`, `name-parts`,
+  `backfill-display-names`).
 * `names` — Names vocabulary maintenance: per-user or bulk re-sync
   (`sync-now`, including `--all` for local-user backfill), bulk backfill
   from published RDM records (`backfill-cited-from-records`), record
@@ -20,9 +21,12 @@ Single top-level group `user-data` (registered via the
   duplicate-review workflow (`find-duplicates`, `list-duplicates`,
   `dismiss-duplicate`, `undismiss-duplicate`,
   `list-dismissed-duplicates`).
+* `records` — creatibutor metadata rewrites on RDM records
+  (`update_contributors_username`, `backfill-creatibutor-names`).
 
 Long-running commands (`ingest-profiles-dump`,
-`backfill-cited-from-records`, `sync-now`, `find-duplicates`)
+`backfill-cited-from-records`, `sync-now`, `find-duplicates`,
+`update_contributors_username`)
 accept `--background` to `.delay()` the corresponding Celery task
 and return immediately with the task id; without the flag the work
 runs synchronously inside the CLI process.
@@ -31,6 +35,7 @@ runs synchronously inside the CLI process.
 import click
 
 from .names import names_cli
+from .records import records_cli
 from .users import users_cli
 
 
@@ -40,4 +45,5 @@ def cli():
 
 
 cli.add_command(names_cli)
+cli.add_command(records_cli)
 cli.add_command(users_cli)

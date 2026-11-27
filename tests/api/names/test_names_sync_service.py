@@ -133,6 +133,24 @@ class TestBuildNamePayloadFromUser:
         assert payload["props"]["name_parts"] == local
         assert "LocalFamily" in (payload["props"].get("display_name") or "")
 
+    def test_profile_display_name_preferred_over_composed_parts(
+        self, service: NamesSyncService
+    ):
+        """Persisted profile `display_name` wins for Names `props.display_name`."""
+        user = _user(
+            user_profile={
+                "identifier_kc_username": "kcslug",
+                "display_name": "Curie, Marie Skłodowska",
+                "name_parts": json.dumps({"first": "Marie", "last": "Curie"}),
+            },
+        )
+        payload = service.build_name_payload_from_user(user)
+        assert payload is not None
+        assert payload["props"]["display_name"] == "Curie, Marie Skłodowska"
+        assert payload["name"] == "Curie, Marie Skłodowska"
+        assert payload["given_name"] == "Marie"
+        assert payload["family_name"] == "Curie"
+
     def test_invalid_name_parts_json_falls_back_to_username(
         self, service: NamesSyncService
     ):

@@ -34,7 +34,7 @@ from .config import UserDataEvent, UserDataStatus
 from .errors import LocalUserNotFoundError, NoIDPFoundError, UserCreationFailed
 from .proxies import (
     current_names_sync_service,
-    current_record_kc_username_sync_service,
+    current_record_creatibutor_sync_service,
     current_remote_group_service,
     current_remote_user_data_service,
 )
@@ -1270,7 +1270,7 @@ def rewrite_records_for_kc_username_change(
     value. Each phase is wrapped in its own try/except so a failure in one
     does not skip the others.
 
-    1. Published records pass — `RecordKcUsernameSyncService.rewrite_all`
+    1. Published records pass — `RecordCreatibutorSyncService.rewrite_all`
        (published index: edit, update, publish).
     2. Drafts pass — same service, drafts index (patch only).
     3. Names prune (when `prune_names=True`) —
@@ -1292,7 +1292,7 @@ def rewrite_records_for_kc_username_change(
         Top-level keys:
 
         - `user_id`, `old_kc_username`, `new_kc_username`: echo of inputs.
-        - `records`: stats from `RecordKcUsernameSyncService.rewrite_all`.
+        - `records`: stats from `RecordCreatibutorSyncService.rewrite_all`.
         - `pruned_names_pids`: list of Names PIDs deleted by the prune step.
         - `errors`: count of top-level phase failures (per-record failures
           are reported inside `records`).
@@ -1329,7 +1329,7 @@ def rewrite_records_for_kc_username_change(
             return summary
 
         try:
-            summary["records"] = current_record_kc_username_sync_service.rewrite_all(
+            summary["records"] = current_record_creatibutor_sync_service.rewrite_all(
                 old_kc_username, new_kc_username
             )
             app.logger.info(

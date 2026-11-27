@@ -29,12 +29,12 @@ from invenio_search.proxies import current_search_client
 
 from invenio_remote_user_data_kcworks.config import KCNamesTag
 from invenio_remote_user_data_kcworks.proxies import (
-    current_record_kc_username_sync_service,
+    current_record_creatibutor_sync_service,
     current_remote_user_data_service,
 )
 from invenio_remote_user_data_kcworks.services.names_sync import NamesSyncService
-from invenio_remote_user_data_kcworks.services.record_username_sync import (
-    RecordKcUsernameSyncService,
+from invenio_remote_user_data_kcworks.services.record_creatibutor_sync import (
+    RecordCreatibutorSyncService,
 )
 from invenio_remote_user_data_kcworks.tasks import (
     rewrite_records_for_kc_username_change,
@@ -234,18 +234,18 @@ class TestRewriteKcUsername:
 
 
 # ---------------------------------------------------------------------------
-# Service tests: RecordKcUsernameSyncService
+# Service tests: RecordCreatibutorSyncService
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
-def sync_service(base_app) -> RecordKcUsernameSyncService:
+def sync_service(base_app) -> RecordCreatibutorSyncService:
     """Construct a sync service against the pytest-invenio `base_app`.
 
     Returns:
-        A `RecordKcUsernameSyncService` bound to the test app.
+        A `RecordCreatibutorSyncService` bound to the test app.
     """
-    return RecordKcUsernameSyncService(base_app)
+    return RecordCreatibutorSyncService(base_app)
 
 
 def _make_draft_item(draft_id: str, metadata: dict[str, Any]):
@@ -272,10 +272,10 @@ def _make_search_obj(*hits: MagicMock) -> MagicMock:
 
 
 _SEARCH_PATCH = (
-    "invenio_remote_user_data_kcworks.services.record_username_sync.dsl.Search"
+    "invenio_remote_user_data_kcworks.services.record_creatibutor_sync.dsl.Search"
 )
 _RECORDS_PATCH = (
-    "invenio_remote_user_data_kcworks.services.record_username_sync."
+    "invenio_remote_user_data_kcworks.services.record_creatibutor_sync."
     "current_rdm_records_service"
 )
 
@@ -815,7 +815,7 @@ class TestRewriteRecordsTaskBody:
 
 
 class TestRewriteAllService:
-    """Call `RecordKcUsernameSyncService.rewrite_all` against real records.
+    """Call `RecordCreatibutorSyncService.rewrite_all` against real records.
 
     Sister to `TestRewriteRecordsTaskBody`: same seed/asserts, no Celery task.
     """
@@ -839,7 +839,7 @@ class TestRewriteAllService:
             minimal_draft_record_factory=minimal_draft_record_factory,
         )
 
-        stats = current_record_kc_username_sync_service.rewrite_all(
+        stats = current_record_creatibutor_sync_service.rewrite_all(
             old_username, new_username
         )
 

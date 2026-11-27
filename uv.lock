@@ -2533,7 +2533,7 @@ wheels = [
 
 [[package]]
 name = "invenio-remote-user-data-kcworks"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "celery" },

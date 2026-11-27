@@ -1,6 +1,6 @@
 # Invenio Remote User Data Service for Knowledge Commons Works
 
-Version 1.0.1
+Version 1.1.0
 
 - First post-beta release \*
 

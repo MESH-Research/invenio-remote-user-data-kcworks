@@ -13,7 +13,9 @@ class UserProfileUpdateDict(TypedDict, total=False):
     """Typed dict for normalized/sparse user_profile update values."""
 
     full_name: str
+    display_name: str
     name_parts: str
+    name_parts_local: str
     affiliations: str
     identifier_orcid: str
     identifier_kc_username: str
